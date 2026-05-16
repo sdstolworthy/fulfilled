@@ -11,9 +11,7 @@ analyzer:
     strict-inference: true
     strict-raw-types: true
   errors:
-    # Treat missing return type / required trailing comma as errors so they
-    # don't slip in via PRs.
-    missing_return: error
+    # Treat missing return type as an error so it doesn't slip in via PRs.
     always_declare_return_types: error
   exclude:
     - '**/*.g.dart'
