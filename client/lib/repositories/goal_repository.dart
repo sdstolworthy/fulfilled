@@ -106,6 +106,30 @@ class GoalRepository {
     return created;
   }
 
+  /// Mutate an existing goal in place. Finds the goal by [Goal.id] in
+  /// `_state`, replaces it with [goal], preserving the existing
+  /// `createdAt` and stamping `updatedAt = DateTime.now()`. Throws
+  /// [GoalNotFoundError] when no goal matches the id.
+  ///
+  /// This is the in-place edit seam — it does **not** supersede the
+  /// active goal (that's `create()`'s contract, which closes out the
+  /// prior active row and inserts a new one). Use `update` for "save
+  /// changes to the current goal" flows; use `create` for "start a new
+  /// goal from today".
+  Future<Goal> update(Goal goal) async {
+    await mockLatency();
+    for (var i = 0; i < _state.length; i++) {
+      final existing = _state[i];
+      if (existing.id != goal.id) continue;
+      _state[i] = goal.copyWith(
+        createdAt: existing.createdAt,
+        updatedAt: DateTime.now(),
+      );
+      return _state[i];
+    }
+    throw GoalNotFoundError(null);
+  }
+
   /// Promote a historical goal to active. Mostly relevant for the
   /// "restore a prior goal" affordance — not directly mocked in the UI
   /// but the screen 07 agent's `goalRepositoryProvider` contract names

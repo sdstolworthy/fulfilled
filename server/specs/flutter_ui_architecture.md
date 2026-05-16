@@ -375,7 +375,7 @@ The non-negotiables. Number them so review comments can cite them by ID (e.g., "
 
 4. **T-04 Accent teal is for primary actions and "on-track".** The CalorieRing fill, primary buttons, FAB, active nav, accent badges, and the "Will log" preview block use accent. **Never decorative.** Never as a brand wash. If a screen wants more accent, refactor — it's wrong.
 
-5. **T-05 Over-budget macros use `AppColors.danger`.** Whenever a macro bar's `value > target`, the bar fill switches to `danger` (the rest of the bar stays `line2`). The value text stays `ink`; only the bar fill changes. Same rule for the kcal "left" label on the ring — if `consumed > goal`, show "−123 over" in `danger`.
+5. **T-05 Over-budget macros use `AppColors.dangerOver`.** Whenever a macro bar's `value > target`, the bar fill switches to `dangerOver` (the rest of the bar stays `line2`). The value text stays `ink`; only the bar fill changes. Same rule for the kcal "left" label on the ring — if `consumed > goal`, show "−123 over" in `dangerOver`. **Token disambiguation:** Over-budget arc/bar fill uses `colors.dangerOver` (brighter orange-red). Sign-out + per-field error borders use `colors.danger` (muted red). The two tokens are distinct and not interchangeable.
 
 6. **T-06 Touch target floor.** Every actionable element has ≥ 44 × 44 hit slop on mobile (`InkResponse` `radius`/`containedInkWell`). Visual size may be smaller (e.g., 32-px stepper buttons sit in 48-px containers). On `expanded` (mouse), ≥ 32 × 32 visual targets are acceptable.
 
@@ -410,6 +410,8 @@ The non-negotiables. Number them so review comments can cite them by ID (e.g., "
 21. **T-21 Display units are customer-expected, not canonical.** All quantities render in the units a customer expects — sodium in `mg`, body weight in `kg` for v1, macros in `g`, energy in `kcal`. The wire stays canonical SI. Conversion lives in `lib/domain/units/` and is the **only** place a unit transform happens. Widgets never multiply or divide by 1000 inline, never call `.toFixed` on a raw `Decimal` macro value. See `pm_decisions_flutter_ui.md` Display Units Principle for the full rulings (including how `NutritionPer100g.sodium_g` is exposed as `sodiumMg` in the presentation model).
 
 22. **T-22 Pending-sync state is visible, not silent.** An optimistically-inserted log entry awaiting flush from the outbox renders with a `Pending sync` badge until the server acks (T-22 is enforced only on `FormFactor.isCompact` — the outbox doesn't exist elsewhere). Never silently retry without surfacing. Never drop a queued entry without telling the user. See section 6 "Offline log outbox".
+
+23. **T-23 Shared widgets are package-imported.** Every widget that appears in the §3 component inventory lives at `lib/widgets/<name>.dart` and is imported by call sites via `package:fulfilled/widgets/<name>.dart`. Feature folders may not import widgets from sibling feature folders. A feature-private widget that the inventory does not list stays inside that feature's `widgets/` directory and is private to the feature. Enforced by `tool/lint_no_cross_feature_widget_import.sh` (see T-005).
 
 ---
 
@@ -493,11 +495,11 @@ Each brief tells a developer agent (a) what to compose, (b) what to fetch, (c) w
 
 Things the designer did not specify or where I'm making an architectural call the PM/designer should confirm.
 
-> **PM rulings applied 2026-05-15** — see `specs/pm_decisions_flutter_ui.md`. Items **1, 5, 6, 8, 11, 12** below are resolved; the resolution is noted inline. Items **2, 3, 4, 7, 9, 10** are still open and need a separate PM pass.
+> **PM rulings applied 2026-05-15** — see `specs/pm_decisions_flutter_ui.md`. Items **1, 5, 6, 8, 11, 12** below are resolved; the resolution is noted inline. Items **2, 9, 10** were resolved by the PM rulings in `pm_overnight_features.md` ("PM rulings on open §10 items"). Items **3, 4, 7** remain open with v1.1 dispositions.
 
 1. **Over-budget macro behavior.** **RESOLVED (PM Risk 1):** strict `value > target`, no tolerance. T-05 already encodes this.
 
-2. **Synthetic 100 g serving visibility.** Designer recommended keeping it visible (INDEX note 2). I made it a tenant (T-10). PM should confirm vs. an OFF-default-aware hiding rule.
+2. **Synthetic 100 g serving visibility.** **RESOLVED (PM ruling on §10 item 2):** the synthetic 100 g serving is **always visible**, even when an OFF default serving exists. T-10 stands as written and moves from "architect ruling" to "PM-blessed." Reason: the 100 g basis is what the nutrition panel uses (Display Units Principle), so showing the corresponding serving keeps the math reconcilable for the user.
 
 3. **Barcode-equivalent on desktop.** Web has no barcode UI. The web mock's top-bar search input says "Search foods or scan barcode…" — that placeholder implies parity. Decision: drop "scan barcode" from the web placeholder (use "Search foods or paste a barcode…" instead, which is a valid `/foods/barcode/:code` shortcut if input is all digits 8–14 long). PM/copy review needed.
 
@@ -511,9 +513,9 @@ Things the designer did not specify or where I'm making an architectural call th
 
 8. **Sodium units.** **RESOLVED (PM Risk 4):** sodium displays as `mg` everywhere. Conversion lives in `lib/domain/units/sodium.dart` (T-21), not in repositories. No OpenAPI shape change — only a clarifying sentence on `NutritionPer100g.sodium_g`. The Display Units Principle in `pm_decisions_flutter_ui.md` generalises the rule across sodium, weight, energy, and macros.
 
-9. **Decimal precision for display.** No spec on how many fraction digits to show for grams, kcal, weight. Defaulting: kcal as integer (rounded half-up), grams as integer for ≥ 10, one decimal for < 10, weight as one decimal. Sign off needed.
+9. **Decimal precision for display.** **RESOLVED (PM ruling on §10 item 9):** encoded in `lib/domain/decimal_format.dart`. kcal: integer, banker's rounding (half-to-even). Macros (g): integer when ≥ 10 g, one fraction digit when < 10 g (same rule for sugar, sat fat, fiber). Sodium (mg): integer always. Body weight (kg): one fraction digit always. Quantity (stepper multiplier): up to two fraction digits while typing, rounded to one on commit; quick-multiplier chips snap exactly. Rate (kg/week): two fraction digits. Rounding is half-to-even to match the server.
 
-10. **Quality score visibility.** Screen 03 renders "OFF data · quality 0.86". Is this user-facing language acceptable? It's data lineage and most users don't know what `0.86` means. PM should bless or rename.
+10. **Quality score visibility.** **RESOLVED (PM ruling on §10 item 10):** **hide the numeric score** in user-facing copy. Replace `"OFF data · quality 0.86"` with just the source label (`"OFF data"`, `"USDA data"`, `"Your food"`). The score stays on the wire and in the DTO for future use (sorting, ranking, debug surfaces). Add a code comment noting the score is intentionally hidden pending a v2 ranking ticket.
 
 11. **Offline log creation.** **RESOLVED (PM Risk 6 — architect overridden):** ship a mobile-only outbox scoped to `POST /log` with optimistic insert + pending-sync badge. Section 5 ("Outbox") and section 6 ("Offline log outbox") updated; T-22 added. Web keeps the surface-the-error behavior.
 

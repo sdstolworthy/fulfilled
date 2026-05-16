@@ -56,14 +56,14 @@ flutter:
   # The actual .ttf assets must be added under `assets/fonts/Inter/` by the
   # developer running `flutter create .`; the entry stays declarative here so
   # the first time the assets land the bundling Just Works.
-  # fonts:
-  #   - family: Inter
-  #     fonts:
-  #       - asset: assets/fonts/Inter/Inter-Regular.ttf
-  #         weight: 400
-  #       - asset: assets/fonts/Inter/Inter-Medium.ttf
-  #         weight: 500
-  #       - asset: assets/fonts/Inter/Inter-SemiBold.ttf
-  #         weight: 600
-  #       - asset: assets/fonts/Inter/Inter-Bold.ttf
-  #         weight: 700
+  fonts:
+    - family: Inter
+      fonts:
+        - asset: assets/fonts/Inter/Inter-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/Inter/Inter-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Inter/Inter-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/Inter/Inter-Bold.ttf
+          weight: 700

@@ -14,14 +14,10 @@ import 'goal_editor_body.dart';
 /// Opens the "Edit current goal" flow. Same T-14 split as
 /// [openNewGoal] — full-screen route on compact, dialog on expanded.
 ///
-/// Note: the mock repository's `GoalRepository.create` closes out any
-/// existing active goal and starts a new one. There is no in-place
-/// `update(goal)` method on the repository contract (Phase 0
-/// surface lists `create` and `makeActive` only). The Edit flow
-/// therefore re-emits a `GoalCreate` — semantically a new row that
-/// supersedes the active one — pre-filled from the current goal.
-/// When a real PATCH endpoint lands, this single call site is the seam
-/// to flip.
+/// The Save handler calls `GoalRepository.update(...)` which mutates
+/// the active goal in place. It does *not* supersede the active row
+/// (that's `create()`'s contract) — the user expects "edit goal" to
+/// change the existing goal, not start a new one.
 Future<void> openEditGoal(BuildContext context, {required Goal active}) async {
   final isCompact = FormFactor.of(context).isCompact;
   if (isCompact) {
@@ -175,22 +171,20 @@ class _EditGoalFormState extends ConsumerState<_EditGoalForm> {
       final startsOn = DateTime(today.year, today.month, today.day);
       final signedRate = _signedRate(_direction, _rate);
 
-      // Repository contract for v1 mocks: re-emit as a new active row.
-      // The mock ends the prior active goal automatically. See file
-      // docstring for the rationale.
-      await repo.create(
-        GoalCreate(
-          startsOn: startsOn,
+      // In-place edit. Preserve every field except the user's edits
+      // (direction-derived signed rate, the recomputed kcal target, and
+      // the macro split that follows from it). `update()` stamps
+      // `updatedAt` and preserves `createdAt`.
+      //
+      // TODO(arch): rewire to estimateCalories once meProvider is
+      // threaded through. See dev_tickets.md T-010.
+      await repo.update(
+        widget.active.copyWith(
           weeklyRateKg: signedRate,
           dailyCalorieTarget: preview,
-          startWeightKg: widget.active.startWeightKg,
-          targetWeightKg: widget.active.targetWeightKg,
-          proteinTargetG:
-              _macroGrams(preview, share: 0.25, kcalPerG: 4),
-          carbsTargetG:
-              _macroGrams(preview, share: 0.50, kcalPerG: 4),
-          fatTargetG:
-              _macroGrams(preview, share: 0.25, kcalPerG: 9),
+          proteinTargetG: _macroGrams(preview, share: 0.25, kcalPerG: 4),
+          carbsTargetG: _macroGrams(preview, share: 0.50, kcalPerG: 4),
+          fatTargetG: _macroGrams(preview, share: 0.25, kcalPerG: 9),
         ),
       );
       ref.invalidate(activeGoalProvider);
