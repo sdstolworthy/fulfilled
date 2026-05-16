@@ -436,9 +436,16 @@ impl LogRepository for PgLogRepository {
             sugar_gs.push(e.snapshot.sugar_g);
             sodium_mgs.push(e.snapshot.sodium_mg);
             saturated_fat_gs.push(e.snapshot.saturated_fat_g);
+            // clone() rather than as_deref(): sqlx requires owned element types
+            // when binding a Vec<Option<T>> for UNNEST — &str won't work here.
             notes.push(e.note.clone());
         }
 
+        // WITH ORDINALITY attaches a row-number to each UNNEST element so we
+        // can ORDER BY it before RETURNING. Without it, Postgres does not
+        // guarantee that RETURNING rows come back in the same order as the
+        // input arrays — the trait contract promises input order, and T10
+        // relies on that promise.
         let sql = format!(
             "INSERT INTO food_log_entries (\
                 user_id, food_id, serving_id, consumed_on, meal, \
@@ -447,14 +454,13 @@ impl LogRepository for PgLogRepository {
                 note\
              ) \
              SELECT \
-                $1, \
-                food_id, serving_id, consumed_on, meal, \
-                quantity, grams_total, \
-                calories_kcal, protein_g, carbs_g, fat_g, fiber_g, sugar_g, sodium_mg, saturated_fat_g, \
-                note \
+                $1, x.food_id, x.serving_id, x.consumed_on, x.meal, \
+                x.quantity, x.grams_total, \
+                x.calories_kcal, x.protein_g, x.carbs_g, x.fat_g, x.fiber_g, x.sugar_g, x.sodium_mg, x.saturated_fat_g, \
+                x.note \
              FROM UNNEST(\
                 $2::uuid[], \
-                $3::uuid[], \
+                $3::uuid[],  -- nullable: Vec<Option<Uuid>>\
                 $4::date[], \
                 $5::text[], \
                 $6::numeric[], \
@@ -468,12 +474,14 @@ impl LogRepository for PgLogRepository {
                 $14::numeric[], \
                 $15::numeric[], \
                 $16::text[] \
-             ) AS x(\
+             ) WITH ORDINALITY \
+               AS x(\
                 food_id, serving_id, consumed_on, meal, \
                 quantity, grams_total, \
                 calories_kcal, protein_g, carbs_g, fat_g, fiber_g, sugar_g, sodium_mg, saturated_fat_g, \
-                note\
+                note, ord\
              ) \
+             ORDER BY x.ord \
              RETURNING {SELECT_COLS}"
         );
 

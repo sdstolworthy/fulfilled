@@ -673,6 +673,16 @@ async fn log_service_list_applies_default_limit_when_omitted() {
 }
 
 // ── log_repo::create_many tests (T09) ─────────────────────────────────────────
+//
+// TODO(integration-test): add a `create_many_is_atomic` test against a live
+// Postgres instance.  The spec names this case explicitly: deliberately violate
+// a CHECK constraint mid-batch (e.g. pass an invalid meal string) and assert
+// that *no* rows were committed.  The in-memory fake has no CHECK constraints,
+// so this cannot be exercised here.  Atomicity is already provided by the
+// explicit transaction in `PgLogRepository::create_many`
+// (see `log_repo.rs`: `let mut tx = self.pool.begin().await…`/`tx.commit()`),
+// which means correctness is provable by transaction semantics — but an
+// observational assertion requires a live-DB integration test.
 
 #[tokio::test]
 async fn log_repo_create_many_inserts_in_input_order() {
