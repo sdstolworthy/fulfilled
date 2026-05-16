@@ -5,13 +5,14 @@ use std::sync::Arc;
 use chrono::{Duration, NaiveDate, Utc};
 use loseit_core::domain::{
     FoodDraft, FoodSource, Meal, NutritionPer100g, NutritionSnapshot, PersistedLogEntry,
+    WeightDraft,
 };
-use loseit_core::repo::{FoodRepository, LogRepository, ServingRepository};
-use loseit_core::service::LogService;
+use loseit_core::repo::{FoodRepository, LogRepository, ServingRepository, WeightRepository};
+use loseit_core::service::{LogService, WeightService};
 use loseit_core::CoreError;
 use loseit_testing::{
     InMemoryFoodRepository, InMemoryGoalRepository, InMemoryLogRepository,
-    InMemoryServingRepository,
+    InMemoryServingRepository, InMemoryWeightRepository,
 };
 use rust_decimal::Decimal;
 use uuid::Uuid;
@@ -660,6 +661,137 @@ async fn log_service_list_returns_validation_error_on_from_after_to() {
 #[tokio::test]
 async fn log_service_list_applies_default_limit_when_omitted() {
     let (_logs, svc) = make_log_service();
+    let user = Uuid::new_v4();
+
+    let result = svc
+        .list(user, None, None, None, None)
+        .await
+        .expect("list with no params");
+
+    assert_eq!(result.limit, 100, "default limit must be 100");
+    assert_eq!(result.offset, 0, "default offset must be 0");
+}
+
+// ── weight_repo list_paginated / count_for_user tests (T05) ──────────────────
+
+fn make_weight_draft(recorded_on: NaiveDate) -> WeightDraft {
+    WeightDraft {
+        recorded_on,
+        recorded_at_local: None,
+        weight_kg: Decimal::from(70),
+        note: None,
+    }
+}
+
+fn make_weight_service() -> (Arc<InMemoryWeightRepository>, WeightService) {
+    let weights = Arc::new(InMemoryWeightRepository::new());
+    let svc = WeightService::new(weights.clone());
+    (weights, svc)
+}
+
+#[tokio::test]
+async fn weight_repo_list_paginated_orders_newest_first_with_id_tiebreaker() {
+    let repo = InMemoryWeightRepository::new();
+    let user = Uuid::new_v4();
+
+    let day_old = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
+    let day_new = NaiveDate::from_ymd_opt(2026, 1, 3).unwrap();
+
+    // Insert two entries on the older date and one on the newer date.
+    let w_old_a = repo
+        .create(user, &make_weight_draft(day_old))
+        .await
+        .expect("create old_a");
+    let w_old_b = repo
+        .create(user, &make_weight_draft(day_old))
+        .await
+        .expect("create old_b");
+    let w_new = repo
+        .create(user, &make_weight_draft(day_new))
+        .await
+        .expect("create new");
+
+    let page = repo
+        .list_paginated(user, None, None, 10, 0)
+        .await
+        .expect("list_paginated");
+
+    assert_eq!(page.len(), 3);
+    // Newest date must be first.
+    assert_eq!(page[0].id, w_new.id, "newest date should be first");
+    // Both older entries follow.
+    assert!(
+        page[1].recorded_on == day_old && page[2].recorded_on == day_old,
+        "older entries should come after"
+    );
+    assert_ne!(page[1].id, w_new.id);
+    assert_ne!(page[2].id, w_new.id);
+    // Both old entries are present.
+    let old_ids: std::collections::HashSet<_> = [page[1].id, page[2].id].into();
+    assert!(old_ids.contains(&w_old_a.id));
+    assert!(old_ids.contains(&w_old_b.id));
+}
+
+#[tokio::test]
+async fn weight_repo_count_for_user_matches_list_total() {
+    let repo = InMemoryWeightRepository::new();
+    let user = Uuid::new_v4();
+
+    let jan1 = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
+    let jan5 = NaiveDate::from_ymd_opt(2026, 1, 5).unwrap();
+    let jan10 = NaiveDate::from_ymd_opt(2026, 1, 10).unwrap();
+
+    // Seed 3 entries: jan1, jan5, jan10.
+    for d in [jan1, jan5, jan10] {
+        repo.create(user, &make_weight_draft(d))
+            .await
+            .expect("create");
+    }
+
+    // Filter from jan5 onward — should match jan5 and jan10 (2 entries).
+    let count = repo
+        .count_for_user(user, Some(jan5), None)
+        .await
+        .expect("count");
+    let page = repo
+        .list_paginated(user, Some(jan5), None, 1000, 0)
+        .await
+        .expect("list");
+    assert_eq!(
+        count,
+        page.len() as i64,
+        "count_for_user must equal list_paginated length when limit is large"
+    );
+    assert_eq!(count, 2);
+}
+
+#[tokio::test]
+async fn weight_service_list_400_when_from_after_to() {
+    let (_weights, svc) = make_weight_service();
+    let user = Uuid::new_v4();
+
+    let jan10 = NaiveDate::from_ymd_opt(2026, 1, 10).unwrap();
+    let jan1 = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
+
+    let err = svc
+        .list(user, Some(jan10), Some(jan1), None, None)
+        .await
+        .expect_err("from > to should fail");
+
+    match err {
+        CoreError::Validation(msg) => {
+            assert!(
+                msg.contains("from"),
+                "error message should mention `from`: {msg}"
+            );
+        }
+        other => panic!("expected Validation, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn weight_service_list_applies_default_limit() {
+    let (_weights, svc) = make_weight_service();
     let user = Uuid::new_v4();
 
     let result = svc
