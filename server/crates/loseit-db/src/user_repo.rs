@@ -131,9 +131,10 @@ impl UserRepository for PgUserRepository {
     async fn delete_user(&self, user_id: Uuid) -> CoreResult<()> {
         // Single transaction — order matters because food_log_entries.food_id
         // is ON DELETE RESTRICT, so log entries must be removed before
-        // user-owned foods. export_jobs.user_id is ON DELETE CASCADE, so it
-        // would be cleaned up automatically when the users row drops, but we
-        // delete it explicitly to make the cascade order unambiguous.
+        // user-owned foods. weights, goals, and export_jobs are ON DELETE
+        // CASCADE and would be cleaned up automatically when the users row
+        // drops, but we delete them explicitly to make the cascade order
+        // unambiguous.
         let mut tx = self.pool.begin().await.map_err(map_sqlx)?;
 
         sqlx::query("DELETE FROM food_log_entries WHERE user_id = $1")
@@ -154,6 +155,9 @@ impl UserRepository for PgUserRepository {
             .await
             .map_err(map_sqlx)?;
 
+        // The schema CHECK constraint already ensures only source='user' rows
+        // can be owned by a user, so the AND clause is a belt-and-suspenders
+        // guard against any future schema drift rather than a functional filter.
         sqlx::query("DELETE FROM foods WHERE owner_user_id = $1 AND source = 'user'")
             .bind(user_id)
             .execute(&mut *tx)

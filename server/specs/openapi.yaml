@@ -18,6 +18,22 @@ info:
     decimals — clients should avoid binary float round-trips for fields like
     `weight_kg`, `grams`, and `quantity`.
 
+    ## v1 pre-release wire-shape changes
+
+    The following endpoints returned bare JSON arrays in early drafts and
+    now return paginated envelopes (`{ results, total, limit, offset }`):
+
+    * `GET /log`
+    * `GET /weights`
+
+    Both endpoints' `from` and `to` query parameters were previously
+    required and are now optional. With no parameters, the response is
+    the 100 most-recent entries across the full history.
+
+    The `GET /foods/search` response schema migrated from the bespoke
+    `FoodSearchPage` shape to the unified `PaginatedFoodSearchHits`
+    envelope; field names are unchanged.
+
 servers:
   - url: "https://{host}/api/v1"
     description: LoseIt API. Override `host` for local development (e.g. `127.0.0.1:8080`).
@@ -283,6 +299,10 @@ paths:
       description: |
         Full-text search across the foods catalogue (OFF, USDA, and the
         caller's custom foods). A blank `q` returns `400 bad_request`.
+
+        Default `limit` is 100; the server silently clamps requests above
+        500. Sentinel foods used by `POST /log/quick_add` are excluded
+        from results.
       parameters:
         - in: query
           name: q
@@ -967,7 +987,10 @@ components:
         sodium_g:
           allOf:
             - $ref: "#/components/schemas/Decimal"
-          description: Sodium in grams per 100 g (OFF convention).
+          description: |
+            Sodium in grams per 100 g (OFF convention). Clients should
+            multiply by 1000 to display as milligrams, which is the
+            customer-expected unit.
         saturated_fat_g: { $ref: "#/components/schemas/Decimal" }
 
     Serving:

@@ -1025,8 +1025,7 @@ async fn test_recent_foods_respects_limit() {
 
 #[tokio::test]
 async fn quick_add_creates_entry_with_only_calories() {
-    let (app, _alice) =
-        build_test_app_with(|_f, _s, _l, _g, _u| Box::pin(async move {})).await;
+    let (app, _alice) = build_test_app_with(|_f, _s, _l, _g, _u| Box::pin(async move {})).await;
 
     let body = serde_json::json!({
         "calories_kcal": "250",
@@ -1063,8 +1062,7 @@ async fn quick_add_creates_entry_with_only_calories() {
 #[tokio::test]
 async fn quick_add_is_repeatable_for_same_user() {
     // Second call returns 201 with a *different* id but the same food_id.
-    let (app, _alice) =
-        build_test_app_with(|_f, _s, _l, _g, _u| Box::pin(async move {})).await;
+    let (app, _alice) = build_test_app_with(|_f, _s, _l, _g, _u| Box::pin(async move {})).await;
 
     let body = serde_json::json!({
         "calories_kcal": "100",
@@ -1073,7 +1071,11 @@ async fn quick_add_is_repeatable_for_same_user() {
     });
     let resp1 = app
         .clone()
-        .oneshot(authed_json_request("POST", "/api/v1/log/quick_add", body.clone()))
+        .oneshot(authed_json_request(
+            "POST",
+            "/api/v1/log/quick_add",
+            body.clone(),
+        ))
         .await
         .unwrap();
     assert_eq!(resp1.status(), StatusCode::CREATED);
@@ -1094,8 +1096,7 @@ async fn quick_add_is_repeatable_for_same_user() {
 
 #[tokio::test]
 async fn quick_add_400_on_zero_calories() {
-    let (app, _alice) =
-        build_test_app_with(|_f, _s, _l, _g, _u| Box::pin(async move {})).await;
+    let (app, _alice) = build_test_app_with(|_f, _s, _l, _g, _u| Box::pin(async move {})).await;
 
     let body = serde_json::json!({
         "calories_kcal": "0",
@@ -1111,8 +1112,7 @@ async fn quick_add_400_on_zero_calories() {
 
 #[tokio::test]
 async fn quick_add_400_on_negative_calories() {
-    let (app, _alice) =
-        build_test_app_with(|_f, _s, _l, _g, _u| Box::pin(async move {})).await;
+    let (app, _alice) = build_test_app_with(|_f, _s, _l, _g, _u| Box::pin(async move {})).await;
 
     let body = serde_json::json!({
         "calories_kcal": "-50",
@@ -1132,8 +1132,7 @@ async fn quick_add_400_on_max_calories_overflow() {
     // message. Values < 10_000 that reach the grams_total guard instead would
     // give a generic message; the bound is intentionally set below 10_000 so
     // callers always see the calories error.
-    let (app, _alice) =
-        build_test_app_with(|_f, _s, _l, _g, _u| Box::pin(async move {})).await;
+    let (app, _alice) = build_test_app_with(|_f, _s, _l, _g, _u| Box::pin(async move {})).await;
 
     let body = serde_json::json!({
         "calories_kcal": "9999",
@@ -1147,15 +1146,17 @@ async fn quick_add_400_on_max_calories_overflow() {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     let body = read_json(resp.into_body()).await;
     assert!(
-        body["message"].as_str().unwrap_or("").contains("calories_kcal must be less than 9999"),
+        body["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("calories_kcal must be less than 9999"),
         "expected calories-specific error, got: {body}"
     );
 }
 
 #[tokio::test]
 async fn quick_add_400_on_invalid_meal() {
-    let (app, _alice) =
-        build_test_app_with(|_f, _s, _l, _g, _u| Box::pin(async move {})).await;
+    let (app, _alice) = build_test_app_with(|_f, _s, _l, _g, _u| Box::pin(async move {})).await;
 
     let body = serde_json::json!({
         "calories_kcal": "300",
@@ -1173,8 +1174,7 @@ async fn quick_add_400_on_invalid_meal() {
 async fn quick_add_does_not_appear_in_food_search() {
     // After quick_add, searching for "quick" or the sentinel name should
     // return an empty result.
-    let (app, _alice) =
-        build_test_app_with(|_f, _s, _l, _g, _u| Box::pin(async move {})).await;
+    let (app, _alice) = build_test_app_with(|_f, _s, _l, _g, _u| Box::pin(async move {})).await;
 
     // Trigger quick_add to provision the sentinel food.
     let body = serde_json::json!({
@@ -1306,8 +1306,7 @@ async fn test_list_paginates_within_full_total() {
 
 #[tokio::test]
 async fn test_list_400_when_from_after_to() {
-    let (app, _alice) =
-        build_test_app_with(|_f, _s, _l, _g, _u| Box::pin(async move {})).await;
+    let (app, _alice) = build_test_app_with(|_f, _s, _l, _g, _u| Box::pin(async move {})).await;
 
     let resp = app
         .oneshot(authed_request(
@@ -2071,4 +2070,57 @@ async fn copy_day_400_on_invalid_meal() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn copy_day_replicates_quick_add_entries_with_same_calories() {
+    // Acceptance criterion from T10: quick-add sentinel entries copy
+    // successfully and yield the same calories.
+    let (app, _alice) = build_test_app_with(|_f, _s, _l, _g, _u| Box::pin(async move {})).await;
+
+    // 1. Create a quick-add entry on day 1.
+    let qa_body = serde_json::json!({
+        "calories_kcal": "350",
+        "meal": "lunch",
+        "consumed_on": "2026-05-15",
+    });
+    let resp = app
+        .clone()
+        .oneshot(authed_json_request(
+            "POST",
+            "/api/v1/log/quick_add",
+            qa_body,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let qa_entry = read_json(resp.into_body()).await;
+    let original_calories = qa_entry["calories_kcal"].clone();
+    let original_quantity = qa_entry["quantity"].clone();
+    // Macros must be null on the original.
+    assert!(qa_entry["protein_g"].is_null());
+    assert!(qa_entry["carbs_g"].is_null());
+    assert!(qa_entry["fat_g"].is_null());
+
+    // 2. Copy day 1 → day 2.
+    let copy = serde_json::json!({
+        "from_date": "2026-05-15",
+        "to_date": "2026-05-16",
+    });
+    let resp = app
+        .oneshot(authed_json_request("POST", "/api/v1/log/copy", copy))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let body = read_json(resp.into_body()).await;
+    let copied = body["copied"].as_array().expect("copied array");
+    assert_eq!(copied.len(), 1, "expected exactly one copied entry");
+
+    // 3. Copied entry must have the same calories, same quantity, and null macros.
+    assert_eq!(copied[0]["calories_kcal"], original_calories);
+    assert_eq!(copied[0]["quantity"], original_quantity);
+    assert_eq!(copied[0]["consumed_on"], "2026-05-16");
+    assert!(copied[0]["protein_g"].is_null());
+    assert!(copied[0]["carbs_g"].is_null());
+    assert!(copied[0]["fat_g"].is_null());
 }

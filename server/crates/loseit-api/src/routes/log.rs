@@ -1,10 +1,11 @@
-//! Food-log + day-summary handlers (T15 + T16).
+//! Food-log + day-summary handlers.
 //!
 //! Routes:
 //!
 //! * `POST   /log`               — create a log entry.
 //! * `POST   /log/quick_add`     — log raw calories without choosing a food.
-//! * `GET    /log?from=&to=`     — list entries in a date range.
+//! * `POST   /log/copy`          — copy all (or one meal's) entries to another date.
+//! * `GET    /log`               — list entries; optional from/to/limit/offset.
 //! * `PATCH  /log/:id`           — partial update; `food_id` is immutable.
 //! * `DELETE /log/:id`           — remove an entry.
 //! * `GET    /days/:date/summary` — per-day rollup with active goal.
@@ -290,7 +291,13 @@ async fn quick_add(
     let meal = parse_meal(&body.meal)?;
     let entry = state
         .logs
-        .quick_add(user.id, body.calories_kcal, meal, body.consumed_on, body.note)
+        .quick_add(
+            user.id,
+            body.calories_kcal,
+            meal,
+            body.consumed_on,
+            body.note,
+        )
         .await?;
     Ok((StatusCode::CREATED, Json(entry.into())))
 }
