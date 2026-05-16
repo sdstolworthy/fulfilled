@@ -1,4 +1,5 @@
 import 'package:decimal/decimal.dart';
+import 'package:uuid/uuid.dart';
 
 import '../data/api_client.dart';
 import '../domain/enums.dart';
@@ -139,6 +140,48 @@ class FoodRepository {
     throw FoodNotFoundError(barcode);
   }
 
+  /// Append a user-defined serving to an existing food. Mirrors the
+  /// OpenAPI `POST /foods/{id}/servings` description.
+  ///
+  /// Used by screen 05's save flow: after `createCustom` returns the new
+  /// `Food` (which only carries the auto-seeded 100 g system serving),
+  /// the screen iterates the draft's `userServings` and calls this once
+  /// per row so they actually persist. The architecture's
+  /// silent-correctness fix for T-007.
+  ///
+  /// Throws [FoodNotFoundError] when [foodId] is unknown — matches
+  /// `get()`'s shape so callers can render a consistent error.
+  Future<Serving> addServing(String foodId, ServingCreate input) async {
+    await mockLatency();
+    for (var i = 0; i < _foods.length; i++) {
+      final food = _foods[i];
+      if (food.id != foodId) continue;
+
+      // sortOrder: max(existing) + 1 so the new row sorts beneath the
+      // synthetic 100 g (which stays at sortOrder 0 per T-10's
+      // "synthetic always visible at the top" rule).
+      var maxSort = -1;
+      for (final s in food.servings) {
+        if (s.sortOrder > maxSort) maxSort = s.sortOrder;
+      }
+
+      final serving = Serving(
+        id: 'sv_${_uuid.v4()}',
+        name: input.label,
+        grams: input.grams,
+        isDefault: input.isDefault,
+        source: input.source ?? ServingSource.user,
+        sortOrder: input.sortOrder ?? (maxSort + 1),
+      );
+
+      _foods[i] = food.copyWith(servings: <Serving>[...food.servings, serving]);
+      return serving;
+    }
+    throw FoodNotFoundError(foodId);
+  }
+
+  static const Uuid _uuid = Uuid();
+
   /// Create a custom food. Returns the created row with `source == user`
   /// and a synthetic 100 g serving auto-seeded — mirroring the OpenAPI
   /// `POST /foods` description.
@@ -229,6 +272,66 @@ class FoodRepository {
     }
     return null;
   }
+}
+
+/// Outgoing `POST /foods/{id}/servings` payload — screen 05 builds one
+/// per user-defined serving in the draft and the repository POSTs each
+/// one through [FoodRepository.addServing].
+///
+/// Plain Dart value class on purpose: no Freezed / json_serializable
+/// codegen. A prior attempt at T-007 referenced an undefined
+/// `ServingCreate` type which broke the build; this file is the
+/// single source of truth.
+///
+/// Mirrors the OpenAPI `ServingCreate` schema (`label`, `grams`,
+/// optional `is_default`, `source`, `sort_order`). The draft side
+/// (`DraftServing`) carries `label` + `grams`; the repository fills in
+/// the remaining fields with sensible defaults (`source: user`,
+/// `sortOrder: max+1`).
+class ServingCreate {
+  const ServingCreate({
+    required this.label,
+    required this.grams,
+    this.isDefault = false,
+    this.source,
+    this.sortOrder,
+  });
+
+  /// Display label — e.g. "1 container (170 g)", "1 cup". Maps to the
+  /// OpenAPI `label` field.
+  final String label;
+  final Decimal grams;
+  final bool isDefault;
+
+  /// Defaults to [ServingSource.user] in the repository when null —
+  /// matching the OpenAPI default.
+  final ServingSource? source;
+
+  /// When null, the repository assigns `max(existing.sortOrder) + 1` so
+  /// the new row sorts beneath the auto-seeded synthetic 100 g.
+  final int? sortOrder;
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        'label': label,
+        'grams': grams.toString(),
+        'is_default': isDefault,
+        if (source != null) 'source': source!.wire,
+        if (sortOrder != null) 'sort_order': sortOrder,
+      };
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ServingCreate &&
+          other.label == label &&
+          other.grams == grams &&
+          other.isDefault == isDefault &&
+          other.source == source &&
+          other.sortOrder == sortOrder;
+
+  @override
+  int get hashCode =>
+      Object.hash(label, grams, isDefault, source, sortOrder);
 }
 
 /// Thrown by [FoodRepository.get] / [FoodRepository.byBarcode] when the

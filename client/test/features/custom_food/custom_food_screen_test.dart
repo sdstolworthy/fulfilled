@@ -2,6 +2,7 @@ import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fulfilled/domain/drafts.dart';
 import 'package:fulfilled/domain/enums.dart';
 import 'package:fulfilled/domain/food.dart';
 import 'package:fulfilled/domain/serving.dart';
@@ -15,20 +16,32 @@ import 'package:go_router/go_router.dart';
 
 import '../../repositories/_harness.dart';
 
-/// Mock repository that captures the [createCustom] payload so tests
-/// can assert on what the screen actually built. Inherits everything
-/// else (the screen only touches `createCustom`).
+/// Mock repository that captures the [createCustom] payload + every
+/// [addServing] call so tests can assert what the screen actually built.
+/// Inherits everything else (the screen only touches `createCustom` +
+/// `addServing`).
 class _RecordingFoodRepository extends FoodRepository {
   _RecordingFoodRepository(super.api);
 
   FoodCreate? lastPayload;
   Food? toReturn;
 
+  /// Per-call record of `(foodId, ServingCreate)` so the save-flow test
+  /// can assert order + payload.
+  final List<({String foodId, ServingCreate input})> addServingCalls =
+      <({String foodId, ServingCreate input})>[];
+
   @override
   Future<Food> createCustom(FoodCreate data) async {
     lastPayload = data;
     if (toReturn != null) return toReturn!;
     return super.createCustom(data);
+  }
+
+  @override
+  Future<Serving> addServing(String foodId, ServingCreate input) {
+    addServingCalls.add((foodId: foodId, input: input));
+    return super.addServing(foodId, input);
   }
 }
 
@@ -185,6 +198,77 @@ void main() {
       // Draft reset.
       expect(container.read(customFoodDraftProvider).name, isEmpty);
       expect(container.read(customFoodDraftProvider).energyKcal, isNull);
+    },
+  );
+
+  testWidgets(
+    'save with 2 user servings: every draft serving is POSTed in order, '
+    'and the resulting food has 3 servings (1 synthetic + 2 user)',
+    (tester) async {
+      await _pumpAndOpen(tester, _harness(repo: repo, navKey: navKey));
+
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(CustomFoodScreen)),
+      );
+      final notifier = container.read(customFoodDraftProvider.notifier);
+      notifier.setName('Trail mix');
+      notifier.setEnergyKcal(Decimal.fromInt(500));
+      notifier.setProteinG(Decimal.fromInt(15));
+      notifier.setCarbsG(Decimal.fromInt(45));
+      notifier.setFatG(Decimal.fromInt(30));
+      // Two user-defined servings on the draft — this is the bug
+      // surface T-007 fixes: before the wire-through these were
+      // silently dropped between draft and the persisted food.
+      notifier.setServings(<DraftServing>[
+        DraftServing(label: '1 handful', grams: Decimal.fromInt(30)),
+        DraftServing(label: '1 cup', grams: Decimal.fromInt(140)),
+      ]);
+      await tester.pump();
+
+      // No `toReturn` override — let the real `createCustom` insert
+      // into the in-memory list so `addServing` can find the food and
+      // we can re-fetch via `repo.get(id)` to verify final shape.
+      await tester.tap(find.text('Save').last);
+      await tester.pumpAndSettle();
+
+      // (a) addServing fired once per user serving, in order.
+      expect(repo.addServingCalls.length, equals(2));
+      expect(repo.addServingCalls[0].input.label, equals('1 handful'));
+      expect(
+        repo.addServingCalls[0].input.grams,
+        equals(Decimal.fromInt(30)),
+      );
+      expect(repo.addServingCalls[1].input.label, equals('1 cup'));
+      expect(
+        repo.addServingCalls[1].input.grams,
+        equals(Decimal.fromInt(140)),
+      );
+
+      // Both calls targeted the same food id (the one createCustom
+      // returned).
+      final calledFoodId = repo.addServingCalls.first.foodId;
+      expect(repo.addServingCalls[1].foodId, equals(calledFoodId));
+
+      // (b) the silent-drop bug is gone: the persisted food has 1
+      // synthetic 100 g + 2 user-defined servings = 3 total.
+      final saved = await repo.get(calledFoodId);
+      expect(saved.servings.length, equals(3));
+      // One synthetic (system), two user-defined.
+      expect(
+        saved.servings.where((s) => s.source == ServingSource.system).length,
+        equals(1),
+      );
+      expect(
+        saved.servings.where((s) => s.source == ServingSource.user).length,
+        equals(2),
+      );
+      // User-defined labels are present in the order the user added
+      // them.
+      final userLabels = saved.servings
+          .where((s) => s.source == ServingSource.user)
+          .map((s) => s.name)
+          .toList();
+      expect(userLabels, equals(<String>['1 handful', '1 cup']));
     },
   );
 }

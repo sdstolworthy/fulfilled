@@ -3,6 +3,9 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import 'package:fulfilled/widgets/empty_state.dart';
+import 'package:fulfilled/widgets/skeleton.dart';
+
 import '../../domain/food.dart';
 import '../../form_factor/form_factor.dart';
 import '../../providers/food_providers.dart';
@@ -427,12 +430,18 @@ class _ResultsSection extends ConsumerWidget {
                 ),
               );
             });
-            return _EmptyState(message: 'Could not load results. Try again.');
+            return const EmptyState(
+              icon: Icons.cloud_off,
+              title: 'Could not load results',
+              body: 'Try again in a moment.',
+            );
           },
           data: (rows) {
             if (rows.isEmpty) {
-              return _EmptyState(
-                message: 'No foods match "${query.trim()}".',
+              return EmptyState(
+                icon: Icons.search_off,
+                title: 'No matches',
+                body: 'No foods match "${query.trim()}".',
               );
             }
             return _ResultsList(query: query, rows: rows);
@@ -501,7 +510,7 @@ class _ResultsSkeleton extends StatelessWidget {
       child: Column(
         children: <Widget>[
           for (var i = 0; i < 4; i++) ...<Widget>[
-            const _SkeletonRow(),
+            const SkeletonRow(),
             if (i < 3)
               Divider(
                 height: 1,
@@ -511,80 +520,6 @@ class _ResultsSkeleton extends StatelessWidget {
               ),
           ],
         ],
-      ),
-    );
-  }
-}
-
-class _SkeletonRow extends StatelessWidget {
-  const _SkeletonRow();
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: EdgeInsets.symmetric(
-        horizontal: context.space.x5,
-        vertical: context.space.x3 + 2,
-      ),
-      child: Row(
-        children: <Widget>[
-          Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(
-              color: context.colors.line2,
-              borderRadius: BorderRadius.circular(context.radius.r1 + 2),
-            ),
-          ),
-          SizedBox(width: context.space.x3),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Container(
-                  height: 12,
-                  width: double.infinity,
-                  color: context.colors.line2,
-                ),
-                SizedBox(height: context.space.x1 + 2),
-                Container(
-                  height: 10,
-                  width: 140,
-                  color: context.colors.line2,
-                ),
-              ],
-            ),
-          ),
-          SizedBox(width: context.space.x3),
-          Container(
-            height: 14,
-            width: 36,
-            color: context.colors.line2,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _EmptyState extends StatelessWidget {
-  const _EmptyState({required this.message});
-
-  final String message;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: EdgeInsets.symmetric(
-        horizontal: context.space.x5,
-        vertical: context.space.x6,
-      ),
-      child: Center(
-        child: Text(
-          message,
-          textAlign: TextAlign.center,
-          style: context.text.meta.copyWith(color: context.colors.ink2),
-        ),
       ),
     );
   }

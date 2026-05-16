@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -8,6 +9,7 @@ import '../../providers/draft_providers.dart';
 import '../../providers/food_providers.dart';
 import '../../providers/profile_providers.dart';
 import '../../providers/repository_providers.dart';
+import '../../repositories/food_repository.dart';
 import '../../theme/context_extensions.dart';
 import 'widgets/basics_section.dart';
 import 'widgets/nutrition_section.dart';
@@ -115,6 +117,9 @@ class _CustomFoodScreenState extends ConsumerState<CustomFoodScreen> {
 
       final food = await repo.createCustom(payload);
 
+      // Snapshot draft servings before reset (the notifier wipes them).
+      final pendingServings = draft.userServings;
+
       // Side-effects per arch §9: reset draft, invalidate "me" (which
       // carries the count via `customFoodCount`) and the explicit
       // count provider.
@@ -122,15 +127,44 @@ class _CustomFoodScreenState extends ConsumerState<CustomFoodScreen> {
       ref.invalidate(meProvider);
       ref.invalidate(customFoodCountProvider);
 
-      // POST per arch §9: iterate user-defined servings. Mock repo
-      // doesn't expose the endpoint yet — TODO once the
-      // `/foods/{id}/servings` POST lands in `FoodRepository`. The
-      // architecture's intent is captured here so a later sweep can
-      // wire the loop without changing the screen.
-      // ignore: unused_local_variable
-      final pendingServings = draft.userServings;
+      // POST per arch §9 / T-007: iterate user-defined servings. Each
+      // failure is logged + surfaced via a SnackBar but does not abort
+      // the loop — the food itself is saved, so the user can retry
+      // missing rows from the detail page (a follow-up ticket).
+      var anyServingFailed = false;
+      for (final draftServing in pendingServings) {
+        try {
+          await repo.addServing(
+            food.id,
+            ServingCreate(
+              label: draftServing.label,
+              grams: draftServing.grams,
+            ),
+          );
+        } on Object catch (err, stack) {
+          anyServingFailed = true;
+          debugPrint(
+            "addServing failed for '${draftServing.label}' on "
+            "${food.id}: $err\n$stack",
+          );
+        }
+      }
+
+      // Invalidate only the just-edited food's detail (T-18: no
+      // shotgun `everythingProvider`). The food list / search / recent
+      // / frequent providers don't change shape just because we added
+      // servings to one food.
+      ref.invalidate(foodDetailProvider(food.id));
 
       if (!mounted) return;
+      if (anyServingFailed) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content:
+                Text("Saved the food but couldn't add all servings"),
+          ),
+        );
+      }
       context.pop(food);
     } on Object catch (err) {
       if (!mounted) return;
