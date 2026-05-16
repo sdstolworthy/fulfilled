@@ -1313,3 +1313,148 @@ async fn delete_custom_on_sentinel_returns_forbidden() {
         .expect_err("must refuse to delete the sentinel");
     assert!(matches!(err, loseit_core::CoreError::Forbidden));
 }
+
+// ── export_repo tests (T13) ────────────────────────────────────────────────────
+
+mod export_repo {
+    use chrono::{Duration as ChronoDuration, Utc};
+    use loseit_core::domain::ExportStatus;
+    use loseit_core::repo::ExportJobRepository;
+    use loseit_testing::InMemoryExportJobRepository;
+    use uuid::Uuid;
+
+    #[tokio::test]
+    async fn insert_or_get_pending_is_idempotent() {
+        // The partial unique index `export_jobs_one_pending_per_user`
+        // guarantees at most one pending row per user. Two back-to-back
+        // calls should converge on the same id rather than create two
+        // rows.
+        let repo = InMemoryExportJobRepository::new();
+        let user = Uuid::new_v4();
+
+        let first = repo.insert_or_get_pending(user).await.expect("first");
+        let second = repo.insert_or_get_pending(user).await.expect("second");
+
+        assert_eq!(first.id, second.id, "same pending row across calls");
+        assert_eq!(first.user_id, user);
+        assert_eq!(first.status, ExportStatus::Pending);
+
+        let pending = repo.list_pending().await.expect("list_pending");
+        assert_eq!(pending.len(), 1, "must not duplicate the pending row");
+    }
+
+    #[tokio::test]
+    async fn create_pending_allowed_when_prior_job_is_ready() {
+        // The partial unique index only constrains rows with
+        // status='pending', so a ready row coexists with a fresh pending
+        // row from the same user.
+        let repo = InMemoryExportJobRepository::new();
+        let user = Uuid::new_v4();
+
+        let original = repo.insert_or_get_pending(user).await.expect("create");
+        let expires_at = Utc::now() + ChronoDuration::hours(24);
+        let ready = repo
+            .mark_ready(original.id, "exports/abc.json".into(), expires_at)
+            .await
+            .expect("mark_ready");
+        assert_eq!(ready.status, ExportStatus::Ready);
+
+        // A new pending row is allowed despite the ready row.
+        let fresh = repo.create_pending(user).await.expect("create_pending");
+        assert_ne!(fresh.id, ready.id, "fresh pending row must differ");
+        assert_eq!(fresh.status, ExportStatus::Pending);
+    }
+
+    #[tokio::test]
+    async fn find_scoped_by_user_returns_none_cross_tenant() {
+        // Cross-tenant find must read as 404 to callers — neither the
+        // job-not-found nor wrong-owner case leaks the row's existence.
+        let repo = InMemoryExportJobRepository::new();
+        let alice = Uuid::new_v4();
+        let bob = Uuid::new_v4();
+
+        let job = repo.insert_or_get_pending(alice).await.expect("create");
+
+        let seen = repo.find(alice, job.id).await.expect("find");
+        assert!(seen.is_some(), "owner must see their job");
+
+        let unseen = repo.find(bob, job.id).await.expect("find");
+        assert!(unseen.is_none(), "other user must not see job");
+
+        let missing = repo
+            .find(alice, Uuid::new_v4())
+            .await
+            .expect("find missing");
+        assert!(missing.is_none(), "nonexistent id is also None");
+    }
+
+    #[tokio::test]
+    async fn mark_ready_then_get_returns_ready_with_storage_key() {
+        let repo = InMemoryExportJobRepository::new();
+        let user = Uuid::new_v4();
+
+        let pending = repo.insert_or_get_pending(user).await.expect("create");
+        let expires_at = Utc::now() + ChronoDuration::hours(48);
+        let ready = repo
+            .mark_ready(pending.id, "exports/u/123.json".into(), expires_at)
+            .await
+            .expect("mark_ready");
+
+        assert_eq!(ready.id, pending.id);
+        assert_eq!(ready.status, ExportStatus::Ready);
+        assert_eq!(ready.storage_key.as_deref(), Some("exports/u/123.json"));
+        assert!(ready.expires_at.is_some());
+        assert!(ready.error.is_none());
+
+        // Re-read via find: the persisted state matches.
+        let fetched = repo.find(user, pending.id).await.expect("find").expect("some");
+        assert_eq!(fetched.status, ExportStatus::Ready);
+        assert_eq!(fetched.storage_key.as_deref(), Some("exports/u/123.json"));
+    }
+
+    #[tokio::test]
+    async fn list_pending_returns_all_pending_jobs() {
+        // list_pending is the startup re-enqueue path; it spans every
+        // user, not just one. Ready rows are filtered out.
+        let repo = InMemoryExportJobRepository::new();
+        let alice = Uuid::new_v4();
+        let bob = Uuid::new_v4();
+        let carol = Uuid::new_v4();
+
+        let a = repo.insert_or_get_pending(alice).await.expect("a");
+        let b = repo.insert_or_get_pending(bob).await.expect("b");
+        let c = repo.insert_or_get_pending(carol).await.expect("c");
+
+        // Mark alice's ready — it should drop out of list_pending.
+        let expires_at = Utc::now() + ChronoDuration::hours(24);
+        repo.mark_ready(a.id, "exports/a.json".into(), expires_at)
+            .await
+            .expect("mark_ready");
+
+        let pending = repo.list_pending().await.expect("list_pending");
+        let ids: std::collections::HashSet<_> = pending.iter().map(|j| j.id).collect();
+        assert_eq!(pending.len(), 2, "ready job must be excluded");
+        assert!(ids.contains(&b.id));
+        assert!(ids.contains(&c.id));
+        assert!(!ids.contains(&a.id));
+    }
+
+    #[tokio::test]
+    async fn mark_failed_records_error_and_changes_status() {
+        let repo = InMemoryExportJobRepository::new();
+        let user = Uuid::new_v4();
+
+        let pending = repo.insert_or_get_pending(user).await.expect("create");
+        let failed = repo
+            .mark_failed(pending.id, "out of disk".into())
+            .await
+            .expect("mark_failed");
+
+        assert_eq!(failed.status, ExportStatus::Failed);
+        assert_eq!(failed.error.as_deref(), Some("out of disk"));
+        // A failed row, like a ready one, doesn't block a fresh pending row.
+        let fresh = repo.create_pending(user).await.expect("create_pending");
+        assert_ne!(fresh.id, failed.id);
+        assert_eq!(fresh.status, ExportStatus::Pending);
+    }
+}

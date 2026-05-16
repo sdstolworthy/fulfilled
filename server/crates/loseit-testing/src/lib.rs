@@ -10,6 +10,7 @@
 
 mod auth;
 mod batches;
+mod exports;
 mod foods;
 mod goals;
 mod logs;
@@ -19,6 +20,7 @@ mod weights;
 
 pub use auth::FakeAuthenticator;
 pub use batches::InMemoryBatchRepository;
+pub use exports::InMemoryExportJobRepository;
 pub use foods::InMemoryFoodRepository;
 pub use goals::InMemoryGoalRepository;
 pub use logs::InMemoryLogRepository;
