@@ -8,7 +8,6 @@ import '../../domain/meal.dart';
 import '../../providers/log_providers.dart';
 import '../../routing/routes.dart';
 import '../../theme/context_extensions.dart';
-import '../../widgets/app_scaffold.dart';
 import 'today_internals.dart';
 import 'widgets/meal_section.dart';
 import 'widgets/ring_summary_card.dart';
@@ -37,11 +36,16 @@ class DayViewCompact extends ConsumerWidget {
     final summaryAsync = ref.watch(daySummaryProvider(date));
     final entriesAsync = ref.watch(logEntriesProvider(date));
 
-    return AppScaffold(
+    // The outer `ShellRoute` already wraps this widget in `AppScaffold`,
+    // so we render a transparent inner `Scaffold` here purely to attach
+    // the FAB — wrapping in `AppScaffold` again would stack two
+    // `NavigationBar`s on top of each other.
+    return Scaffold(
+      backgroundColor: Colors.transparent,
       floatingActionButton: _LogFoodFab(
         onPressed: () => context.push(Routes.foodsSearchPath),
       ),
-      child: CustomScrollView(
+      body: CustomScrollView(
         slivers: <Widget>[
           const SliverToBoxAdapter(child: _CompactHeader()),
           SliverToBoxAdapter(child: _DateBar(date: date)),

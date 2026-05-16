@@ -13,7 +13,6 @@ import '../../providers/log_providers.dart';
 import '../../providers/weight_providers.dart';
 import '../../routing/routes.dart';
 import '../../theme/context_extensions.dart';
-import '../../widgets/app_scaffold.dart';
 import '../log_entry/log_entry_sheet.dart';
 import 'today_internals.dart';
 import 'widgets/meal_section.dart';
@@ -46,54 +45,68 @@ class DayViewExpanded extends ConsumerWidget {
     final frequentsAsync = ref.watch(frequentFoodsProvider);
     final weightAsync = ref.watch(weightSeriesProvider(WeightRange.oneMonth));
 
-    return AppScaffold(
-      title: 'Today',
-      topBarTrailing: <Widget>[
-        _DateChevrons(date: date),
-        SizedBox(width: context.space.x4),
-        _TopSearchField(
-          onTap: () => context.push(Routes.foodsSearchPath),
-        ),
-        SizedBox(width: context.space.x2 + 2),
-        _LogFoodButton(
-          onPressed: () => context.push(Routes.foodsSearchPath),
-        ),
-      ],
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          // The mock pins the right rail at 360 px; everything else flows.
-          return SingleChildScrollView(
-            padding: EdgeInsets.fromLTRB(
-              context.space.x8,
-              context.space.x6,
-              context.space.x8,
-              context.space.x6,
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Expanded(
-                  child: _MealGrid(
-                    date: date,
-                    summaryAsync: summaryAsync,
-                    entriesAsync: entriesAsync,
+    // The outer `ShellRoute` already wraps this widget in `AppScaffold`
+    // (which is what renders the sidebar nav on expanded). Wrapping again
+    // would stack two sidebars — and on top of that, the inner
+    // `AppScaffold`'s `topBarTrailing` slot never reaches the outer
+    // shell, so the date chevrons + search + Log food button would
+    // silently disappear. Inlining them at the top of the body is the
+    // simplest fix for v1.
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // The mock pins the right rail at 360 px; everything else flows.
+        return SingleChildScrollView(
+          padding: EdgeInsets.fromLTRB(
+            context.space.x8,
+            context.space.x6,
+            context.space.x8,
+            context.space.x6,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Row(
+                children: <Widget>[
+                  Text('Today', style: context.text.pageTitle),
+                  const Spacer(),
+                  _DateChevrons(date: date),
+                  SizedBox(width: context.space.x4),
+                  _TopSearchField(
+                    onTap: () => context.push(Routes.foodsSearchPath),
                   ),
-                ),
-                SizedBox(width: context.space.x6),
-                SizedBox(
-                  width: 360,
-                  child: _RightRail(
-                    summaryAsync: summaryAsync,
-                    recentsAsync: recentsAsync,
-                    frequentsAsync: frequentsAsync,
-                    weightAsync: weightAsync,
+                  SizedBox(width: context.space.x2 + 2),
+                  _LogFoodButton(
+                    onPressed: () => context.push(Routes.foodsSearchPath),
                   ),
-                ),
-              ],
-            ),
-          );
-        },
-      ),
+                ],
+              ),
+              SizedBox(height: context.space.x6),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Expanded(
+                    child: _MealGrid(
+                      date: date,
+                      summaryAsync: summaryAsync,
+                      entriesAsync: entriesAsync,
+                    ),
+                  ),
+                  SizedBox(width: context.space.x6),
+                  SizedBox(
+                    width: 360,
+                    child: _RightRail(
+                      summaryAsync: summaryAsync,
+                      recentsAsync: recentsAsync,
+                      frequentsAsync: frequentsAsync,
+                      weightAsync: weightAsync,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }
