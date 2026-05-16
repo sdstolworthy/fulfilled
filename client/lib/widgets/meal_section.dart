@@ -161,6 +161,10 @@ class _EntryRow extends StatelessWidget {
 
     return InkWell(
       onTap: onTap,
+      // T-018 / §7: rows tint to `line2` on hover; never accent, never
+      // elevation. Pin Material's hover paint to the token so the
+      // primitive matches `Hoverable`.
+      hoverColor: colors.line2,
       child: Container(
         decoration: BoxDecoration(
           border: Border(top: BorderSide(color: colors.line2)),
@@ -279,6 +283,9 @@ class _AddFootRow extends StatelessWidget {
     final colors = context.colors;
     return InkWell(
       onTap: onTap,
+      // T-018 / §7 — the "Add food" footer is interactive; tint to
+      // `line2` on hover so the affordance reads alongside `_EntryRow`.
+      hoverColor: colors.line2,
       child: Container(
         decoration: BoxDecoration(
           border: drawTopBorder

@@ -50,6 +50,10 @@ class IconButton36 extends StatelessWidget {
           onTap: onPressed,
           radius: 22, // 44-px hit slop (T-06)
           containedInkWell: false,
+          // T-018 / §7: hover wash is `line2`, never accent. Material's
+          // default would derive from the color scheme — pin it to the
+          // app token so this primitive matches `Hoverable`'s wash.
+          hoverColor: colors.line2,
           child: SizedBox(
             width: 36,
             height: 36,

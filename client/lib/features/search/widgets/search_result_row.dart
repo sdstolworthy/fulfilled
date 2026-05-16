@@ -61,6 +61,9 @@ class SearchResultRow extends StatelessWidget {
       excludeSemantics: true,
       child: InkWell(
         onTap: onTap ?? () => context.push('/foods/${food.id}'),
+        // T-018 / §7 — search-result rows tint to `line2` on hover. The
+        // accent stays reserved for selection (T-04).
+        hoverColor: context.colors.line2,
         child: ConstrainedBox(
           constraints: const BoxConstraints(minHeight: 56),
           child: Padding(

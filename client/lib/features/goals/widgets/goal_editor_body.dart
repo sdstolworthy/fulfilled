@@ -6,6 +6,7 @@ import '../../../domain/enums.dart';
 import '../../../domain/units/energy.dart';
 import '../../../theme/context_extensions.dart';
 import '../../../widgets/number_text.dart';
+import '../../../widgets/skeleton.dart';
 
 /// Shared form body for the New / Edit goal flows.
 ///
@@ -35,7 +36,12 @@ class GoalEditorBody extends StatelessWidget {
   final Decimal rateKgPerWeek;
 
   /// Pre-computed daily kcal target, ready to display via formatKcal.
-  final int previewKcal;
+  ///
+  /// `null` signals "loading" — the preview renders a [Skeleton] in place
+  /// of the kcal hero. This is the state the edit sheet uses while
+  /// `meProvider` is in flight (T-010): the form chrome (direction +
+  /// rate) remains interactive while the profile-dependent target loads.
+  final int? previewKcal;
 
   final ValueChanged<GoalDirection> onDirectionChange;
   final ValueChanged<Decimal> onRateChange;
@@ -206,13 +212,22 @@ class _RateSlider extends StatelessWidget {
 
 class _PreviewBlock extends StatelessWidget {
   const _PreviewBlock({required this.kcal, required this.direction});
-  final int kcal;
+
+  /// `null` → loading state (renders a [Skeleton] sized to match the
+  /// kcal hero so the card height stays stable when the number arrives).
+  final int? kcal;
   final GoalDirection direction;
 
   @override
   Widget build(BuildContext context) {
     final colors = context.colors;
     final tokens = context.tokens;
+    final heroStyle =
+        context.text.heroNumeric.copyWith(color: colors.ink);
+    // Hero font size is the load-bearing dimension for the skeleton's
+    // height; fall back to the style's default if unset (defensive — the
+    // theme provides one today).
+    final heroHeight = heroStyle.fontSize ?? 28.0;
     return Container(
       key: const ValueKey('goals.preview_kcal'),
       padding: EdgeInsets.all(tokens.space.x4),
@@ -233,15 +248,29 @@ class _PreviewBlock extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.baseline,
             textBaseline: TextBaseline.alphabetic,
             children: <Widget>[
-              // T-20: the kcal number announces with its unit
-              // ("2,300 kilocalories"). The visible " kcal / day" caption
-              // stays for sighted users; the `NumberText` semantic label
-              // is what the screen reader hears for the digit block.
-              NumberText(
-                value: formatKcal(Decimal.fromInt(kcal)),
-                unit: 'kilocalories',
-                style: context.text.heroNumeric.copyWith(color: colors.ink),
-              ),
+              if (kcal == null)
+                // T-08 loading affordance — the kcal value depends on
+                // `meProvider`; render a skeleton of the same height as
+                // the hero number so the card doesn't jump when the
+                // profile resolves. T-010 wires this state.
+                Skeleton(
+                  key: const ValueKey('goals.preview_kcal_skeleton'),
+                  height: heroHeight,
+                  width: 96,
+                  borderRadius:
+                      BorderRadius.circular(tokens.radius.r1),
+                )
+              else
+                // T-20: the kcal number announces with its unit
+                // ("2,300 kilocalories"). The visible " kcal / day"
+                // caption stays for sighted users; the `NumberText`
+                // semantic label is what the screen reader hears for the
+                // digit block.
+                NumberText(
+                  value: formatKcal(Decimal.fromInt(kcal!)),
+                  unit: 'kilocalories',
+                  style: heroStyle,
+                ),
               SizedBox(width: tokens.space.x2),
               Text(
                 'kcal / day',

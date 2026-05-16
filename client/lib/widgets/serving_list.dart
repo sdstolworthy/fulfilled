@@ -143,7 +143,13 @@ class _ServingRow extends StatelessWidget {
       button: true,
       selected: isSelected,
       label: serving.name,
-      child: InkWell(onTap: onTap, child: row),
+      child: InkWell(
+        onTap: onTap,
+        // T-018 / §7 — selectable serving rows tint to `line2` on hover.
+        // The accent stays reserved for the *selected* row's soft fill.
+        hoverColor: colors.line2,
+        child: row,
+      ),
     );
   }
 

@@ -80,6 +80,10 @@ class SettingsRow extends StatelessWidget {
         color: colors.surface,
         child: InkWell(
           onTap: onTap,
+          // T-018 / §7 — settings rows tint to `line2` on hover. Never
+          // accent (T-04). The non-tappable Units row (onTap == null)
+          // skips Material's hover wash automatically.
+          hoverColor: colors.line2,
           child: row,
         ),
       ),
