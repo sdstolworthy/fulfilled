@@ -15,10 +15,10 @@ import 'widgets/weight_summary_card.dart';
 /// `specs/ui_mocks/screen_06_weight_log.html`.
 ///
 /// Composition (top → bottom on `compact`):
-///   - top bar with title + calendar icon + overflow (provided by
-///     `AppScaffold` parent — but this screen is inside the ShellRoute,
-///     and the shell already renders title-less. We render our own header
-///     row inside the body so the calendar/overflow icons match the mock.
+///   - top bar with the screen title only on `compact`. The calendar
+///     and overflow icons that the mock shows are deleted in v1 per
+///     UX-111 / PM doc §2 Theme C — both were tappable-but-no-op and
+///     the back-fill date picker already lives on the log sheet.
 ///   - `WeightSummaryCard` — current weight + delta pill + start/goal/avg
 ///     stats.
 ///   - `WeightSparkline` card — range segmented control + chart + axis
@@ -136,57 +136,19 @@ class _WeightTopBar extends StatelessWidget {
         context.space.x5,
         context.space.x3,
       ),
+      // UX-111 (Theme C dead-affordance sweep) — the trailing
+      // `calendar_today_outlined` and `more_horiz` `_HeaderIconButton`s
+      // used to render here with `onPressed: null` (visible but never
+      // tappable). Architect §8 / PM doc §2 Theme C: delete in v1,
+      // restore when wired. The calendar's intended back-fill flow
+      // already lives on the log sheet's date field; the overflow has
+      // no real menu yet.
       child: Row(
         children: <Widget>[
           Expanded(child: Text('Weight', style: context.text.pageTitle)),
-          if (onLogWeight != null) ...<Widget>[
+          if (onLogWeight != null)
             _PrimaryLogWeightButton(onPressed: onLogWeight!),
-            SizedBox(width: context.space.x2),
-          ],
-          const _HeaderIconButton(
-            icon: Icons.calendar_today_outlined,
-            tooltip: 'Pick a date',
-            // Not wired in v1 — the date picker for back-filling lives on
-            // the log sheet. The icon is preserved for mock parity.
-            onPressed: null,
-          ),
-          const _HeaderIconButton(
-            icon: Icons.more_horiz,
-            tooltip: 'More options',
-            onPressed: null,
-          ),
         ],
-      ),
-    );
-  }
-}
-
-class _HeaderIconButton extends StatelessWidget {
-  const _HeaderIconButton({
-    required this.icon,
-    required this.tooltip,
-    required this.onPressed,
-  });
-
-  final IconData icon;
-  final String tooltip;
-  final VoidCallback? onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    return Semantics(
-      button: true,
-      label: tooltip,
-      child: SizedBox(
-        width: 44,
-        height: 44,
-        child: InkResponse(
-          onTap: onPressed,
-          radius: 22,
-          child: Center(
-            child: Icon(icon, size: 22, color: context.colors.ink2),
-          ),
-        ),
       ),
     );
   }
@@ -288,6 +250,11 @@ class _RecentEntriesHeader extends StatelessWidget {
         context.space.x5,
         context.space.x2,
       ),
+      // UX-111 (Theme C dead-affordance sweep) — the trailing
+      // "See all" `Text` used to render here. It read as a button but
+      // routed nowhere. Architect §8 / PM doc §2 Theme C: delete in
+      // v1, restore when a full weight-history route lands (v1.1).
+      // The 5-row recent entries list below stays.
       child: Row(
         children: <Widget>[
           Expanded(
@@ -295,10 +262,6 @@ class _RecentEntriesHeader extends StatelessWidget {
               'RECENT ENTRIES',
               style: context.text.eyebrow.copyWith(color: context.colors.ink3),
             ),
-          ),
-          Text(
-            'See all',
-            style: context.text.meta.copyWith(color: context.colors.ink3),
           ),
         ],
       ),

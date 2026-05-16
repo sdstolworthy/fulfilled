@@ -273,6 +273,13 @@ class _DetailAppBar extends StatelessWidget implements PreferredSizeWidget {
               child: const Text('Edit'),
             ),
           ),
+        // UX-111 (Theme C dead-affordance sweep) — the trailing
+        // `more_horiz` overflow `IconButton` used to render here with a
+        // no-op `onPressed: () {}` when the Add-to-log CTA was hidden
+        // (expanded form factor sticky bottom CTA). Architect §8 / PM
+        // doc §2 Theme C: delete in v1, restore when wired to a real
+        // menu (e.g., "Share food", "Edit serving"). Tracked as a v1.1
+        // ticket.
         if (showAddToLog)
           Padding(
             padding: EdgeInsets.only(
@@ -292,12 +299,6 @@ class _DetailAppBar extends StatelessWidget implements PreferredSizeWidget {
                 ),
               ),
             ),
-          )
-        else
-          IconButton(
-            icon: const Icon(Icons.more_horiz),
-            tooltip: 'More',
-            onPressed: () {},
           ),
       ],
     );

@@ -55,66 +55,75 @@ class DayViewCompact extends ConsumerWidget {
         // `_CompactHeader` into the FAB's long-press menu.
         onQuickAdd: () => showQuickAddSheet(context),
       ),
-      body: CustomScrollView(
-        slivers: <Widget>[
-          const SliverToBoxAdapter(child: _CompactHeader()),
-          SliverToBoxAdapter(child: _DateBar(date: date)),
-          SliverToBoxAdapter(
-            child: Padding(
+      // UX-103: horizontal-swipe-to-change-day wraps the scrollable body
+      // (and only the body — not the FAB or shell chrome). The wrap is
+      // translucent so vertical drags pass through to the
+      // `CustomScrollView`'s scroll gesture; only horizontal flings past
+      // the 200 px/s floor route via `navigateDay`.
+      body: DaySwipeWrap(
+        date: date,
+        child: CustomScrollView(
+          slivers: <Widget>[
+            const SliverToBoxAdapter(child: _CompactHeader()),
+            SliverToBoxAdapter(child: _DateBar(date: date)),
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(
+                  context.space.x5,
+                  context.space.x2,
+                  context.space.x5,
+                  context.space.x3 + 2,
+                ),
+                child: summaryAsync.when(
+                  data: (s) => RingSummaryCard(summary: s, compact: true),
+                  loading: () => const TodaySkeleton(
+                    height: 196,
+                    semanticsLabel: 'Loading today summary',
+                  ),
+                  error: (e, _) => TodayErrorCard(message: '$e'),
+                ),
+              ),
+            ),
+            // QL-108 — empty-day pill. Renders between the ring summary
+            // and the meal sections when `logEntriesProvider(date)`
+            // resolves to an empty list (any day, including backdates).
+            // The pill disappears the moment the first entry lands
+            // because `entriesAsync` is reactive. Uses the lifted
+            // `EmptyState` primitive directly — `EmptyState`-style
+            // "pill" (not a card).
+            SliverToBoxAdapter(
+              child: _EmptyDayPill(entriesAsync: entriesAsync),
+            ),
+            SliverPadding(
               padding: EdgeInsets.fromLTRB(
                 context.space.x5,
-                context.space.x2,
+                0,
                 context.space.x5,
-                context.space.x3 + 2,
+                context.space.x6 * 5, // generous bottom inset for the FAB
               ),
-              child: summaryAsync.when(
-                data: (s) => RingSummaryCard(summary: s, compact: true),
-                loading: () => const TodaySkeleton(
-                  height: 196,
-                  semanticsLabel: 'Loading today summary',
-                ),
-                error: (e, _) => TodayErrorCard(message: '$e'),
+              sliver: _MealsSliver(
+                date: date,
+                summaryAsync: summaryAsync,
+                entriesAsync: entriesAsync,
+                onAddTap: (Meal _) =>
+                    context.push(Routes.foodsSearchPath),
+                // LU-005: tapping a logged row opens the LogEntrySheet
+                // in edit mode. The handler guards on pending-sync
+                // (T-22) and fetches the full Food before opening —
+                // see `editLogEntry` for the gates.
+                onEntryTap: (entry) => editLogEntry(ref, context, entry),
+                // QL-108 — thread the outbox's `isPendingSync` predicate
+                // down so `_EntryRow` can render the "Pending sync"
+                // badge and pulse it on rejected tap. The compact form
+                // factor mounts the outbox-backed `LogRepository` (see
+                // `repository_providers.dart`); the predicate returns
+                // `false` for ack'd entries.
+                isPendingSync: (entry) =>
+                    ref.read(logRepositoryProvider).isPendingSync(entry.id),
               ),
             ),
-          ),
-          // QL-108 — empty-day pill. Renders between the ring summary
-          // and the meal sections when `logEntriesProvider(date)` resolves
-          // to an empty list (any day, including backdates). The pill
-          // disappears the moment the first entry lands because
-          // `entriesAsync` is reactive. Uses the lifted `EmptyState`
-          // primitive directly — `EmptyState`-style "pill" (not a card).
-          SliverToBoxAdapter(
-            child: _EmptyDayPill(entriesAsync: entriesAsync),
-          ),
-          SliverPadding(
-            padding: EdgeInsets.fromLTRB(
-              context.space.x5,
-              0,
-              context.space.x5,
-              context.space.x6 * 5, // generous bottom inset for the FAB
-            ),
-            sliver: _MealsSliver(
-              date: date,
-              summaryAsync: summaryAsync,
-              entriesAsync: entriesAsync,
-              onAddTap: (Meal _) =>
-                  context.push(Routes.foodsSearchPath),
-              // LU-005: tapping a logged row opens the LogEntrySheet in
-              // edit mode. The handler guards on pending-sync (T-22)
-              // and fetches the full Food before opening — see
-              // `editLogEntry` for the gates.
-              onEntryTap: (entry) => editLogEntry(ref, context, entry),
-              // QL-108 — thread the outbox's `isPendingSync` predicate
-              // down so `_EntryRow` can render the "Pending sync" badge
-              // and pulse it on rejected tap. The compact form factor
-              // mounts the outbox-backed `LogRepository` (see
-              // `repository_providers.dart`); the predicate returns
-              // `false` for ack'd entries.
-              isPendingSync: (entry) =>
-                  ref.read(logRepositoryProvider).isPendingSync(entry.id),
-            ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

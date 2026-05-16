@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -262,9 +263,18 @@ class _ProfileBody extends ConsumerWidget {
         SizedBox(height: space.x4),
 
         // Version footnote.
+        //
+        // UX-112 / PM UX pack §4 (Profile "(dev)" version tag):
+        // the "(dev)" suffix is conditional on [kDebugMode]. Release
+        // builds drop the suffix entirely so the footnote reads as a
+        // clean version line; dev builds keep the tag so contributors
+        // running a debug or profile build see the channel they're
+        // looking at. `kDebugMode` is a `const` in release, so the
+        // dead `' (dev)'` branch is tree-shaken at compile time.
         Center(
+          key: const ValueKey('profile.version_footnote'),
           child: Text(
-            'Fulfilled · v0.1.0 (dev)',
+            'Fulfilled · v0.1.0${kDebugMode ? ' (dev)' : ''}',
             style: context.text.meta.copyWith(color: colors.ink3),
           ),
         ),

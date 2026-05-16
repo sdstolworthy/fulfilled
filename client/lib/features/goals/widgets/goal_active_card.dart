@@ -6,6 +6,7 @@ import '../../../domain/goal.dart';
 import '../../../domain/units/energy.dart';
 import '../../../domain/units/macros.dart';
 import '../../../theme/context_extensions.dart';
+import '../../../widgets/primary_button.dart';
 
 /// Dark-gradient hero card on screen 07 — the active goal.
 ///
@@ -23,8 +24,13 @@ import '../../../theme/context_extensions.dart';
 /// referenced through the token sheet (`accent` and a derived darker
 /// shade computed in `_HeroBackground`).
 ///
-/// **T-04.** "+ New goal" is a primary CTA — accent fill, surface ink.
-/// "Edit current" sits on the gradient as a secondary translucent button.
+/// **T-04 (UX-112, PM UX pack §4 — Goals button hierarchy fix).**
+/// "Edit current" is the canonical [PrimaryButton] (the 90% case —
+/// users adjust their current goal far more often than they start
+/// over). "New goal" is the secondary [OutlinedButton] — the
+/// "deliberate restart" affordance that should read as quieter than
+/// the edit path. Previously both buttons read as primary-styled and
+/// the user paused to disambiguate.
 class GoalActiveCard extends StatelessWidget {
   const GoalActiveCard({
     required this.goal,
@@ -455,40 +461,40 @@ class _ActionRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final tokens = context.tokens;
     final c = context.colors;
+    // UX-112 PM UX pack §4 — Goals button hierarchy fix.
+    //
+    // Edit current is the canonical [PrimaryButton] (T-04 — accent
+    // CTA, the 90%-case). New goal is an [OutlinedButton] (secondary
+    // action) with surface-tinted ink + border to read as quieter
+    // against the dark gradient.
+    //
+    // Visual followup: PrimaryButton's accent fill on the active card's
+    // accent-gradient background is intentionally muted but readable;
+    // a future design pass may want to tint the fill against the
+    // gradient (architect §8 / PM doc §4 — the v1 goal is hierarchy,
+    // not a separate dark-surface PrimaryButton token).
     return Row(
       children: <Widget>[
         Expanded(
-          child: SizedBox(
-            height: 42,
-            child: TextButton(
-              key: const ValueKey('goals.edit_current'),
+          child: KeyedSubtree(
+            key: const ValueKey('goals.edit_current'),
+            child: PrimaryButton(
+              label: 'Edit current',
               onPressed: onEditCurrent,
-              style: TextButton.styleFrom(
-                backgroundColor: c.surface.withAlpha(41),
-                foregroundColor: c.surface,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(tokens.radius.r1 + 2),
-                ),
-                textStyle: context.text.body.copyWith(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              child: const Text('Edit current'),
+              dense: true,
             ),
           ),
         ),
         SizedBox(width: tokens.space.x2 + tokens.space.x05),
         Expanded(
           child: SizedBox(
-            height: 42,
-            child: ElevatedButton(
+            height: 44,
+            child: OutlinedButton(
               key: const ValueKey('goals.new_goal'),
               onPressed: onNewGoal,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: c.surface,
-                foregroundColor: c.accent,
-                elevation: 0,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: c.surface,
+                side: BorderSide(color: c.surface.withAlpha(120)),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(tokens.radius.r1 + 2),
                 ),

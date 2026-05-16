@@ -272,30 +272,40 @@ class _MacroBars extends StatelessWidget {
       compact: compact,
     );
 
+    // A11y (UX-112, PM UX pack §6): wrap the three macro bars in a
+    // single `MergeSemantics` so the screen-reader announcement is one
+    // statement — "protein 56 of 80 grams, carbs 120 of 240 grams, fat
+    // 33 of 60 grams" — instead of three independent nodes the user
+    // has to step through. T-20 honoured (consolidated label is the
+    // single announcement surface for the macro row).
     if (compact) {
       // Three-up row of equal width bars on the mobile mock.
-      return Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Expanded(child: protein),
-          SizedBox(width: context.space.x2 + 2),
-          Expanded(child: carbs),
-          SizedBox(width: context.space.x2 + 2),
-          Expanded(child: fat),
-        ],
+      return MergeSemantics(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Expanded(child: protein),
+            SizedBox(width: context.space.x2 + 2),
+            Expanded(child: carbs),
+            SizedBox(width: context.space.x2 + 2),
+            Expanded(child: fat),
+          ],
+        ),
       );
     }
 
     // Expanded right-rail mock stacks the three bars vertically.
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: <Widget>[
-        protein,
-        SizedBox(height: context.space.x3),
-        carbs,
-        SizedBox(height: context.space.x3),
-        fat,
-      ],
+    return MergeSemantics(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          protein,
+          SizedBox(height: context.space.x3),
+          carbs,
+          SizedBox(height: context.space.x3),
+          fat,
+        ],
+      ),
     );
   }
 }

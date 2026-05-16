@@ -7,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import 'package:fulfilled/widgets/button_loading_bar.dart';
+import 'package:fulfilled/widgets/skeleton.dart';
 import 'package:fulfilled/widgets/weight_stepper.dart';
 
 import '../../../domain/enums.dart';
@@ -59,12 +60,18 @@ class LogWeightSheet extends ConsumerStatefulWidget {
 }
 
 class _LogWeightSheetState extends ConsumerState<LogWeightSheet> {
-  // Internal weight in 0.1-kg units to avoid float drift. Initial value
-  // is pulled from `meProvider` if available, otherwise 70.0 kg.
+  // Internal weight in 0.1-kg units to avoid float drift. UX-109 (F5):
+  // the seed is resolved once via an async fall-through chain
+  //   1. `weightHistoryProvider.future` → newest entry's `weightKg`
+  //   2. `meProvider.future` → `User.currentWeightKg`
+  //   3. `Decimal.parse('70')` paranoid default
+  // `null` means "still resolving"; while null we render a Skeleton in
+  // place of the stepper so the field doesn't flash a misleading
+  // numeric (e.g. `0.0 kg` or `70.0 kg`) before the real seed lands.
   // The lifted `QuantityStepper` owns its own step semantics (`0.1` for
   // kg passed from the caller); chip taps still mutate this store
   // directly to snap exactly to the chip's value.
-  int _tenths = 700;
+  int? _tenths;
   DateTime _date = _today();
   final TextEditingController _noteCtrl = TextEditingController();
   bool _saving = false;
@@ -76,21 +83,56 @@ class _LogWeightSheetState extends ConsumerState<LogWeightSheet> {
   }
 
   Decimal get _weightKg =>
-      (Decimal.fromInt(_tenths) / Decimal.fromInt(10))
+      (Decimal.fromInt(_tenths ?? 700) / Decimal.fromInt(10))
           .toDecimal(scaleOnInfinitePrecision: 1);
 
   @override
   void initState() {
     super.initState();
-    // Seed from current user, if known. `meProvider` is read once; we
-    // don't watch it because we don't want the input value to jitter
-    // mid-edit if `me` updates.
-    final me = ref.read(meProvider).asData?.value;
-    final w = me?.currentWeightKg;
-    if (w != null) {
-      final rounded = w.round(scale: 1);
-      _tenths = (rounded * Decimal.fromInt(10)).toBigInt().toInt();
+    // UX-109 / F5 — async seed fall-through. The chain runs once at
+    // sheet open and `setState`s when the value resolves. We use
+    // `ref.read(...).future` (not `ref.watch`) so a background refresh
+    // of either provider cannot silently overwrite a mid-edit value.
+    unawaited(_resolveSeed());
+  }
+
+  /// Resolve the initial seed per the F5 fall-through chain. Each step
+  /// is wrapped in try/catch so an erroring provider falls through to
+  /// the next branch instead of leaving the stepper unseeded.
+  Future<void> _resolveSeed() async {
+    Decimal? seed;
+
+    // 1. Newest history entry, if the provider resolves with a
+    //    non-empty list.
+    try {
+      final history = await ref.read(weightHistoryProvider.future);
+      if (history.isNotEmpty) {
+        seed = history.first.weightKg;
+      }
+    } catch (_) {
+      // Provider in error; fall through to step 2.
     }
+
+    // 2. `User.currentWeightKg`, if present.
+    if (seed == null) {
+      try {
+        final me = await ref.read(meProvider.future);
+        if (me.currentWeightKg != null) {
+          seed = me.currentWeightKg;
+        }
+      } catch (_) {
+        // Provider in error; fall through to step 3.
+      }
+    }
+
+    // 3. Paranoid default — same value the pre-F5 code used.
+    seed ??= Decimal.parse('70');
+
+    if (!mounted) return;
+    final rounded = seed.round(scale: 1);
+    setState(() {
+      _tenths = (rounded * Decimal.fromInt(10)).toBigInt().toInt();
+    });
   }
 
   @override
@@ -109,6 +151,9 @@ class _LogWeightSheetState extends ConsumerState<LogWeightSheet> {
   /// (T-18).
   Future<void> _save() async {
     if (_saving) return;
+    // Defensive: the save button is hidden / disabled until the seed
+    // resolves, but bail anyway if a programmatic tap sneaks through.
+    if (_tenths == null) return;
     setState(() {
       _saving = true;
       _error = null;
@@ -172,6 +217,7 @@ class _LogWeightSheetState extends ConsumerState<LogWeightSheet> {
   Widget build(BuildContext context) {
     final body = _Body(
       weightKg: _weightKg,
+      seeded: _tenths != null,
       onWeightChanged: (next) {
         // The lifted `QuantityStepper` is callback-shaped; mirror its
         // value into our int-tenths store so the chips + format stay
@@ -246,6 +292,7 @@ class _LogWeightSheetState extends ConsumerState<LogWeightSheet> {
 class _Body extends StatelessWidget {
   const _Body({
     required this.weightKg,
+    required this.seeded,
     required this.onWeightChanged,
     required this.onQuick,
     required this.date,
@@ -258,6 +305,16 @@ class _Body extends StatelessWidget {
   });
 
   final Decimal weightKg;
+
+  /// UX-109 — `false` while the F5 fall-through chain is still
+  /// resolving the initial seed. The stepper + quick-chips render as
+  /// a `Skeleton` block until this flips true so the user never sees
+  /// a misleading numeric (e.g. `0.0 kg`) before the real seed lands.
+  /// Provider warmth (the weight screen has already pumped both
+  /// `weightHistoryProvider` and `meProvider` by the time the FAB
+  /// opens this sheet) means the placeholder typically renders for a
+  /// single frame.
+  final bool seeded;
   final ValueChanged<Decimal?> onWeightChanged;
   final ValueChanged<int> onQuick; // tenths
   final DateTime date;
@@ -296,22 +353,34 @@ class _Body extends StatelessWidget {
           ],
         ),
         SizedBox(height: context.space.x3),
-        WeightStepper(
-          value: weightKg,
-          onChanged: (next) => onWeightChanged(next),
-          minKg: Decimal.parse('20'),
-          maxKg: Decimal.parse('300'),
-          semanticsLabel: 'Weight',
-          // QL-107 — autofocus the weight input when the sheet opens so
-          // the system keyboard appears immediately (single-mode sheet,
-          // no create-vs-edit distinction).
-          autofocus: true,
-        ),
-        SizedBox(height: context.space.x3),
-        _QuickChips(
-          weightKg: weightKg,
-          onPick: onQuick,
-        ),
+        // UX-109 — while the F5 seed is still resolving, render a
+        // skeleton in place of the stepper + quick chips. Mounting the
+        // real `WeightStepper` only after the seed resolves means its
+        // `autofocus: true` lifecycle fires once with the correct
+        // value already in place; the system keyboard pops up over the
+        // pre-filled "79.4 kg", not over a placeholder zero.
+        if (!seeded) ...<Widget>[
+          const Skeleton(height: 48),
+          SizedBox(height: context.space.x3),
+          const Skeleton(height: 28),
+        ] else ...<Widget>[
+          WeightStepper(
+            value: weightKg,
+            onChanged: (next) => onWeightChanged(next),
+            minKg: Decimal.parse('20'),
+            maxKg: Decimal.parse('300'),
+            semanticsLabel: 'Weight',
+            // QL-107 — autofocus the weight input when the sheet opens
+            // so the system keyboard appears immediately (single-mode
+            // sheet, no create-vs-edit distinction).
+            autofocus: true,
+          ),
+          SizedBox(height: context.space.x3),
+          _QuickChips(
+            weightKg: weightKg,
+            onPick: onQuick,
+          ),
+        ],
         SizedBox(height: context.space.x4),
         _DateRow(date: date, onTap: onPickDate),
         SizedBox(height: context.space.x3),
@@ -343,7 +412,13 @@ class _Body extends StatelessWidget {
           ),
         ],
         SizedBox(height: context.space.x4),
-        _SaveButton(saving: saving, onPressed: onSave),
+        // UX-109 — disable save while the F5 seed is still resolving;
+        // committing the placeholder value would write a stale 0/70.
+        _SaveButton(
+          saving: saving,
+          enabled: seeded,
+          onPressed: onSave,
+        ),
       ],
     );
   }
@@ -472,9 +547,14 @@ class _DateRow extends StatelessWidget {
 }
 
 class _SaveButton extends StatelessWidget {
-  const _SaveButton({required this.saving, required this.onPressed});
+  const _SaveButton({
+    required this.saving,
+    required this.onPressed,
+    this.enabled = true,
+  });
 
   final bool saving;
+  final bool enabled;
   final VoidCallback onPressed;
 
   @override
@@ -485,7 +565,7 @@ class _SaveButton extends StatelessWidget {
         color: context.colors.accent,
         borderRadius: BorderRadius.circular(context.radius.r3),
         child: InkWell(
-          onTap: saving ? null : onPressed,
+          onTap: (saving || !enabled) ? null : onPressed,
           borderRadius: BorderRadius.circular(context.radius.r3),
           child: Center(
             // QL-106 — `ButtonLoadingBar` replaces the prior

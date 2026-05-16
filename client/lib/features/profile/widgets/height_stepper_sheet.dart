@@ -42,6 +42,10 @@ class HeightStepperSheet extends ConsumerStatefulWidget {
 }
 
 class _HeightStepperSheetState extends ConsumerState<HeightStepperSheet> {
+  /// Initial seeded value captured at `initState`. The Theme D narrow
+  /// fix (UX-112, PM UX pack §3 Theme D MODIFIED) uses this to gate the
+  /// Save button — disabled when the user hasn't changed the seed.
+  late final Decimal _initialCm;
   late Decimal _cm;
   bool _saving = false;
   String? _error;
@@ -49,8 +53,15 @@ class _HeightStepperSheetState extends ConsumerState<HeightStepperSheet> {
   @override
   void initState() {
     super.initState();
-    _cm = widget.initial ?? Decimal.fromInt(170);
+    _initialCm = widget.initial ?? Decimal.fromInt(170);
+    _cm = _initialCm;
   }
+
+  /// Returns `true` when the current value differs from the seed.
+  /// Disabled when unchanged (Theme D narrow fix from PM UX pack §3
+  /// Theme D). The broader Save-enablement audit + lint rule is v1.1
+  /// (see `pm_ux_pack.md` §10 Punt list).
+  bool _isDirty() => _cm != _initialCm;
 
   /// T-24 Case 1 — pop-to-source.
   ///
@@ -58,9 +69,12 @@ class _HeightStepperSheetState extends ConsumerState<HeightStepperSheet> {
   /// rendered on the row they tapped from. The repo write happens before
   /// the pop; `meProvider` invalidation alone suffices — every downstream
   /// height surface re-derives from `meProvider` (T-18).
+  ///
+  /// Disabled when unchanged (Theme D narrow fix from PM UX pack §3
+  /// Theme D). The broader audit + lint rule is v1.1.
   Future<void> _save() async {
     if (_saving) return;
-    if (widget.initial == _cm) {
+    if (!_isDirty()) {
       Navigator.of(context).pop();
       return;
     }
@@ -85,6 +99,7 @@ class _HeightStepperSheetState extends ConsumerState<HeightStepperSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final canSave = !_saving && _isDirty();
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -102,7 +117,7 @@ class _HeightStepperSheetState extends ConsumerState<HeightStepperSheet> {
           ),
         ),
         EditorFooter(
-          onSave: _saving ? null : _save,
+          onSave: canSave ? _save : null,
           saving: _saving,
           errorText: _error,
         ),

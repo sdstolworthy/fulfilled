@@ -63,7 +63,15 @@ class DayViewExpanded extends ConsumerWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         // The mock pins the right rail at 360 px; everything else flows.
-        return SingleChildScrollView(
+        // UX-103: wrap the scrollable region in `DaySwipeWrap` so left/
+        // right flings change day. The wrap is translucent — vertical
+        // drags fall through to the `SingleChildScrollView`. We wrap
+        // only the body's scroll content (not the inline date chevrons
+        // row in the header above, which is itself part of the column
+        // inside the scroll view).
+        return DaySwipeWrap(
+          date: date,
+          child: SingleChildScrollView(
           padding: EdgeInsets.fromLTRB(
             context.space.x8,
             context.space.x6,
@@ -147,6 +155,7 @@ class DayViewExpanded extends ConsumerWidget {
                 ],
               ),
             ],
+          ),
           ),
         );
       },
@@ -248,32 +257,43 @@ class _TopSearchField extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = context.colors;
-    return Tooltip(
-      message: 'Search foods (⌘K)',
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(context.radius.r1),
-        child: Container(
-          width: 280,
-          height: 36,
-          padding: EdgeInsets.symmetric(horizontal: context.space.x3),
-          decoration: BoxDecoration(
-            color: colors.bg,
-            border: Border.all(color: colors.line),
+    // A11y (UX-112, PM UX pack §6): the visual reads as a text input
+    // but the affordance routes to `/foods/search` — screen readers
+    // need an explicit button role so the announcement isn't
+    // "edit text" but "button: Search foods". `MergeSemantics` keeps
+    // the icon + label glyphs from composing as two separate nodes.
+    return Semantics(
+      button: true,
+      label: 'Search foods',
+      child: MergeSemantics(
+        child: Tooltip(
+          message: 'Search foods (⌘K)',
+          child: InkWell(
+            onTap: onTap,
             borderRadius: BorderRadius.circular(context.radius.r1),
-          ),
-          child: Row(
-            children: <Widget>[
-              Icon(Icons.search, size: 16, color: colors.ink3),
-              SizedBox(width: context.space.x2),
-              Expanded(
-                child: Text(
-                  'Search foods or paste a barcode…',
-                  overflow: TextOverflow.ellipsis,
-                  style: context.text.meta.copyWith(color: colors.ink3),
-                ),
+            child: Container(
+              width: 280,
+              height: 36,
+              padding: EdgeInsets.symmetric(horizontal: context.space.x3),
+              decoration: BoxDecoration(
+                color: colors.bg,
+                border: Border.all(color: colors.line),
+                borderRadius: BorderRadius.circular(context.radius.r1),
               ),
-            ],
+              child: Row(
+                children: <Widget>[
+                  Icon(Icons.search, size: 16, color: colors.ink3),
+                  SizedBox(width: context.space.x2),
+                  Expanded(
+                    child: Text(
+                      'Search foods or paste a barcode…',
+                      overflow: TextOverflow.ellipsis,
+                      style: context.text.meta.copyWith(color: colors.ink3),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
         ),
       ),

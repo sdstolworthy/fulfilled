@@ -214,9 +214,17 @@ class _EntryRowState extends State<_EntryRow> {
         '${entry.foodName}, $servingPart, ${formatKcal(entry.kcal)} '
         'kilocalories, edit$pendingSuffix';
 
+    // UX-112 a11y — declare the row's Semantics as a `liveRegion` when
+    // the entry is pending sync so the screen reader announces the
+    // state change on flush. The badge widget itself also carries a
+    // `LiveRegion` declaration so it satisfies the inline a11y contract
+    // even if the row's ExcludeSemantics evolves; in the current tree
+    // shape the row's Semantics is the surface that actually reaches
+    // the screen reader.
     return Semantics(
       button: true,
       label: semanticsLabel,
+      liveRegion: widget.isPendingSync,
       child: ExcludeSemantics(
         child: InkWell(
           onTap: widget.onTap == null
@@ -350,9 +358,19 @@ const String _quickAddFoodId = 'food_quick_add';
 /// is on so reduce-motion users still get the badge and the SnackBar,
 /// just without the scale tween.
 ///
-/// Tenants honored: T-20 (the badge is hidden from semantics — the
-/// parent row's Semantics label carries the "still syncing" suffix so
-/// the screen reader announces one merged string instead of two).
+/// Tenants honored: T-20 (the badge participates in semantics through a
+/// LiveRegion announcement; the parent row's Semantics label carries
+/// the "still syncing" suffix as the persistent announcement, and the
+/// LiveRegion here surfaces the transient state change to the screen
+/// reader on mount/unmount — UX-112 a11y accept).
+///
+/// **A11y (UX-112, PM UX pack §6 — LiveRegion on pending-sync badge).**
+/// Wrapping in `Semantics(liveRegion: true, ...)` means the screen
+/// reader is notified when this widget mounts (entry is queued for
+/// sync) and again when its label changes — closing the T-22 loop for
+/// the assistive-tech user. The inner content is kept semantically
+/// quiet via `ExcludeSemantics` so the badge's text glyph doesn't
+/// double-announce alongside the LiveRegion label.
 class _PendingSyncBadge extends StatelessWidget {
   const _PendingSyncBadge({
     required this.pulsing,
@@ -365,27 +383,31 @@ class _PendingSyncBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = context.colors;
-    return ExcludeSemantics(
-      child: AnimatedScale(
-        scale: pulsing ? pulseScale : 1.0,
-        duration: motion(context, const Duration(milliseconds: 100)),
-        curve: Curves.easeOut,
-        child: Container(
-          key: const Key('pending-sync-badge'),
-          padding: EdgeInsets.symmetric(
-            horizontal: context.space.x2,
-            vertical: context.space.x05,
-          ),
-          decoration: BoxDecoration(
-            color: colors.line2,
-            borderRadius: BorderRadius.circular(context.radius.rPill),
-          ),
-          child: Text(
-            'Pending sync',
-            style: context.text.meta.copyWith(
-              color: colors.ink2,
-              fontSize: 11,
-              fontWeight: FontWeight.w500,
+    return Semantics(
+      liveRegion: true,
+      label: 'Pending sync',
+      child: ExcludeSemantics(
+        child: AnimatedScale(
+          scale: pulsing ? pulseScale : 1.0,
+          duration: motion(context, const Duration(milliseconds: 100)),
+          curve: Curves.easeOut,
+          child: Container(
+            key: const Key('pending-sync-badge'),
+            padding: EdgeInsets.symmetric(
+              horizontal: context.space.x2,
+              vertical: context.space.x05,
+            ),
+            decoration: BoxDecoration(
+              color: colors.line2,
+              borderRadius: BorderRadius.circular(context.radius.rPill),
+            ),
+            child: Text(
+              'Pending sync',
+              style: context.text.meta.copyWith(
+                color: colors.ink2,
+                fontSize: 11,
+                fontWeight: FontWeight.w500,
+              ),
             ),
           ),
         ),

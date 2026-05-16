@@ -286,6 +286,68 @@ class TodayPill extends StatelessWidget {
   }
 }
 
+/// Horizontal-swipe wrapper around the day view's scrollable body
+/// (UX-103). Left swipe → next day; right swipe → previous day. Routes
+/// via [navigateDay] (which goes through `pathForDay`), so the chevrons
+/// and the swipe agree on the canonical route shape.
+///
+/// **Threshold (architect §6.4).** `|primaryVelocity| > 200 px/s`. A
+/// 50 px total-displacement floor is implicit in the 200 px/s ×
+/// 0.25 s typical drag duration — no separate guard. Below-threshold
+/// drags are a no-op.
+///
+/// **Pass-through (T-12 / architect §6.4).** Uses
+/// `HitTestBehavior.translucent` so vertical drags fall through to the
+/// inner `ScrollView` (`CustomScrollView` on compact,
+/// `SingleChildScrollView` on expanded). The wrap subscribes only to
+/// `onHorizontalDragEnd` — no `onHorizontalDragStart`/`Update` — so the
+/// vertical drag gesture-arena resolution isn't perturbed.
+///
+/// **Reduce-motion.** The gesture itself doesn't animate. The day
+/// change is a `context.go(...)` route push; the router's built-in page
+/// transition already honours `MediaQuery.disableAnimations`. Nothing
+/// to do at this layer.
+class DaySwipeWrap extends StatelessWidget {
+  const DaySwipeWrap({
+    required this.date,
+    required this.child,
+    super.key,
+  });
+
+  /// The day the wrapped view is currently rendering. The swipe routes
+  /// relative to this date (`date ± 1`).
+  final DateTime date;
+
+  /// The scrollable body of the day view. On compact this is the
+  /// `CustomScrollView`; on expanded the `SingleChildScrollView`.
+  final Widget child;
+
+  /// Architect §6.4 threshold. Picked to filter casual horizontal nudges
+  /// during a vertical scroll attempt while still firing on a confident
+  /// flick.
+  static const double _velocityPxPerSec = 200;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onHorizontalDragEnd: (DragEndDetails d) {
+        final velocity = d.primaryVelocity ?? 0;
+        if (velocity.abs() < _velocityPxPerSec) return;
+        if (velocity < 0) {
+          // Left swipe (finger moves leftward, velocity negative)
+          // → next day.
+          navigateDay(context, date, 1);
+        } else {
+          // Right swipe → previous day.
+          navigateDay(context, date, -1);
+        }
+      },
+      child: child,
+    );
+  }
+}
+
 /// True when [date]'s Y/M/D matches the local-now Y/M/D. Mirrors the
 /// `pathForDay` / `todayHeadline` checks so the day-view's pill, title
 /// and post-save router stay in lock-step.

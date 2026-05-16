@@ -46,6 +46,10 @@ class _CurrentWeightSheetState extends ConsumerState<CurrentWeightSheet> {
   static final Decimal _min = Decimal.fromInt(30);
   static final Decimal _max = Decimal.fromInt(300);
 
+  /// Initial seeded value captured at `initState`. The Theme D narrow
+  /// fix (UX-112, PM UX pack §3 Theme D MODIFIED) uses this to gate the
+  /// Save button — disabled when the user hasn't changed the seed.
+  late final Decimal _initialKg;
   late Decimal _kg;
   bool _saving = false;
   String? _error;
@@ -55,7 +59,14 @@ class _CurrentWeightSheetState extends ConsumerState<CurrentWeightSheet> {
     super.initState();
     _kg = (widget.initial ?? Decimal.parse('70')).round(scale: 1);
     if (_kg < _min || _kg > _max) _kg = Decimal.parse('70');
+    _initialKg = _kg;
   }
+
+  /// Returns `true` when the current value differs from the seed.
+  /// Disabled when unchanged (Theme D narrow fix from PM UX pack §3
+  /// Theme D). The broader Save-enablement audit + lint rule is v1.1
+  /// (see `pm_ux_pack.md` §10 Punt list).
+  bool _isDirty() => _kg != _initialKg;
 
   /// T-24 Case 1 — pop-to-source.
   ///
@@ -90,7 +101,10 @@ class _CurrentWeightSheetState extends ConsumerState<CurrentWeightSheet> {
   Widget build(BuildContext context) {
     final unit = ref.watch(weightUnitProvider);
     final space = context.space;
-    final canSave = _error == null && !_saving;
+    // Theme D narrow fix (UX-112): the Save button is disabled when
+    // the user hasn't changed the seeded value. The broader audit +
+    // lint rule is v1.1.
+    final canSave = _error == null && !_saving && _isDirty();
 
     // The display label below the stepper mirrors the canonical kg in
     // the active unit. The stepper itself owns the input; this is the
