@@ -9,6 +9,7 @@ use loseit_core::domain::{
 use loseit_core::repo::{
     FoodRepository, LogRepository, OffFoodUpsert, ServingRepository, UpsertStats,
 };
+use loseit_core::repo::food::QUICK_ADD_SENTINEL_NAME;
 use loseit_core::CoreResult;
 use uuid::Uuid;
 
@@ -236,7 +237,10 @@ impl FoodRepository for InMemoryFoodRepository {
         limit: i64,
         offset: i64,
     ) -> CoreResult<Vec<FoodSearchHit>> {
-        let needle = q.map(|s| s.to_lowercase());
+        let needle = q
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_lowercase());
         let mut matches: Vec<Food> = {
             let store = self.by_id.lock().unwrap();
             store
@@ -244,7 +248,7 @@ impl FoodRepository for InMemoryFoodRepository {
                 .filter(|f| {
                     f.source == FoodSource::User
                         && f.owner_user_id == Some(owner)
-                        && f.name != "__quick_add__"
+                        && f.name != QUICK_ADD_SENTINEL_NAME
                 })
                 .filter(|f| match &needle {
                     None => true,
@@ -286,14 +290,17 @@ impl FoodRepository for InMemoryFoodRepository {
     }
 
     async fn count_mine(&self, owner: Uuid, q: Option<&str>) -> CoreResult<i64> {
-        let needle = q.map(|s| s.to_lowercase());
+        let needle = q
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_lowercase());
         let store = self.by_id.lock().unwrap();
         let n = store
             .values()
             .filter(|f| {
                 f.source == FoodSource::User
                     && f.owner_user_id == Some(owner)
-                    && f.name != "__quick_add__"
+                    && f.name != QUICK_ADD_SENTINEL_NAME
             })
             .filter(|f| match &needle {
                 None => true,

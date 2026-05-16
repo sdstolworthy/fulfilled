@@ -379,3 +379,44 @@ async fn count_mine_matches_list_mine_total_independent_of_pagination() {
     let total = repo.count_mine(alice, None).await.expect("count");
     assert_eq!(total, 5, "count_mine must be independent of pagination");
 }
+
+#[tokio::test]
+async fn list_mine_trims_whitespace_in_q() {
+    let repo = InMemoryFoodRepository::new();
+    let alice = Uuid::new_v4();
+
+    repo.create_custom(alice, &sample_draft("Chocolate Brownie"))
+        .await
+        .expect("create");
+    repo.create_custom(alice, &sample_draft("Plain Oatmeal"))
+        .await
+        .expect("create");
+
+    // q with surrounding whitespace should match exactly as the trimmed value.
+    let hits = repo
+        .list_mine(alice, Some("  CHOCO  "), 50, 0)
+        .await
+        .expect("list_mine with padded q");
+    assert_eq!(hits.len(), 1, "whitespace-padded q should still filter");
+    assert_eq!(hits[0].name, "Chocolate Brownie");
+
+    // q that is only whitespace should be treated as None (return all).
+    let hits = repo
+        .list_mine(alice, Some("   "), 50, 0)
+        .await
+        .expect("list_mine with whitespace-only q");
+    assert_eq!(hits.len(), 2, "whitespace-only q should return all foods");
+
+    // count_mine should apply the same trim behaviour.
+    let count = repo
+        .count_mine(alice, Some("  CHOCO  "))
+        .await
+        .expect("count_mine with padded q");
+    assert_eq!(count, 1);
+
+    let count = repo
+        .count_mine(alice, Some("   "))
+        .await
+        .expect("count_mine with whitespace-only q");
+    assert_eq!(count, 2);
+}

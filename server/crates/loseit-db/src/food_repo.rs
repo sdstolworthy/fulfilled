@@ -6,7 +6,7 @@ use loseit_core::domain::{
     Food, FoodDraft, FoodPatch, FoodSearchHit, FoodSource, NutriscoreGrade, NutritionPer100g,
     ServingPreview,
 };
-use loseit_core::repo::food::{OffFoodUpsert, UpsertStats};
+use loseit_core::repo::food::{OffFoodUpsert, UpsertStats, QUICK_ADD_SENTINEL_NAME};
 use loseit_core::repo::FoodRepository;
 use loseit_core::{CoreError, CoreResult};
 use rust_decimal::Decimal;
@@ -459,9 +459,11 @@ impl FoodRepository for PgFoodRepository {
         limit: i64,
         offset: i64,
     ) -> CoreResult<Vec<FoodSearchHit>> {
-        // Uses foods_owner_idx (on owner_user_id) + ordering by created_at DESC, id DESC.
-        // $2::text IS NULL is the canonical sqlx-friendly optional-filter pattern.
-        let sql = "SELECT \
+        // Index scan on foods_owner_idx to filter by owner; rows then sorted
+        // created_at DESC, id DESC. $2::text IS NULL is the canonical
+        // sqlx-friendly optional-filter pattern.
+        let sql = format!(
+            "SELECT \
                     f.id, f.source::text AS source, f.name, f.brands, f.barcode, \
                     f.energy_kcal_100g, \
                     s.id AS default_serving_id, \
@@ -472,13 +474,17 @@ impl FoodRepository for PgFoodRepository {
                    WHERE f.owner_user_id = $1 \
                      AND f.source = 'user' \
                      AND ($2::text IS NULL OR f.name ILIKE '%' || $2 || '%' OR coalesce(f.brands,'') ILIKE '%' || $2 || '%') \
-                     AND f.name <> '__quick_add__' \
+                     AND f.name <> '{}' \
                    ORDER BY f.created_at DESC, f.id DESC \
-                   LIMIT $3 OFFSET $4";
+                   LIMIT $3 OFFSET $4",
+            QUICK_ADD_SENTINEL_NAME
+        );
 
-        let rows = sqlx::query(sql)
+        let q_trimmed = q.map(|s| s.trim()).filter(|s| !s.is_empty());
+
+        let rows = sqlx::query(&sql)
             .bind(owner)
-            .bind(q)
+            .bind(q_trimmed)
             .bind(limit)
             .bind(offset)
             .fetch_all(&self.pool)
@@ -527,15 +533,19 @@ impl FoodRepository for PgFoodRepository {
     }
 
     async fn count_mine(&self, owner: Uuid, q: Option<&str>) -> CoreResult<i64> {
-        let sql = "SELECT COUNT(*)::BIGINT \
+        let sql = format!(
+            "SELECT count(*) \
                    FROM foods f \
                    WHERE f.owner_user_id = $1 \
                      AND f.source = 'user' \
                      AND ($2::text IS NULL OR f.name ILIKE '%' || $2 || '%' OR coalesce(f.brands,'') ILIKE '%' || $2 || '%') \
-                     AND f.name <> '__quick_add__'";
-        let cnt: i64 = sqlx::query_scalar::<_, i64>(sql)
+                     AND f.name <> '{}'",
+            QUICK_ADD_SENTINEL_NAME
+        );
+        let q_trimmed = q.map(|s| s.trim()).filter(|s| !s.is_empty());
+        let cnt: i64 = sqlx::query_scalar::<_, i64>(&sql)
             .bind(owner)
-            .bind(q)
+            .bind(q_trimmed)
             .fetch_one(&self.pool)
             .await
             .map_err(map_sqlx)?;
