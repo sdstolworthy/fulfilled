@@ -4,6 +4,7 @@
 /// contract is re-exported here.
 library;
 
+export 'calorie_providers.dart';
 export 'draft_providers.dart';
 export 'food_providers.dart';
 export 'goal_providers.dart';

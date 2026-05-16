@@ -45,6 +45,45 @@ void main() {
     );
   });
 
+  group('customFoods', () {
+    test('returns only source == user rows', () async {
+      final foods = await repo.customFoods();
+      expect(foods, isNotEmpty);
+      for (final f in foods) {
+        expect(f.source, equals(FoodSource.user),
+            reason: 'every row must be user-source');
+      }
+    });
+
+    test('count matches customCount()', () async {
+      final foods = await repo.customFoods();
+      final n = await repo.customCount();
+      expect(foods.length, equals(n));
+    });
+
+    test('a freshly-created custom food appears in customFoods()', () async {
+      final before = await repo.customFoods();
+      final created = await repo.createCustom(
+        FoodCreate(
+          name: 'New custom',
+          nutrition: NutritionPer100g(energyKcal: Decimal.fromInt(200)),
+        ),
+      );
+      final after = await repo.customFoods();
+      expect(after.length, equals(before.length + 1));
+      expect(after.any((f) => f.id == created.id), isTrue);
+    });
+
+    test('limit + offset slice the result', () async {
+      final all = await repo.customFoods();
+      // Skip the head, take one — the resulting row's id must match the
+      // second item of the unlimited list.
+      final sliced = await repo.customFoods(limit: 1, offset: 1);
+      expect(sliced.length, equals(1));
+      expect(sliced.first.id, equals(all[1].id));
+    });
+  });
+
   group('addServing', () {
     // A freshly-created custom food is the cleanest fixture: it has
     // exactly one serving (the auto-seeded synthetic 100 g) and a

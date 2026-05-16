@@ -47,6 +47,15 @@ final customFoodCountProvider = FutureProvider<int>((ref) {
   return repo.customCount();
 });
 
+/// Every `source == user` food owned by the caller. Drives the My foods
+/// list screen at `/foods/mine` (T-006). The screen reads this provider
+/// directly and applies its in-list filter locally so the per-keystroke
+/// `String.contains` never round-trips through the repository.
+final myFoodsProvider = FutureProvider<List<Food>>((ref) {
+  final repo = ref.watch(foodRepositoryProvider);
+  return repo.customFoods();
+});
+
 /// Debounced search. Returns an empty list for empty / whitespace
 /// queries (avoids a "0 results" flash on first focus). The 250 ms
 /// debounce lives in the provider, not the widget — see file docstring.

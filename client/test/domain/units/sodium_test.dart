@@ -27,10 +27,17 @@ void main() {
       expect(formatSodiumMg(Decimal.parse('130'), locale: 'en_US'), '130');
     });
 
-    test('rounds half-up to integer mg', () {
+    test('rounds half-to-even to integer mg (PM §10 #9)', () {
       expect(formatSodiumMg(Decimal.parse('130.4'), locale: 'en_US'), '130');
-      expect(formatSodiumMg(Decimal.parse('130.5'), locale: 'en_US'), '131');
+      // 130.5 → 130 (even); 131.5 → 132 (even).
+      expect(formatSodiumMg(Decimal.parse('130.5'), locale: 'en_US'), '130');
+      expect(formatSodiumMg(Decimal.parse('131.5'), locale: 'en_US'), '132');
       expect(formatSodiumMg(Decimal.parse('130.9'), locale: 'en_US'), '131');
+    });
+
+    test('integer values pass through unchanged', () {
+      expect(formatSodiumMg(Decimal.parse('245'), locale: 'en_US'), '245');
+      expect(formatSodiumMg(Decimal.zero, locale: 'en_US'), '0');
     });
 
     test('thousands separator over 1000 in en_US', () {

@@ -222,6 +222,22 @@ class FoodRepository {
     return _foods.where((f) => f.source == FoodSource.user).length;
   }
 
+  /// Custom-food library — every `source == user` row in the catalog. Used
+  /// by the `/foods/mine` screen (T-006) so the user can browse the foods
+  /// they've created. Order is fixture-list order (newest custom foods are
+  /// appended via [createCustom], which means freshly-saved foods land at
+  /// the tail naturally). The screen reads them through `myFoodsProvider`.
+  ///
+  // TODO(T-006-followup): replace fixture-order sort with `createdAt`
+  // once the field lands on `Food`.
+  Future<List<Food>> customFoods({int limit = 100, int offset = 0}) async {
+    await mockLatency();
+    final hits = _foods.where((f) => f.source == FoodSource.user).toList();
+    if (offset >= hits.length) return const <Food>[];
+    final end = (offset + limit).clamp(0, hits.length);
+    return hits.sublist(offset, end);
+  }
+
   /// Internal — bump a food's "frequent" count and prepend its id to the
   /// recent list. Called by `LogRepository.create` so the
   /// recent/frequent providers reflect a freshly-logged item without a

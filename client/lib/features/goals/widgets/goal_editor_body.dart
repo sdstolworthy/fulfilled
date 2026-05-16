@@ -1,6 +1,7 @@
 import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
 
+import '../../../domain/decimal_format.dart';
 import '../../../domain/enums.dart';
 import '../../../domain/units/energy.dart';
 import '../../../theme/context_extensions.dart';
@@ -152,9 +153,12 @@ class _RateSlider extends StatelessWidget {
   Widget build(BuildContext context) {
     final tokens = context.tokens;
     final asDouble = value.toDouble().clamp(0.0, 1.0);
-    final label = enabled
-        ? '${asDouble.toStringAsFixed(2)} kg / week'
-        : 'No weekly change';
+    // Rate display: two fraction digits, half-to-even — PM §10 #9 via
+    // `formatRate`. The slider's underlying value is a `Decimal` so we
+    // route through the helper rather than `double.toStringAsFixed` (which
+    // rounds half-away-from-zero and disagrees with the rest of the app).
+    final rateLabel = formatRate(value);
+    final label = enabled ? '$rateLabel kg / week' : 'No weekly change';
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -174,7 +178,7 @@ class _RateSlider extends StatelessWidget {
           value: asDouble,
           activeColor: context.colors.accent,
           inactiveColor: context.colors.line,
-          label: '${asDouble.toStringAsFixed(2)} kg/wk',
+          label: '$rateLabel kg/wk',
           onChanged: enabled
               ? (v) => onChanged(
                     Decimal.parse(v.toStringAsFixed(2)),

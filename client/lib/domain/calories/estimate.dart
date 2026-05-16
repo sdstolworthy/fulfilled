@@ -1,5 +1,6 @@
 import 'package:decimal/decimal.dart';
 
+import '../_rounding.dart';
 import '../enums.dart';
 
 /// Mifflin-St Jeor BMR + activity-multiplier TDEE + goal-rate adjustment.
@@ -136,47 +137,6 @@ int ageInYears(DateTime birthDate, DateTime today) {
   return years;
 }
 
-/// Half-to-even (banker's) rounding to integer. Per PM §10 #9.
-///
-/// Semantics:
-///   - If the fractional part is strictly less than 0.5, round toward
-///     negative infinity (floor).
-///   - If the fractional part is strictly greater than 0.5, round toward
-///     positive infinity (ceil).
-///   - If the fractional part is exactly 0.5, round to the nearest even
-///     integer. (e.g. 1850.5 → 1850; 1851.5 → 1852; −0.5 → 0; −1.5 → −2.)
-///
-/// We do not rely on `Decimal.round(...)`'s default rounding mode — at
-/// the time of writing `package:decimal` ^3.0.2 documents its `.round()`
-/// as half-away-from-zero, which is the wrong mode for the server-match
-/// rule. So we floor + reason about the fractional part by hand. Pure
-/// Decimal arithmetic; no IEEE-754 ever touches the value.
-int _roundHalfToEven(Decimal value) {
-  // Floor toward -infinity. `Decimal.toBigInt()` truncates toward zero,
-  // so for negative non-integer values we subtract one to land on the
-  // mathematical floor.
-  final truncated = value.toBigInt();
-  final truncatedAsDecimal = Decimal.fromBigInt(truncated);
-  final isNegativeWithFrac =
-      value.compareTo(Decimal.zero) < 0 && truncatedAsDecimal != value;
-  final floor = isNegativeWithFrac ? truncated - BigInt.one : truncated;
-  final frac = value - Decimal.fromBigInt(floor); // in [0, 1)
-
-  final half = Decimal.parse('0.5');
-  final compareHalf = frac.compareTo(half);
-  if (compareHalf < 0) {
-    return floor.toInt();
-  }
-  if (compareHalf > 0) {
-    return (floor + BigInt.one).toInt();
-  }
-  // Exactly .5 — round to even.
-  if (floor.isEven) {
-    return floor.toInt();
-  }
-  return (floor + BigInt.one).toInt();
-}
-
 /// Compute BMR via Mifflin-St Jeor. Returns the unrounded `Decimal` so
 /// the caller can roll the rounding into the TDEE step if it wants the
 /// minimum-error chain; we round once here too so the public
@@ -226,7 +186,7 @@ CalorieEstimate? estimateCalories({
     heightCm: heightCm,
     ageYears: age,
   );
-  final bmr = _roundHalfToEven(bmrDecimal);
+  final bmr = roundHalfToEven(bmrDecimal);
 
   final multiplier = _activityMultipliers[activityLevel] ??
       _activityMultipliers[ActivityLevel.sedentary]!;
@@ -235,7 +195,7 @@ CalorieEstimate? estimateCalories({
   // is still rounded for display, but TDEE is computed from the
   // exact BMR.
   final tdeeDecimal = bmrDecimal * multiplier;
-  final tdee = _roundHalfToEven(tdeeDecimal);
+  final tdee = roundHalfToEven(tdeeDecimal);
 
   // Goal-rate adjustment. `rateKgPerWeek` is unsigned on the draft;
   // direction carries the sign (lose → negative, gain → positive,
@@ -253,7 +213,7 @@ CalorieEstimate? estimateCalories({
   }
 
   final rawTarget = tdeeDecimal + deltaKcal;
-  final targetInt = _roundHalfToEven(rawTarget);
+  final targetInt = roundHalfToEven(rawTarget);
   final clamped = targetInt < kCalorieFloorKcal ? kCalorieFloorKcal : targetInt;
 
   // Macro split. Defaults are P 25% / C 50% / F 25% on energy. The
@@ -271,13 +231,13 @@ CalorieEstimate? estimateCalories({
     bmrKcal: bmr,
     tdeeKcal: tdee,
     dailyTargetKcal: clamped,
-    proteinG: _roundHalfToEven(
+    proteinG: roundHalfToEven(
       (proteinKcal / four).toDecimal(scaleOnInfinitePrecision: 12),
     ),
-    carbsG: _roundHalfToEven(
+    carbsG: roundHalfToEven(
       (carbsKcal / four).toDecimal(scaleOnInfinitePrecision: 12),
     ),
-    fatG: _roundHalfToEven(
+    fatG: roundHalfToEven(
       (fatKcal / nine).toDecimal(scaleOnInfinitePrecision: 12),
     ),
   );

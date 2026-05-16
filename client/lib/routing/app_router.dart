@@ -6,6 +6,7 @@ import '../features/custom_food/custom_food_screen.dart';
 import '../features/food_detail/food_detail_screen.dart';
 import '../features/goals/goals_screen.dart';
 import '../features/goals/widgets/new_goal_dialog.dart';
+import '../features/my_foods/my_foods_screen.dart';
 import '../features/onboarding/onboarding_screen.dart';
 import '../features/profile/profile_screen.dart';
 import '../features/search/search_screen.dart';
@@ -31,11 +32,10 @@ import 'routes.dart';
 ///   decides chrome from route, not from a parallel selection state).
 ///
 /// Each leaf binds to its real `<Name>Screen` from `lib/features/<name>/`.
-/// `/foods/mine` is still `PlaceholderScreen` pending a dedicated
-/// implementation. `/foods/barcode/:barcode` is a resolver
-/// (`_BarcodeResolveScreen`, defined below) that calls
-/// `FoodRepository.byBarcode` and `pushReplacement`s to either the food
-/// detail (hit) or `/foods/new?barcode=…` (404) per T-021.
+/// `/foods/barcode/:barcode` is a resolver (`_BarcodeResolveScreen`,
+/// defined below) that calls `FoodRepository.byBarcode` and
+/// `pushReplacement`s to either the food detail (hit) or
+/// `/foods/new?barcode=…` (404) per T-021.
 
 final appRouterProvider = Provider<GoRouter>((ref) {
   return GoRouter(
@@ -82,11 +82,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
               GoRoute(
                 name: Routes.myFoodsName,
                 path: 'mine',
-                builder: (_, __) => const PlaceholderScreen(
-                  screenName: 'My foods',
-                  routePath: Routes.myFoodsPath,
-                  detail: 'Pending dedicated implementation.',
-                ),
+                builder: (_, __) => const MyFoodsScreen(),
               ),
             ],
           ),

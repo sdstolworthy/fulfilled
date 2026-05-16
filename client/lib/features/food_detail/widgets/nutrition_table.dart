@@ -17,11 +17,14 @@ import '../../../theme/context_extensions.dart';
 /// **Per-100 g basis is non-negotiable** (PM Display Units Principle).
 /// The panel header literally reads "Per 100 g" — never "per serving".
 ///
-/// **Source-aware meta (architect §10 Q10).** Top-right meta shows
-/// `OFF data · quality X.XX` only when `source == off` AND a quality
-/// score is present. For USDA we show `USDA data`. For user customs we
-/// show no meta (the eyebrow on the hero already communicates "My
-/// foods").
+/// **Source-aware meta (PM §10 #10 ruling — quality score hidden in v1).**
+/// Top-right meta shows just the source label:
+///   - `FoodSource.off`  → `'OFF data'`
+///   - `FoodSource.usda` → `'USDA data'`
+///   - `FoodSource.user` → `'Your food'`
+/// The numeric quality score is intentionally hidden. The DTO field
+/// (`Food.qualityScore`) stays on the wire for v2 sorting / debug
+/// surfaces; we just don't render it. See dev_tickets.md T-011.
 class NutritionTable extends StatelessWidget {
   const NutritionTable({
     required this.nutrition,
@@ -33,7 +36,10 @@ class NutritionTable extends StatelessWidget {
   final NutritionPer100g nutrition;
   final FoodSource source;
 
-  /// API integer 0..100. Rendered as `X.XX` per the mock.
+  /// API integer 0..100. Quality score hidden in v1 per PM ruling §10
+  /// item 10. Score stays on the DTO (Food.qualityScore) for v2 sorting /
+  /// debug. See dev_tickets.md T-011. Param retained on the widget so
+  /// callers don't change shape; intentionally not rendered.
   final int? qualityScore;
 
   @override
@@ -51,7 +57,7 @@ class NutritionTable extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
-          _Header(source: source, qualityScore: qualityScore),
+          _Header(source: source),
           _DividerLine(color: context.colors.line2),
           _Row(
             label: 'Calories',
@@ -115,14 +121,13 @@ class NutritionTable extends StatelessWidget {
 }
 
 class _Header extends StatelessWidget {
-  const _Header({required this.source, required this.qualityScore});
+  const _Header({required this.source});
 
   final FoodSource source;
-  final int? qualityScore;
 
   @override
   Widget build(BuildContext context) {
-    final meta = _metaText(source, qualityScore);
+    final meta = _metaText(source);
     return Padding(
       padding: EdgeInsets.symmetric(vertical: context.space.x2),
       child: Row(
@@ -145,19 +150,22 @@ class _Header extends StatelessWidget {
     );
   }
 
-  static String? _metaText(FoodSource source, int? qualityScore) {
+  // Quality score hidden in v1 per PM ruling §10 item 10. Score stays
+  // on the DTO (Food.qualityScore) for v2 sorting / debug. See
+  // dev_tickets.md T-011. Source-only labels per the ruling:
+  //   off  → 'OFF data'
+  //   usda → 'USDA data'
+  //   user → 'Your food' (was: no meta; PM ruling makes the label
+  //          explicit so the eyebrow on the hero and the panel meta
+  //          agree on the source's display name).
+  static String? _metaText(FoodSource source) {
     switch (source) {
       case FoodSource.off:
-        if (qualityScore == null) return 'OFF data';
-        final pretty = (qualityScore / 100)
-            .toStringAsFixed(2); // 86 → "0.86"
-        return 'OFF data · quality $pretty';
+        return 'OFF data';
       case FoodSource.usda:
         return 'USDA data';
       case FoodSource.user:
-        // T-10 sibling: custom foods carry no source-meta in the panel;
-        // the hero eyebrow already says "My foods".
-        return null;
+        return 'Your food';
     }
   }
 }

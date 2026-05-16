@@ -35,8 +35,11 @@ void main() {
     expect(find.text(_yogurt().name), findsOneWidget);
     expect(find.textContaining('OpenFoodFacts'), findsOneWidget);
     expect(find.text('Per 100 g'), findsOneWidget);
-    // Source-aware meta — quality_score 86 → "0.86".
-    expect(find.textContaining('quality 0.86'), findsOneWidget);
+    // PM §10 #10 (T-011): quality score is no longer rendered. The
+    // nutrition meta shows just the source label.
+    expect(find.text('OFF data'), findsOneWidget);
+    expect(find.textContaining('quality'), findsNothing);
+    expect(find.textContaining('0.86'), findsNothing);
   });
 
   testWidgets('synthetic 100 g serving row shows the Synthetic badge',

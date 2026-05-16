@@ -1,11 +1,14 @@
 import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../domain/day_summary.dart';
 import '../domain/units/energy.dart';
+import '../providers/calorie_providers.dart';
 import '../theme/context_extensions.dart';
 import 'calorie_ring.dart';
 import 'macro_bar.dart';
+import 'skeleton.dart';
 
 /// The "today vs goal" card — ring on the left, eaten/goal kv on the right
 /// (compact stacks them into a single row, expanded gives them a 16-px gap
@@ -145,10 +148,12 @@ class _KvBlock extends StatelessWidget {
         _KvRow(label: 'Goal', value: goal),
         if (!compact) ...<Widget>[
           SizedBox(height: context.space.x1),
-          // The expanded right-rail mock includes a "Burned" row stubbed
-          // at "—" until activity integration ships. Carry the stub so the
-          // card matches the mock's vertical rhythm.
-          _KvRow(label: 'Burned', value: '—'),
+          // The "Burned" row is provider-backed (T-020 / B8): the value
+          // is derived from `meProvider` via the canonical Mifflin-St
+          // Jeor TDEE math. On loading we render a skeleton (T-08); on
+          // error we silently fall back to `'—'` so an incomplete
+          // profile doesn't surface a stack trace in the right rail.
+          const _BurnedKvRow(),
         ],
         if (compact && summary.isOverKcal) ...<Widget>[
           SizedBox(height: context.space.x1),
@@ -157,6 +162,56 @@ class _KvBlock extends StatelessWidget {
             style: context.text.metaNumeric.copyWith(color: colors.dangerOver),
           ),
         ],
+      ],
+    );
+  }
+}
+
+/// Provider-backed "Burned" row. Lives next to `_KvBlock` so it can
+/// share the row chrome with the surrounding kv rows.
+///
+/// **Loading**: a [Skeleton] block sized to match a `_KvRow`'s text
+/// line so the right-rail layout doesn't shift when the value
+/// resolves (T-08).
+/// **Error**: silently falls back to `'—'` (don't surface).
+class _BurnedKvRow extends ConsumerWidget {
+  const _BurnedKvRow();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final burned = ref.watch(caloriesBurnedTodayProvider);
+    return burned.when(
+      data: (kcal) =>
+          _KvRow(label: 'Burned', value: '${formatKcal(kcal)} kcal'),
+      loading: () => const _KvRowSkeleton(label: 'Burned'),
+      error: (_, __) => const _KvRow(label: 'Burned', value: '—'),
+    );
+  }
+}
+
+/// Loading-state row composition for the "Burned" row. Matches the
+/// vertical rhythm of `_KvRow` (a single baseline-aligned line of
+/// numeric metadata) so the surrounding kv block doesn't jump when
+/// the provider resolves.
+class _KvRowSkeleton extends StatelessWidget {
+  const _KvRowSkeleton({required this.label});
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: <Widget>[
+        Expanded(
+          child: Text(
+            label,
+            style: context.text.meta,
+          ),
+        ),
+        // Width and height match the rendered `formatKcal(kcal) kcal`
+        // glyph block (≈ 56 px / 12 px) so the skeleton occupies the
+        // same footprint as the eventual value text.
+        const Skeleton(height: 12, width: 56),
       ],
     );
   }

@@ -1,6 +1,8 @@
 import 'package:decimal/decimal.dart';
 import 'package:intl/intl.dart';
 
+import '../_rounding.dart';
+
 /// Sodium-specific conversions and formatters.
 ///
 /// **Why a dedicated file:** the wire is split — `NutritionPer100g.sodium_g`
@@ -21,8 +23,8 @@ Decimal gramsToMilligrams(Decimal grams) {
 /// Format a sodium value already in milligrams as a display string.
 ///
 /// Rules:
-/// - Integer milligrams (round half-up). Sodium granularity finer than 1 mg
-///   is noise on a nutrition label.
+/// - Integer milligrams (**half-to-even**, PM §10 #9). Sodium granularity
+///   finer than 1 mg is noise on a nutrition label.
 /// - Thousands separator from the current locale (`intl`'s
 ///   [NumberFormat.decimalPattern]). En-US renders `1,250`; FR renders
 ///   `1 250`; we follow `intl`.
@@ -31,7 +33,7 @@ Decimal gramsToMilligrams(Decimal grams) {
 ///
 /// Callers that need the suffix inline can do `'${formatSodiumMg(v)} mg'`.
 String formatSodiumMg(Decimal milligrams, {String? locale}) {
-  final rounded = milligrams.round(scale: 0).toBigInt();
+  final rounded = roundHalfToEven(milligrams);
   final formatter = NumberFormat.decimalPattern(locale);
-  return formatter.format(rounded.toInt());
+  return formatter.format(rounded);
 }
