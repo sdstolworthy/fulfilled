@@ -583,12 +583,19 @@ impl FoodRepository for PgFoodRepository {
         // leaves no half-provisioned state.
         let mut tx = self.pool.begin().await.map_err(map_sqlx)?;
 
+        // `foods_quick_add_singleton` is a partial UNIQUE INDEX
+        // (CREATE UNIQUE INDEX ... WHERE source='user' AND name='__quick_add__'),
+        // not a table constraint, so `ON CONFLICT ON CONSTRAINT <name>` does
+        // not resolve — Postgres only looks up that form in pg_constraint.
+        // The inference form `ON CONFLICT (cols) WHERE <predicate>` matches a
+        // partial unique index, and the predicate must match the index
+        // definition character-for-character. See migration 0005.
         let food_sql = format!(
             "INSERT INTO foods ( \
                 source, owner_user_id, name, energy_kcal_100g, \
                 quality_score, categories_tags \
              ) VALUES ('user', $1, '{sentinel}', 1, 0, ARRAY[]::text[]) \
-             ON CONFLICT ON CONSTRAINT foods_quick_add_singleton \
+             ON CONFLICT (owner_user_id) WHERE source = 'user' AND name = '{sentinel}' \
                DO UPDATE SET updated_at = now() \
              RETURNING {SELECT_FOOD_COLS}",
             sentinel = QUICK_ADD_SENTINEL_NAME
@@ -604,10 +611,15 @@ impl FoodRepository for PgFoodRepository {
         // constraint on (food_id, label) — only the `is_default` partial.
         // First call: insert succeeds. Repeat call: the existing default row
         // collides on the partial unique index and gets a no-op touch.
+        // Same partial-index gotcha as the food upsert above:
+        // `servings_one_default_per_food` is a partial UNIQUE INDEX
+        // (CREATE UNIQUE INDEX ... ON servings(food_id) WHERE is_default),
+        // so we must use the inference form to resolve it. Predicate must
+        // match migration 0001 character-for-character.
         let serving_sql = "INSERT INTO servings \
                 (food_id, label, grams, is_default, source, sort_order) \
              VALUES ($1, 'kcal', 100, true, 'system', 0) \
-             ON CONFLICT ON CONSTRAINT servings_one_default_per_food \
+             ON CONFLICT (food_id) WHERE is_default \
                DO UPDATE SET updated_at = now() \
              RETURNING id, food_id, label, grams, is_default, \
                        source::text AS source, sort_order, \

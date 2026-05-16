@@ -204,6 +204,20 @@ impl FoodService {
         if food.name == QUICK_ADD_SENTINEL_NAME {
             return Err(CoreError::Forbidden);
         }
+        // Symmetric to `create_custom`: forbid renaming any other custom food
+        // *to* the reserved sentinel name. Without this, the partial unique
+        // index `foods_quick_add_singleton` would be the line of defense, and
+        // a successful rename would shadow the user's actual sentinel for the
+        // sentinel-exclusion filters in search/recent/frequent. Case- and
+        // whitespace-insensitive on the patched name, matching `create_custom`.
+        if patch
+            .name
+            .as_deref()
+            .map(str::trim)
+            .is_some_and(|n| n.eq_ignore_ascii_case(QUICK_ADD_SENTINEL_NAME))
+        {
+            return Err(CoreError::Validation("name is reserved".into()));
+        }
         // `find_by_id` with viewer=owner already filters out other users'
         // customs (returns None → NotFound above), so we know owner_user_id
         // matches here. The repo's `update_custom` re-enforces this via

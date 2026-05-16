@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use chrono::Utc;
 use loseit_core::domain::{
-    Food, FoodDraft, FoodPatch, FoodSearchHit, FoodSource, NutritionPer100g, Serving, ServingDraft,
+    Food, FoodDraft, FoodPatch, FoodSearchHit, FoodSource, NutritionPer100g, Serving,
     ServingPreview, ServingSource,
 };
 use loseit_core::repo::food::QUICK_ADD_SENTINEL_NAME;
@@ -379,29 +379,15 @@ impl FoodRepository for InMemoryFoodRepository {
             }
         };
 
-        // Step 2: find-or-insert the default 100 g serving.
+        // Step 2: find-or-insert the default 100 g serving. The
+        // `find_or_create_default_kcal_for_food` helper performs the
+        // check-and-insert atomically under a single serving-store lock
+        // acquisition, mirroring the Pg `ON CONFLICT` against
+        // `servings_one_default_per_food`. The previous implementation
+        // released the lock between `list_for_food` and `create`, which made
+        // concurrent first-uses racy under multi-threaded runtimes.
         let serving = if let Some(servings) = servings_guard {
-            let existing = servings
-                .list_for_food(food.id)
-                .await?
-                .into_iter()
-                .find(|s| s.is_default);
-            if let Some(s) = existing {
-                s
-            } else {
-                servings
-                    .create(
-                        food.id,
-                        &ServingDraft {
-                            label: "kcal".to_string(),
-                            grams: Decimal::from(100),
-                            is_default: true,
-                            source: ServingSource::System,
-                            sort_order: 0,
-                        },
-                    )
-                    .await?
-            }
+            servings.find_or_create_default_kcal_for_food(food.id)
         } else {
             // No serving repo wired in — synthesize a Serving so callers can
             // still rely on the `(Food, Serving)` shape. This matches the

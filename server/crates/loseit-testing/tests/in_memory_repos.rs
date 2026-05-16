@@ -913,7 +913,14 @@ async fn find_or_create_quick_add_is_idempotent() {
     assert_eq!(serving_a.grams, Decimal::from(100));
 }
 
-#[tokio::test]
+// Multi-threaded runtime is used here intentionally: both steps of the fake's
+// `find_or_create_quick_add` (food upsert and default-serving upsert) must
+// converge to a single row under real contention. The food step has always
+// been atomic (check-and-insert under the food-store mutex); the serving step
+// is now also atomic via `find_or_create_default_kcal_for_food`. Without that
+// fix this test races on multi-threaded runtimes — `list_for_food` would
+// release the lock before `create` acquired it, allowing two inserts.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn find_or_create_quick_add_concurrent_first_uses_dont_duplicate() {
     use tokio::task::JoinSet;
 
@@ -1097,6 +1104,73 @@ async fn update_custom_on_sentinel_returns_forbidden() {
         .await
         .expect_err("must refuse to update the sentinel");
     assert!(matches!(err, loseit_core::CoreError::Forbidden));
+}
+
+#[tokio::test]
+async fn update_custom_rejects_renaming_to_reserved_sentinel_name() {
+    use loseit_core::domain::FoodPatch;
+    use loseit_core::service::FoodService;
+
+    let foods = Arc::new(InMemoryFoodRepository::new());
+    let servings = Arc::new(InMemoryServingRepository::new());
+    foods.set_serving_repo(servings.clone());
+    let service = FoodService::new(foods.clone(), servings.clone());
+
+    let owner = Uuid::new_v4();
+    let real = foods
+        .create_custom(owner, &sample_draft("Real bar"))
+        .await
+        .expect("create real food");
+
+    // Bare sentinel name.
+    let err = service
+        .update_custom(
+            owner,
+            real.id,
+            FoodPatch {
+                name: Some("__quick_add__".into()),
+                ..FoodPatch::default()
+            },
+        )
+        .await
+        .expect_err("must reject rename to reserved name");
+    match err {
+        loseit_core::CoreError::Validation(msg) => {
+            assert!(
+                msg.contains("reserved"),
+                "expected reserved-name validation, got: {msg}"
+            );
+        }
+        other => panic!("expected Validation, got {other:?}"),
+    }
+
+    // Case-insensitive match.
+    let err = service
+        .update_custom(
+            owner,
+            real.id,
+            FoodPatch {
+                name: Some("__QUICK_ADD__".into()),
+                ..FoodPatch::default()
+            },
+        )
+        .await
+        .expect_err("must reject case-insensitive rename");
+    assert!(matches!(err, loseit_core::CoreError::Validation(_)));
+
+    // Whitespace-padded (trim before compare, matching create_custom).
+    let err = service
+        .update_custom(
+            owner,
+            real.id,
+            FoodPatch {
+                name: Some("  __quick_add__  ".into()),
+                ..FoodPatch::default()
+            },
+        )
+        .await
+        .expect_err("must reject whitespace-padded rename");
+    assert!(matches!(err, loseit_core::CoreError::Validation(_)));
 }
 
 #[tokio::test]
