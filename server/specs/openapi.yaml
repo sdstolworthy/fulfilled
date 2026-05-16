@@ -2,6 +2,9 @@ openapi: 3.1.0
 info:
   title: LoseIt API
   version: "0.1.0"
+  license:
+    name: MIT OR Apache-2.0
+    identifier: MIT OR Apache-2.0
   description: |
     HTTP API for the LoseIt server. All routes (except `/health`) require a
     bearer token in the `Authorization` header. Token validation is delegated
@@ -16,31 +19,39 @@ info:
     `weight_kg`, `grams`, and `quantity`.
 
 servers:
-  - url: http://localhost:8080/api/v1
-    description: Local development
-  - url: https://{host}/api/v1
-    description: Deployed
+  - url: "https://{host}/api/v1"
+    description: LoseIt API. Override `host` for local development (e.g. `127.0.0.1:8080`).
     variables:
       host:
-        default: api.example.com
+        default: api.loseit.invalid
+        description: API hostname (and optional port).
 
 security:
   - bearerAuth: []
 
 tags:
   - name: Health
+    description: Liveness probes for orchestration and monitoring.
   - name: Profile
+    description: The authenticated user's own profile.
   - name: Weights
+    description: Self-recorded body-weight history.
   - name: Goals
+    description: Weight and macronutrient targets, scoped to date ranges.
   - name: Foods
+    description: Food catalogue lookups, custom-food CRUD, and search.
   - name: Servings
+    description: Per-food serving sizes (default, system-seeded, and user-defined).
   - name: Log
+    description: Food log entries with frozen nutrition snapshots.
   - name: Days
+    description: Per-day rollups of logged nutrition against the active goal.
 
 paths:
   /health:
     get:
       tags: [Health]
+      operationId: health_check
       summary: Liveness probe
       security: []
       responses:
@@ -55,10 +66,16 @@ paths:
                   status:
                     type: string
                     enum: [ok]
+        "503":
+          description: Service is unhealthy.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
 
   /me:
     get:
       tags: [Profile]
+      operationId: get_me
       summary: Get the authenticated user's profile
       responses:
         "200":
@@ -69,6 +86,7 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
     patch:
       tags: [Profile]
+      operationId: update_me
       summary: Update profile fields
       description: |
         Partial update. Any omitted field is left unchanged. `sex` and
@@ -91,6 +109,7 @@ paths:
   /weights:
     post:
       tags: [Weights]
+      operationId: create_weight
       summary: Record a weight entry
       requestBody:
         required: true
@@ -108,6 +127,7 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
     get:
       tags: [Weights]
+      operationId: list_weights
       summary: List weight entries
       parameters:
         - in: query
@@ -126,11 +146,13 @@ paths:
               schema:
                 type: array
                 items: { $ref: "#/components/schemas/Weight" }
+        "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
   /weights/{id}:
     delete:
       tags: [Weights]
+      operationId: delete_weight
       summary: Delete a weight entry
       parameters:
         - $ref: "#/components/parameters/PathId"
@@ -143,6 +165,7 @@ paths:
   /goals:
     post:
       tags: [Goals]
+      operationId: create_goal
       summary: Create a goal
       requestBody:
         required: true
@@ -160,6 +183,7 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
     get:
       tags: [Goals]
+      operationId: list_goals
       summary: List the caller's goals
       responses:
         "200":
@@ -169,11 +193,13 @@ paths:
               schema:
                 type: array
                 items: { $ref: "#/components/schemas/Goal" }
+        "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
   /goals/active:
     get:
       tags: [Goals]
+      operationId: get_active_goal
       summary: Get the goal active on a given date
       parameters:
         - in: query
@@ -192,6 +218,7 @@ paths:
   /goals/{id}:
     patch:
       tags: [Goals]
+      operationId: update_goal
       summary: Update a goal
       parameters:
         - $ref: "#/components/parameters/PathId"
@@ -213,6 +240,7 @@ paths:
         "409": { $ref: "#/components/responses/Conflict" }
     delete:
       tags: [Goals]
+      operationId: delete_goal
       summary: Delete a goal
       parameters:
         - $ref: "#/components/parameters/PathId"
@@ -225,6 +253,7 @@ paths:
   /foods/search:
     get:
       tags: [Foods]
+      operationId: search_foods
       summary: Search foods
       description: |
         Full-text search across the foods catalogue (OFF, USDA, and the
@@ -234,6 +263,7 @@ paths:
           name: q
           required: true
           schema: { type: string, minLength: 1 }
+          description: Search query string.
         - in: query
           name: limit
           schema: { type: integer, format: int64, minimum: 1 }
@@ -241,6 +271,7 @@ paths:
         - in: query
           name: offset
           schema: { type: integer, format: int64, minimum: 0 }
+          description: Page offset, starting at 0.
       responses:
         "200":
           description: Search page.
@@ -253,11 +284,13 @@ paths:
   /foods/recent:
     get:
       tags: [Foods]
+      operationId: list_recent_foods
       summary: Foods the caller has logged most recently
       parameters:
         - in: query
           name: limit
           schema: { type: integer, format: int64, minimum: 1 }
+          description: Maximum number of foods to return.
       responses:
         "200":
           description: Recent foods.
@@ -266,16 +299,19 @@ paths:
               schema:
                 type: array
                 items: { $ref: "#/components/schemas/FoodSearchHit" }
+        "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
   /foods/frequent:
     get:
       tags: [Foods]
+      operationId: list_frequent_foods
       summary: Foods the caller logs most frequently
       parameters:
         - in: query
           name: limit
           schema: { type: integer, format: int64, minimum: 1 }
+          description: Maximum number of foods to return.
       responses:
         "200":
           description: Frequent foods.
@@ -284,17 +320,20 @@ paths:
               schema:
                 type: array
                 items: { $ref: "#/components/schemas/FoodSearchHit" }
+        "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
   /foods/barcode/{barcode}:
     get:
       tags: [Foods]
+      operationId: get_food_by_barcode
       summary: Look up a food by barcode
       parameters:
         - in: path
           name: barcode
           required: true
           schema: { type: string }
+          description: Barcode string (EAN/UPC).
       responses:
         "200":
           description: Food detail.
@@ -307,6 +346,7 @@ paths:
   /foods:
     post:
       tags: [Foods]
+      operationId: create_food
       summary: Create a custom food
       description: |
         Creates a `user`-source food owned by the caller. A default
@@ -329,6 +369,7 @@ paths:
   /foods/{id}:
     get:
       tags: [Foods]
+      operationId: get_food
       summary: Get a food by id, including its servings
       parameters:
         - $ref: "#/components/parameters/PathId"
@@ -342,6 +383,7 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
     patch:
       tags: [Foods]
+      operationId: update_food
       summary: Update a custom food
       description: Only the owner of a `user`-source food may patch it.
       parameters:
@@ -363,6 +405,7 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
     delete:
       tags: [Foods]
+      operationId: delete_food
       summary: Delete a custom food
       description: |
         Returns `403` if the food isn't owned by the caller and `409` if
@@ -371,6 +414,7 @@ paths:
         - $ref: "#/components/parameters/PathId"
       responses:
         "204": { description: Deleted. }
+        "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -379,12 +423,14 @@ paths:
   /foods/{food_id}/servings:
     post:
       tags: [Servings]
+      operationId: create_serving
       summary: Create a serving on a food
       parameters:
         - in: path
           name: food_id
           required: true
           schema: { type: string, format: uuid }
+          description: Id of the food the serving belongs to.
       requestBody:
         required: true
         content:
@@ -404,6 +450,7 @@ paths:
   /servings/{id}:
     patch:
       tags: [Servings]
+      operationId: update_serving
       summary: Update a serving
       parameters:
         - $ref: "#/components/parameters/PathId"
@@ -424,11 +471,13 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
     delete:
       tags: [Servings]
+      operationId: delete_serving
       summary: Delete a serving
       parameters:
         - $ref: "#/components/parameters/PathId"
       responses:
         "204": { description: Deleted. }
+        "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -437,6 +486,7 @@ paths:
   /servings/{id}/default:
     post:
       tags: [Servings]
+      operationId: set_default_serving
       summary: Make this serving the default for its food
       description: |
         Atomically flips the `is_default` flag: the named serving becomes
@@ -449,6 +499,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Serving" }
+        "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -456,6 +507,7 @@ paths:
   /log:
     post:
       tags: [Log]
+      operationId: create_log_entry
       summary: Record a food log entry
       requestBody:
         required: true
@@ -473,6 +525,7 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
     get:
       tags: [Log]
+      operationId: list_log_entries
       summary: List log entries in a date range
       description: |
         Both `from` and `to` are required and must satisfy `from <= to`.
@@ -483,10 +536,12 @@ paths:
           name: from
           required: true
           schema: { type: string, format: date }
+          description: Inclusive lower bound on `consumed_on`.
         - in: query
           name: to
           required: true
           schema: { type: string, format: date }
+          description: Inclusive upper bound on `consumed_on`.
       responses:
         "200":
           description: Matching log entries.
@@ -501,6 +556,7 @@ paths:
   /log/{id}:
     patch:
       tags: [Log]
+      operationId: update_log_entry
       summary: Update a log entry
       description: |
         `food_id` is immutable — sending one is a `400`. A `null` `note`
@@ -524,11 +580,13 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
     delete:
       tags: [Log]
+      operationId: delete_log_entry
       summary: Delete a log entry
       parameters:
         - $ref: "#/components/parameters/PathId"
       responses:
         "204": { description: Deleted. }
+        "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -536,18 +594,21 @@ paths:
   /days/{date}/summary:
     get:
       tags: [Days]
+      operationId: get_day_summary
       summary: Per-day rollup of logged nutrition
       parameters:
         - in: path
           name: date
           required: true
           schema: { type: string, format: date }
+          description: Calendar date to summarize.
       responses:
         "200":
           description: Day summary.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/DaySummary" }
+        "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
 components:
@@ -568,6 +629,7 @@ components:
       name: id
       required: true
       schema: { type: string, format: uuid }
+      description: Resource identifier.
 
   responses:
     BadRequest:
@@ -619,6 +681,10 @@ components:
       description: Arbitrary-precision decimal serialized as a JSON number.
       type: number
 
+    NullableDecimal:
+      description: Arbitrary-precision decimal or `null`.
+      type: [number, "null"]
+
     Sex:
       type: string
       enum: [male, female, other]
@@ -650,17 +716,20 @@ components:
         id: { type: string, format: uuid }
         issuer: { type: string }
         external_id: { type: string }
-        email: { type: string, nullable: true, format: email }
-        display_name: { type: string, nullable: true }
+        email:
+          type: [string, "null"]
+          format: email
+        display_name:
+          type: [string, "null"]
         sex:
           oneOf:
             - $ref: "#/components/schemas/Sex"
             - type: "null"
-        birth_date: { type: string, format: date, nullable: true }
+        birth_date:
+          type: [string, "null"]
+          format: date
         height_cm:
-          oneOf:
-            - $ref: "#/components/schemas/Decimal"
-            - type: "null"
+          $ref: "#/components/schemas/NullableDecimal"
         activity_level:
           oneOf:
             - $ref: "#/components/schemas/ActivityLevel"
@@ -686,11 +755,11 @@ components:
         id: { type: string, format: uuid }
         recorded_on: { type: string, format: date }
         recorded_at_local:
-          type: string
-          nullable: true
+          type: [string, "null"]
           description: Local time-of-day component (HH:MM:SS), if known.
         weight_kg: { $ref: "#/components/schemas/Decimal" }
-        note: { type: string, nullable: true }
+        note:
+          type: [string, "null"]
         created_at: { type: string, format: date-time }
 
     WeightCreate:
@@ -710,32 +779,24 @@ components:
       properties:
         id: { type: string, format: uuid }
         starts_on: { type: string, format: date }
-        ends_on: { type: string, format: date, nullable: true }
+        ends_on:
+          type: [string, "null"]
+          format: date
         start_weight_kg:
-          oneOf:
-            - $ref: "#/components/schemas/Decimal"
-            - type: "null"
+          $ref: "#/components/schemas/NullableDecimal"
         target_weight_kg:
-          oneOf:
-            - $ref: "#/components/schemas/Decimal"
-            - type: "null"
+          $ref: "#/components/schemas/NullableDecimal"
         weekly_rate_kg:
-          oneOf:
-            - $ref: "#/components/schemas/Decimal"
-            - type: "null"
-        daily_calorie_target: { type: integer, format: int32, nullable: true }
+          $ref: "#/components/schemas/NullableDecimal"
+        daily_calorie_target:
+          type: [integer, "null"]
+          format: int32
         protein_g_target:
-          oneOf:
-            - $ref: "#/components/schemas/Decimal"
-            - type: "null"
+          $ref: "#/components/schemas/NullableDecimal"
         carbs_g_target:
-          oneOf:
-            - $ref: "#/components/schemas/Decimal"
-            - type: "null"
+          $ref: "#/components/schemas/NullableDecimal"
         fat_g_target:
-          oneOf:
-            - $ref: "#/components/schemas/Decimal"
-            - type: "null"
+          $ref: "#/components/schemas/NullableDecimal"
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
@@ -838,14 +899,18 @@ components:
       properties:
         id: { type: string, format: uuid }
         source: { $ref: "#/components/schemas/FoodSource" }
-        owner_user_id: { type: string, format: uuid, nullable: true }
-        barcode: { type: string, nullable: true }
+        owner_user_id:
+          type: [string, "null"]
+          format: uuid
+        barcode:
+          type: [string, "null"]
         fdc_id:
           type: integer
           format: int64
           description: USDA FoodData Central id, present for `usda`-sourced foods only.
         name: { type: string }
-        brands: { type: string, nullable: true }
+        brands:
+          type: [string, "null"]
         categories_tags:
           type: array
           items: { type: string }
@@ -857,7 +922,6 @@ components:
         quality_score: { type: integer, format: int32 }
         extra_nutrients:
           description: Free-form JSON of additional nutrients, if any.
-          nullable: true
         servings:
           type: array
           items: { $ref: "#/components/schemas/Serving" }
@@ -896,16 +960,16 @@ components:
         id: { type: string, format: uuid }
         source: { $ref: "#/components/schemas/FoodSource" }
         name: { type: string }
-        brand: { type: string, nullable: true }
-        barcode: { type: string, nullable: true }
+        brand:
+          type: [string, "null"]
+        barcode:
+          type: [string, "null"]
         default_serving:
           oneOf:
             - $ref: "#/components/schemas/ServingPreview"
             - type: "null"
         calories_per_serving:
-          oneOf:
-            - $ref: "#/components/schemas/Decimal"
-            - type: "null"
+          $ref: "#/components/schemas/NullableDecimal"
 
     FoodSearchPage:
       type: object
@@ -936,41 +1000,30 @@ components:
       properties:
         id: { type: string, format: uuid }
         food_id: { type: string, format: uuid }
-        serving_id: { type: string, format: uuid, nullable: true }
+        serving_id:
+          type: [string, "null"]
+          format: uuid
         consumed_on: { type: string, format: date }
         meal: { $ref: "#/components/schemas/Meal" }
         quantity: { $ref: "#/components/schemas/Decimal" }
         grams_total: { $ref: "#/components/schemas/Decimal" }
         calories_kcal: { $ref: "#/components/schemas/Decimal" }
         protein_g:
-          oneOf:
-            - $ref: "#/components/schemas/Decimal"
-            - type: "null"
+          $ref: "#/components/schemas/NullableDecimal"
         carbs_g:
-          oneOf:
-            - $ref: "#/components/schemas/Decimal"
-            - type: "null"
+          $ref: "#/components/schemas/NullableDecimal"
         fat_g:
-          oneOf:
-            - $ref: "#/components/schemas/Decimal"
-            - type: "null"
+          $ref: "#/components/schemas/NullableDecimal"
         fiber_g:
-          oneOf:
-            - $ref: "#/components/schemas/Decimal"
-            - type: "null"
+          $ref: "#/components/schemas/NullableDecimal"
         sugar_g:
-          oneOf:
-            - $ref: "#/components/schemas/Decimal"
-            - type: "null"
+          $ref: "#/components/schemas/NullableDecimal"
         sodium_mg:
-          oneOf:
-            - $ref: "#/components/schemas/Decimal"
-            - type: "null"
+          $ref: "#/components/schemas/NullableDecimal"
         saturated_fat_g:
-          oneOf:
-            - $ref: "#/components/schemas/Decimal"
-            - type: "null"
-        note: { type: string, nullable: true }
+          $ref: "#/components/schemas/NullableDecimal"
+        note:
+          type: [string, "null"]
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
@@ -995,7 +1048,8 @@ components:
         consumed_on: { type: string, format: date }
         meal: { $ref: "#/components/schemas/Meal" }
         quantity: { $ref: "#/components/schemas/Decimal" }
-        note: { type: string, nullable: true }
+        note:
+          type: [string, "null"]
 
     NutritionTotal:
       type: object
@@ -1003,33 +1057,19 @@ components:
       properties:
         calories_kcal: { $ref: "#/components/schemas/Decimal" }
         protein_g:
-          oneOf:
-            - $ref: "#/components/schemas/Decimal"
-            - type: "null"
+          $ref: "#/components/schemas/NullableDecimal"
         carbs_g:
-          oneOf:
-            - $ref: "#/components/schemas/Decimal"
-            - type: "null"
+          $ref: "#/components/schemas/NullableDecimal"
         fat_g:
-          oneOf:
-            - $ref: "#/components/schemas/Decimal"
-            - type: "null"
+          $ref: "#/components/schemas/NullableDecimal"
         fiber_g:
-          oneOf:
-            - $ref: "#/components/schemas/Decimal"
-            - type: "null"
+          $ref: "#/components/schemas/NullableDecimal"
         sugar_g:
-          oneOf:
-            - $ref: "#/components/schemas/Decimal"
-            - type: "null"
+          $ref: "#/components/schemas/NullableDecimal"
         sodium_mg:
-          oneOf:
-            - $ref: "#/components/schemas/Decimal"
-            - type: "null"
+          $ref: "#/components/schemas/NullableDecimal"
         saturated_fat_g:
-          oneOf:
-            - $ref: "#/components/schemas/Decimal"
-            - type: "null"
+          $ref: "#/components/schemas/NullableDecimal"
 
     MealSubtotal:
       type: object

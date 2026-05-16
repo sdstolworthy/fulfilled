@@ -1,0 +1,9 @@
+extends:
+  - recommended
+
+rules:
+  # `/foods/barcode/{barcode}` and `/foods/{food_id}/servings` look ambiguous
+  # to a path-template matcher, but the axum router resolves them because the
+  # static `barcode` and `servings` segments take precedence over `{food_id}`.
+  # See `crates/loseit-api/src/routes/foods.rs`.
+  no-ambiguous-paths: off
