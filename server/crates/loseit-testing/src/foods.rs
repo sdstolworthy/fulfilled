@@ -4,12 +4,15 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use chrono::Utc;
 use loseit_core::domain::{
-    Food, FoodDraft, FoodPatch, FoodSearchHit, FoodSource, Serving, ServingPreview,
+    Food, FoodDraft, FoodPatch, FoodSearchHit, FoodSource, NutritionPer100g, Serving,
+    ServingPreview, ServingSource,
 };
+use loseit_core::repo::food::QUICK_ADD_SENTINEL_NAME;
 use loseit_core::repo::{
     FoodRepository, LogRepository, OffFoodUpsert, ServingRepository, UpsertStats,
 };
 use loseit_core::CoreResult;
+use rust_decimal::Decimal;
 use uuid::Uuid;
 
 use crate::logs::InMemoryLogRepository;
@@ -100,6 +103,7 @@ impl FoodRepository for InMemoryFoodRepository {
             let mut matches: Vec<Food> = store
                 .values()
                 .filter(|f| is_visible(f, viewer))
+                .filter(|f| f.name != QUICK_ADD_SENTINEL_NAME)
                 .filter(|f| {
                     let mut haystack = f.name.to_lowercase();
                     if let Some(b) = &f.brands {
@@ -145,6 +149,7 @@ impl FoodRepository for InMemoryFoodRepository {
         let n = store
             .values()
             .filter(|f| is_visible(f, viewer))
+            .filter(|f| f.name != QUICK_ADD_SENTINEL_NAME)
             .filter(|f| {
                 let mut haystack = f.name.to_lowercase();
                 if let Some(b) = &f.brands {
@@ -227,6 +232,180 @@ impl FoodRepository for InMemoryFoodRepository {
         }
         self.by_id.lock().unwrap().remove(&id);
         Ok(())
+    }
+
+    async fn list_mine(
+        &self,
+        owner: Uuid,
+        q: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> CoreResult<Vec<FoodSearchHit>> {
+        let needle = q
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_lowercase());
+        let mut matches: Vec<Food> = {
+            let store = self.by_id.lock().unwrap();
+            store
+                .values()
+                .filter(|f| {
+                    f.source == FoodSource::User
+                        && f.owner_user_id == Some(owner)
+                        && f.name != QUICK_ADD_SENTINEL_NAME
+                })
+                .filter(|f| match &needle {
+                    None => true,
+                    Some(n) => {
+                        f.name.to_lowercase().contains(n.as_str())
+                            || f.brands
+                                .as_deref()
+                                .unwrap_or("")
+                                .to_lowercase()
+                                .contains(n.as_str())
+                    }
+                })
+                .cloned()
+                .collect()
+        };
+        // Sort: created_at DESC, id DESC (stable pagination key).
+        matches.sort_by(|a, b| {
+            b.created_at
+                .cmp(&a.created_at)
+                .then_with(|| b.id.cmp(&a.id))
+        });
+
+        let servings_guard = self.servings.lock().unwrap().clone();
+        let skip = offset.max(0) as usize;
+        let take = limit.max(0) as usize;
+        let mut out: Vec<FoodSearchHit> = Vec::new();
+        for food in matches.into_iter().skip(skip).take(take) {
+            let default_serving = match &servings_guard {
+                Some(repo) => repo
+                    .list_for_food(food.id)
+                    .await?
+                    .into_iter()
+                    .find(|s| s.is_default),
+                None => None,
+            };
+            out.push(hit_from(&food, default_serving));
+        }
+        Ok(out)
+    }
+
+    async fn count_mine(&self, owner: Uuid, q: Option<&str>) -> CoreResult<i64> {
+        let needle = q
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_lowercase());
+        let store = self.by_id.lock().unwrap();
+        let n = store
+            .values()
+            .filter(|f| {
+                f.source == FoodSource::User
+                    && f.owner_user_id == Some(owner)
+                    && f.name != QUICK_ADD_SENTINEL_NAME
+            })
+            .filter(|f| match &needle {
+                None => true,
+                Some(n) => {
+                    f.name.to_lowercase().contains(n.as_str())
+                        || f.brands
+                            .as_deref()
+                            .unwrap_or("")
+                            .to_lowercase()
+                            .contains(n.as_str())
+                }
+            })
+            .count();
+        Ok(n as i64)
+    }
+
+    async fn find_or_create_quick_add(&self, owner: Uuid) -> CoreResult<(Food, Serving)> {
+        // Idempotent: if a sentinel food already exists for `owner`, return
+        // the existing pair. Otherwise create both the food and a synthetic
+        // 100 g default serving. Mirrors the Pg `INSERT ... ON CONFLICT`
+        // behaviour without the partial-unique index, by checking-then-
+        // inserting under the food-store lock.
+        //
+        // The serving side-effect goes through the wired-in serving repo if
+        // one is attached (mirroring `upsert_off_batch`'s `set_serving_repo`).
+        // If no serving repo is attached, the fake synthesizes a Serving
+        // value to return so callers see the same `(Food, Serving)` shape
+        // as the Pg impl. Tests that exercise quick-add end-to-end attach
+        // a serving repo.
+        let now = Utc::now();
+        let servings_guard = self.servings.lock().unwrap().clone();
+
+        // Step 1: find-or-insert the sentinel food.
+        let food = {
+            let mut store = self.by_id.lock().unwrap();
+            if let Some(existing) = store.values().find(|f| {
+                f.source == FoodSource::User
+                    && f.owner_user_id == Some(owner)
+                    && f.name == QUICK_ADD_SENTINEL_NAME
+            }) {
+                existing.clone()
+            } else {
+                let food = Food {
+                    id: Uuid::new_v4(),
+                    source: FoodSource::User,
+                    owner_user_id: Some(owner),
+                    barcode: None,
+                    fdc_id: None,
+                    data_type: None,
+                    name: QUICK_ADD_SENTINEL_NAME.to_string(),
+                    brands: None,
+                    categories_tags: Vec::new(),
+                    nutrition: NutritionPer100g {
+                        energy_kcal: Some(Decimal::from(1)),
+                        protein_g: None,
+                        carbs_g: None,
+                        fat_g: None,
+                        fiber_g: None,
+                        sugar_g: None,
+                        sodium_g: None,
+                        saturated_fat_g: None,
+                    },
+                    nutriscore_grade: None,
+                    quality_score: 0,
+                    extra_nutrients: None,
+                    last_import_batch_id: None,
+                    created_at: now,
+                    updated_at: now,
+                };
+                store.insert(food.id, food.clone());
+                food
+            }
+        };
+
+        // Step 2: find-or-insert the default 100 g serving. The
+        // `find_or_create_default_kcal_for_food` helper performs the
+        // check-and-insert atomically under a single serving-store lock
+        // acquisition, mirroring the Pg `ON CONFLICT` against
+        // `servings_one_default_per_food`. The previous implementation
+        // released the lock between `list_for_food` and `create`, which made
+        // concurrent first-uses racy under multi-threaded runtimes.
+        let serving = if let Some(servings) = servings_guard {
+            servings.find_or_create_default_kcal_for_food(food.id)
+        } else {
+            // No serving repo wired in — synthesize a Serving so callers can
+            // still rely on the `(Food, Serving)` shape. This matches the
+            // Pg impl which always returns a real serving row.
+            Serving {
+                id: Uuid::new_v4(),
+                food_id: food.id,
+                label: "kcal".to_string(),
+                grams: Decimal::from(100),
+                is_default: true,
+                source: ServingSource::System,
+                sort_order: 0,
+                created_at: now,
+                updated_at: now,
+            }
+        };
+
+        Ok((food, serving))
     }
 
     async fn find_ids_by_barcodes(

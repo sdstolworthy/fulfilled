@@ -3,8 +3,13 @@ use std::collections::HashMap;
 use async_trait::async_trait;
 use uuid::Uuid;
 
-use crate::domain::{Food, FoodDraft, FoodPatch, FoodSearchHit};
+use crate::domain::{Food, FoodDraft, FoodPatch, FoodSearchHit, Serving};
 use crate::CoreResult;
+
+/// Sentinel name used to identify the internal "Quick Add" food that is
+/// created automatically for each user. This food should never be visible in
+/// user-facing food listings.
+pub const QUICK_ADD_SENTINEL_NAME: &str = "__quick_add__";
 
 /// Per-batch upsert counters returned by `upsert_off_batch`. Inserted vs.
 /// updated are distinguished by the repo via the `(xmax = 0)` Postgres
@@ -88,4 +93,26 @@ pub trait FoodRepository: Send + Sync + 'static {
         viewer: Uuid,
         barcodes: &[&str],
     ) -> CoreResult<HashMap<String, Uuid>>;
+
+    /// Paginated list of the caller's user-custom foods. Excludes the
+    /// `__quick_add__` sentinel. If `q` is `Some(s)`, filters to foods
+    /// whose name or brands contain `s` (case-insensitive). Results are
+    /// ordered `created_at DESC, id DESC` for stable pagination.
+    async fn list_mine(
+        &self,
+        owner: Uuid,
+        q: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> CoreResult<Vec<FoodSearchHit>>;
+
+    /// Count of user-custom foods matching the same predicates as
+    /// `list_mine`, irrespective of pagination parameters.
+    async fn count_mine(&self, owner: Uuid, q: Option<&str>) -> CoreResult<i64>;
+
+    /// Idempotently provision the per-user quick-add sentinel food. Returns
+    /// the food plus its synthetic 100 g default serving (label `"kcal"`,
+    /// source `system`). Safe under concurrent first-uses thanks to the
+    /// `foods_quick_add_singleton` partial unique index.
+    async fn find_or_create_quick_add(&self, owner: Uuid) -> CoreResult<(Food, Serving)>;
 }

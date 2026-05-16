@@ -10,6 +10,7 @@ use uuid::Uuid;
 
 use crate::auth::AuthenticatedUser;
 use crate::error::ApiError;
+use crate::routes::pagination::PaginatedResponse;
 use crate::server::AppState;
 
 pub fn router() -> Router<AppState> {
@@ -30,6 +31,8 @@ struct CreateBody {
 struct ListQuery {
     from: Option<NaiveDate>,
     to: Option<NaiveDate>,
+    limit: Option<i64>,
+    offset: Option<i64>,
 }
 
 #[derive(Serialize)]
@@ -74,9 +77,12 @@ async fn list(
     State(state): State<AppState>,
     AuthenticatedUser(user): AuthenticatedUser,
     Query(q): Query<ListQuery>,
-) -> Result<Json<Vec<WeightResponse>>, ApiError> {
-    let weights = state.weights.list(user.id, q.from, q.to).await?;
-    Ok(Json(weights.into_iter().map(Into::into).collect()))
+) -> Result<Json<PaginatedResponse<WeightResponse>>, ApiError> {
+    let page = state
+        .weights
+        .list(user.id, q.from, q.to, q.limit, q.offset)
+        .await?;
+    Ok(Json(page.into()))
 }
 
 async fn remove(

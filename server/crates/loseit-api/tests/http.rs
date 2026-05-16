@@ -153,7 +153,7 @@ async fn weight_post_then_list_round_trip() {
         .unwrap();
     assert_eq!(list.status(), StatusCode::OK);
     let body = read_json(list.into_body()).await;
-    let arr = body.as_array().expect("array");
+    let arr = body["results"].as_array().expect("results array");
     assert_eq!(arr.len(), 1);
     assert_eq!(arr[0]["recorded_on"], "2026-05-15");
 }

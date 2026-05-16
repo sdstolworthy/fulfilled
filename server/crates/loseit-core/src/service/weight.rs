@@ -5,7 +5,8 @@ use uuid::Uuid;
 
 use crate::domain::{Weight, WeightDraft};
 use crate::repo::WeightRepository;
-use crate::CoreResult;
+use crate::service::page::{resolve_page_params, Paginated};
+use crate::{CoreError, CoreResult};
 
 pub struct WeightService {
     weights: Arc<dyn WeightRepository>,
@@ -21,14 +22,38 @@ impl WeightService {
         self.weights.create(user_id, &draft).await
     }
 
+    /// Paginated weight entries for `user_id`, optionally filtered by date range.
+    ///
+    /// Returns a [`Paginated`] envelope with `total` set to the full match
+    /// count so callers can page through results. Validates that `from <= to`
+    /// when both are supplied, and delegates limit/offset defaulting to
+    /// [`resolve_page_params`].
     #[tracing::instrument(skip(self))]
     pub async fn list(
         &self,
         user_id: Uuid,
         from: Option<NaiveDate>,
         to: Option<NaiveDate>,
-    ) -> CoreResult<Vec<Weight>> {
-        self.weights.list_for_user(user_id, from, to).await
+        limit: Option<i64>,
+        offset: Option<i64>,
+    ) -> CoreResult<Paginated<Weight>> {
+        if let (Some(f), Some(t)) = (from, to) {
+            if f > t {
+                return Err(CoreError::Validation("`from` must be <= `to`".into()));
+            }
+        }
+        let page = resolve_page_params(limit, offset)?;
+        let results = self
+            .weights
+            .list_paginated(user_id, from, to, page.limit, page.offset)
+            .await?;
+        let total = self.weights.count_for_user(user_id, from, to).await?;
+        Ok(Paginated {
+            results,
+            total,
+            limit: page.limit,
+            offset: page.offset,
+        })
     }
 
     #[tracing::instrument(skip(self))]

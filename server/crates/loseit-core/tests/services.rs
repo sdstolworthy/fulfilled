@@ -71,10 +71,10 @@ async fn weights_list_filters_by_date_window() {
 
     let from = Some(NaiveDate::from_ymd_opt(2026, 5, 13).unwrap());
     let to = Some(NaiveDate::from_ymd_opt(2026, 5, 17).unwrap());
-    let in_window = weights.list(user_id, from, to).await.unwrap();
-    assert_eq!(in_window.len(), 5);
+    let in_window = weights.list(user_id, from, to, None, None).await.unwrap();
+    assert_eq!(in_window.results.len(), 5);
     // Sorted newest first.
-    assert_eq!(in_window[0].recorded_on.day(), 17);
+    assert_eq!(in_window.results[0].recorded_on.day(), 17);
 }
 
 #[tokio::test]

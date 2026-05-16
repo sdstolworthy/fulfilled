@@ -41,3 +41,11 @@ sqlx = { version = "0.8", default-features = false, features = [
     "migrate",
     "rust_decimal",
 ] }
+jsonwebtoken = "9"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+hmac = "0.12"
+sha2 = "0.10"
+base64 = "0.22"
+bytes = "1"
+subtle = "2"
+tokio-util = { version = "0.7", features = ["io"] }

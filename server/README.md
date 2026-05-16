@@ -141,11 +141,23 @@ All taken from `.env.example`. The API binary reads them through
 | `DEV_AUTH_USER_ID`        | `dev-user`                                           | External-id half of `(issuer, external_id)` user key.              |
 | `DEV_AUTH_EMAIL`          | `dev@example.com`                                    | Email of the dev identity.                                         |
 | `DEV_AUTH_DISPLAY_NAME`   | `Dev User`                                           | Display name of the dev identity.                                  |
-| `OIDC_ISSUER`             | (required when bypass is off)                        | JWKS issuer URL. Not wired up for v1 — JWKS is post-v1.            |
-| `OIDC_JWKS_URL`           | (required when bypass is off)                        | JWKS metadata URL.                                                 |
+| `OIDC_ISSUER`             | (required when bypass is off)                        | Expected `iss` claim. Provider's `https://…` URL.                  |
+| `OIDC_AUDIENCE`           | (required when bypass is off)                        | Expected `aud` claim. Accepts string or array `aud` natively.      |
+| `OIDC_JWKS_URL`           | (required when bypass is off)                        | JWKS document URL (`/.well-known/jwks.json` for most idPs).        |
+| `OIDC_JWKS_CACHE_TTL_SECS`| `600`                                                | JWKS cache TTL. A `kid` miss also forces an out-of-band refresh.   |
 
 The binary refuses to start if `RUST_ENV=production` and
 `DEV_AUTH_BYPASS=true` — that combination has bitten us before.
+
+When `DEV_AUTH_BYPASS` is off, the server validates JWTs against the
+configured JWKS endpoint. The validator is provider-agnostic — anything
+that publishes a JWKS document works (Auth0, Cognito, Keycloak,
+Firebase, …). The algorithm whitelist is `RS256, RS384, RS512, ES256,
+ES384`; symmetric (`HS*`) and `none` are rejected. `exp` and `nbf` are
+checked with 60s leeway. JWKS keys are cached for
+`OIDC_JWKS_CACHE_TTL_SECS` (default 600s) and refreshed on TTL expiry or
+on a `kid` cache miss. A failed JWKS fetch never poisons the cache —
+previously-valid tokens keep working until their `exp` catches up.
 
 ---
 

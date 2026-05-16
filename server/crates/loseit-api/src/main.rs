@@ -29,7 +29,7 @@ async fn main() -> Result<()> {
         run_migrations(&pool).await.context("running migrations")?;
     }
 
-    let router = build_router(pool, &config)?;
+    let router = build_router(pool, &config).await?;
     let listener = TcpListener::bind(config.bind)
         .await
         .with_context(|| format!("binding to {}", config.bind))?;

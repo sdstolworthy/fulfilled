@@ -67,27 +67,56 @@ impl WeightRepository for PgWeightRepository {
         Ok(row.into())
     }
 
-    async fn list_for_user(
+    async fn list_paginated(
         &self,
         user_id: Uuid,
         from: Option<NaiveDate>,
         to: Option<NaiveDate>,
+        limit: i64,
+        offset: i64,
     ) -> CoreResult<Vec<Weight>> {
+        // The `$2::date IS NULL OR recorded_on >= $2` pattern lets the Postgres
+        // planner skip the date filter entirely when `from`/`to` are NULL while
+        // still hitting `weights_user_date_idx` on the `user_id` prefix.
         let sql = format!(
             "SELECT {SELECT_COLS} FROM weights \
              WHERE user_id = $1 \
                AND ($2::date IS NULL OR recorded_on >= $2) \
                AND ($3::date IS NULL OR recorded_on <= $3) \
-             ORDER BY recorded_on DESC, created_at DESC"
+             ORDER BY recorded_on DESC, created_at DESC, id DESC \
+             LIMIT $4 OFFSET $5"
         );
         let rows: Vec<WeightRow> = sqlx::query_as(&sql)
             .bind(user_id)
             .bind(from)
             .bind(to)
+            .bind(limit)
+            .bind(offset)
             .fetch_all(&self.pool)
             .await
             .map_err(map_sqlx)?;
         Ok(rows.into_iter().map(Into::into).collect())
+    }
+
+    async fn count_for_user(
+        &self,
+        user_id: Uuid,
+        from: Option<NaiveDate>,
+        to: Option<NaiveDate>,
+    ) -> CoreResult<i64> {
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*)::BIGINT FROM weights \
+             WHERE user_id = $1 \
+               AND ($2::date IS NULL OR recorded_on >= $2) \
+               AND ($3::date IS NULL OR recorded_on <= $3)",
+        )
+        .bind(user_id)
+        .bind(from)
+        .bind(to)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_sqlx)?;
+        Ok(count)
     }
 
     async fn delete(&self, user_id: Uuid, id: Uuid) -> CoreResult<()> {

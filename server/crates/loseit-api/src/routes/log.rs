@@ -1,9 +1,11 @@
-//! Food-log + day-summary handlers (T15 + T16).
+//! Food-log + day-summary handlers.
 //!
 //! Routes:
 //!
 //! * `POST   /log`               — create a log entry.
-//! * `GET    /log?from=&to=`     — list entries in a date range.
+//! * `POST   /log/quick_add`     — log raw calories without choosing a food.
+//! * `POST   /log/copy`          — copy all (or one meal's) entries to another date.
+//! * `GET    /log`               — list entries; optional from/to/limit/offset.
 //! * `PATCH  /log/:id`           — partial update; `food_id` is immutable.
 //! * `DELETE /log/:id`           — remove an entry.
 //! * `GET    /days/:date/summary` — per-day rollup with active goal.
@@ -34,11 +36,17 @@ use uuid::Uuid;
 use crate::auth::AuthenticatedUser;
 use crate::error::ApiError;
 use crate::routes::goals::GoalResponse;
+use crate::routes::pagination::PaginatedResponse;
 use crate::server::AppState;
 
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/log", post(create).get(list))
+        .route("/log/quick_add", post(quick_add))
+        // `/log/copy` must register *before* `/log/:id` — axum's matchit-based
+        // router treats `copy` as a path param under the wildcard otherwise,
+        // and DELETE /log/copy would silently reach the entry handler.
+        .route("/log/copy", post(copy_day))
         .route("/log/:id", axum::routing::patch(patch).delete(remove))
         .route("/days/:date/summary", get(day_summary))
 }
@@ -52,6 +60,15 @@ struct CreateLogBody {
     consumed_on: NaiveDate,
     meal: String,
     quantity: Decimal,
+    #[serde(default)]
+    note: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct QuickAddBody {
+    calories_kcal: Decimal,
+    meal: String,
+    consumed_on: NaiveDate,
     #[serde(default)]
     note: Option<String>,
 }
@@ -90,10 +107,30 @@ where
     Ok(Some(v))
 }
 
+/// Body for `POST /log/copy`. `meal` is optional — when present, only entries
+/// matching that meal are copied. `from_date > to_date` is intentionally
+/// permitted (backward copy is legitimate), unlike the GET-list range filter.
 #[derive(Debug, Deserialize)]
-struct RangeQuery {
-    from: NaiveDate,
-    to: NaiveDate,
+struct CopyDayBody {
+    from_date: NaiveDate,
+    to_date: NaiveDate,
+    #[serde(default)]
+    meal: Option<String>,
+}
+
+/// Wrapped response so future fields (e.g. `skipped`) can be added without
+/// breaking the wire shape.
+#[derive(Serialize)]
+struct CopyDayResponse {
+    copied: Vec<LogEntryResponse>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ListLogQuery {
+    from: Option<NaiveDate>,
+    to: Option<NaiveDate>,
+    limit: Option<i64>,
+    offset: Option<i64>,
 }
 
 #[derive(Serialize)]
@@ -246,22 +283,35 @@ async fn create(
     Ok((StatusCode::CREATED, Json(entry.into())))
 }
 
+async fn quick_add(
+    State(state): State<AppState>,
+    AuthenticatedUser(user): AuthenticatedUser,
+    Json(body): Json<QuickAddBody>,
+) -> Result<(StatusCode, Json<LogEntryResponse>), ApiError> {
+    let meal = parse_meal(&body.meal)?;
+    let entry = state
+        .logs
+        .quick_add(
+            user.id,
+            body.calories_kcal,
+            meal,
+            body.consumed_on,
+            body.note,
+        )
+        .await?;
+    Ok((StatusCode::CREATED, Json(entry.into())))
+}
+
 async fn list(
     State(state): State<AppState>,
     AuthenticatedUser(user): AuthenticatedUser,
-    Query(q): Query<RangeQuery>,
-) -> Result<Json<Vec<LogEntryResponse>>, ApiError> {
-    if q.from > q.to {
-        return Err(ApiError::bad_request("`from` must be <= `to`"));
-    }
-    let mut entries = state.logs.list_in_range(user.id, q.from, q.to).await?;
-    // Newest consumed first, then newest created within a day.
-    entries.sort_by(|a, b| {
-        b.consumed_on
-            .cmp(&a.consumed_on)
-            .then(b.created_at.cmp(&a.created_at))
-    });
-    Ok(Json(entries.into_iter().map(Into::into).collect()))
+    Query(q): Query<ListLogQuery>,
+) -> Result<Json<PaginatedResponse<LogEntryResponse>>, ApiError> {
+    let page = state
+        .logs
+        .list(user.id, q.from, q.to, q.limit, q.offset)
+        .await?;
+    Ok(Json(page.into()))
 }
 
 async fn patch(
@@ -303,4 +353,25 @@ async fn day_summary(
 ) -> Result<Json<DaySummaryResponse>, ApiError> {
     let summary = state.logs.day_summary(user.id, date).await?;
     Ok(Json(summary.into()))
+}
+
+async fn copy_day(
+    State(state): State<AppState>,
+    AuthenticatedUser(user): AuthenticatedUser,
+    Json(body): Json<CopyDayBody>,
+) -> Result<(StatusCode, Json<CopyDayResponse>), ApiError> {
+    // Parse the optional meal *eagerly* — an unknown value becomes 400 rather
+    // than being silently dropped, which would otherwise look like a
+    // successful no-filter copy.
+    let meal = body.meal.as_deref().map(parse_meal).transpose()?;
+    let copied = state
+        .logs
+        .copy_day(user.id, body.from_date, body.to_date, meal)
+        .await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(CopyDayResponse {
+            copied: copied.into_iter().map(Into::into).collect(),
+        }),
+    ))
 }

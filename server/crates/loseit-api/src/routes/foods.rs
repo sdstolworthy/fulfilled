@@ -1,30 +1,18 @@
 //! Food + serving handlers.
 //!
-//! Read endpoints (T10/T11):
+//! Routes:
 //!
-//! * `GET /foods/:id` — full food + servings.
-//! * `GET /foods/barcode/:barcode` — same shape, looked up by barcode.
-//! * `GET /foods/search` — paginated `FoodSearchHit` projection.
-//!
-//! Custom-food writes (T12):
-//!
-//! * `POST /foods` — create a user-owned custom food (auto-seeds a default
-//!   100 g system serving).
-//! * `PATCH /foods/:id` — partial update; only the owner of a `user`-source
-//!   food may patch.
-//! * `DELETE /foods/:id` — soft 404 / 403 / 409 by visibility, source, and
-//!   log references respectively.
-//!
-//! Serving CRUD (T13) — kept in this module since servings are scoped under
-//! `/foods/:food_id/servings` and the existing DTOs/helpers already live
-//! here:
-//!
-//! * `POST /foods/:food_id/servings`
-//! * `PATCH /servings/:id`
-//! * `DELETE /servings/:id`
-//! * `POST /servings/:id/default` — atomic default flip. (Spec deviation:
-//!   the original API surface only mentioned `is_default` on create/patch;
-//!   PM sign-off pending on the explicit endpoint.)
+//! * `GET    /foods/:id`                    — full food detail + servings.
+//! * `GET    /foods/barcode/:barcode`       — same shape, looked up by barcode.
+//! * `GET    /foods/search`                 — paginated `FoodSearchHit` projection.
+//! * `GET    /foods/mine`                   — user's custom foods, paginated.
+//! * `POST   /foods`                        — create a user-owned custom food.
+//! * `PATCH  /foods/:id`                    — partial update (owner only).
+//! * `DELETE /foods/:id`                    — soft-delete (owner only).
+//! * `POST   /foods/:food_id/servings`      — add a serving to a food.
+//! * `PATCH  /servings/:id`                 — update a serving.
+//! * `DELETE /servings/:id`                 — delete a serving.
+//! * `POST   /servings/:id/default`         — atomic default-serving flip.
 
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
@@ -34,13 +22,13 @@ use loseit_core::domain::{
     Food, FoodDraft, FoodPatch, FoodSearchHit, FoodSource, NutriscoreGrade, NutritionPer100g,
     Serving, ServingDraft, ServingPatch, ServingPreview, ServingSource,
 };
-use loseit_core::service::SearchPage;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::auth::AuthenticatedUser;
 use crate::error::ApiError;
+use crate::routes::pagination::PaginatedResponse;
 use crate::server::AppState;
 
 pub fn router() -> Router<AppState> {
@@ -58,6 +46,7 @@ pub fn router() -> Router<AppState> {
     // all collide with /foods/:id otherwise.
     Router::new()
         .route("/foods/search", get(search))
+        .route("/foods/mine", get(list_mine))
         .route("/foods/recent", get(recent_foods))
         .route("/foods/frequent", get(frequent_foods))
         .route("/foods/barcode/:barcode", get(get_by_barcode))
@@ -216,30 +205,18 @@ impl From<FoodSearchHit> for FoodSearchHitResponse {
     }
 }
 
-#[derive(Serialize)]
-struct SearchResponse {
-    results: Vec<FoodSearchHitResponse>,
-    total: i64,
-    limit: i64,
-    offset: i64,
-}
-
-impl From<SearchPage> for SearchResponse {
-    fn from(p: SearchPage) -> Self {
-        Self {
-            results: p.results.into_iter().map(Into::into).collect(),
-            total: p.total,
-            limit: p.limit,
-            offset: p.offset,
-        }
-    }
-}
-
 // -- Query params ------------------------------------------------------------
 
 #[derive(Deserialize)]
 struct SearchQuery {
     q: String,
+    limit: Option<i64>,
+    offset: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct MineQuery {
+    q: Option<String>,
     limit: Option<i64>,
     offset: Option<i64>,
 }
@@ -358,11 +335,23 @@ async fn search(
     State(state): State<AppState>,
     AuthenticatedUser(user): AuthenticatedUser,
     Query(q): Query<SearchQuery>,
-) -> Result<Json<SearchResponse>, ApiError> {
+) -> Result<Json<PaginatedResponse<FoodSearchHitResponse>>, ApiError> {
     // Service is the source of truth for validation rules: blank query →
     // `Validation`, limit cap, default offset. The handler just translates
-    // the result.
+    // the result via the generic `From<Paginated<T>>` adapter.
     let page = state.foods.search(user.id, &q.q, q.limit, q.offset).await?;
+    Ok(Json(page.into()))
+}
+
+async fn list_mine(
+    State(state): State<AppState>,
+    AuthenticatedUser(user): AuthenticatedUser,
+    Query(q): Query<MineQuery>,
+) -> Result<Json<PaginatedResponse<FoodSearchHitResponse>>, ApiError> {
+    let page = state
+        .foods
+        .list_mine(user.id, q.q.as_deref(), q.limit, q.offset)
+        .await?;
     Ok(Json(page.into()))
 }
 

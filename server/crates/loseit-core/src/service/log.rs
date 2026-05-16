@@ -10,6 +10,7 @@ use crate::domain::{
     NutritionSnapshot, PersistedLogEntry, PersistedLogPatch, RecomputedSnapshot, ServingPreview,
 };
 use crate::repo::{FoodRepository, GoalRepository, LogRepository, ServingRepository};
+use crate::service::page::{resolve_page_params, Paginated};
 use crate::{CoreError, CoreResult};
 
 /// Hardcoded "frequent" lookback window for v1. See NEXT_STEPS open
@@ -140,6 +141,57 @@ impl LogService {
         self.logs.create(user, &persisted).await
     }
 
+    #[tracing::instrument(skip(self))]
+    pub async fn quick_add(
+        &self,
+        user: Uuid,
+        calories_kcal: Decimal,
+        meal: Meal,
+        consumed_on: NaiveDate,
+        note: Option<String>,
+    ) -> CoreResult<FoodLogEntry> {
+        // Validation: must be strictly positive, < 9_999.
+        // The upper bound is set below 10_000 so the explicit calories error
+        // fires before the grams_total guard (grams_total = calories * 100,
+        // so grams_total >= 1_000_000 at calories >= 10_000).
+        if calories_kcal <= Decimal::ZERO {
+            return Err(CoreError::Validation(
+                "calories_kcal must be positive".into(),
+            ));
+        }
+        if calories_kcal >= Decimal::from(9_999) {
+            return Err(CoreError::Validation(
+                "calories_kcal must be less than 9999".into(),
+            ));
+        }
+
+        // Provision sentinel (idempotent) → reuse standard create path.
+        let (food, serving) = self.foods.find_or_create_quick_add(user).await?;
+
+        // grams_total = calories_kcal * 100  (sentinel has 1 kcal / 100 g,
+        // serving.grams = 100, so quantity = calories_kcal). Pad to NUMERIC(8,2).
+        let quantity = calories_kcal;
+        let grams_total = to_numeric_8_2(serving.grams * quantity);
+        if grams_total >= Decimal::new(100_000_000, 2) {
+            return Err(CoreError::Validation(
+                "grams_total exceeds maximum allowed value".into(),
+            ));
+        }
+        let snapshot = Self::compute_snapshot(&food, grams_total);
+
+        let persisted = PersistedLogEntry {
+            food_id: food.id,
+            serving_id: Some(serving.id),
+            consumed_on,
+            meal,
+            quantity,
+            grams_total,
+            snapshot,
+            note,
+        };
+        self.logs.create(user, &persisted).await
+    }
+
     #[tracing::instrument(skip(self, patch))]
     pub async fn update(&self, user: Uuid, id: Uuid, patch: LogPatch) -> CoreResult<FoodLogEntry> {
         let existing = self
@@ -219,6 +271,106 @@ impl LogService {
         self.logs.delete(user, id).await
     }
 
+    /// Copy every entry on `from_date` (optionally filtered by `meal`) onto
+    /// `to_date`, **re-snapshotting** each from the current food + serving.
+    ///
+    /// The re-snapshot is the entire reason this is a server endpoint and
+    /// not a client loop: if the user edited a custom food between the two
+    /// dates, the destination entries reflect the *new* nutrition, not the
+    /// source's frozen snapshot.
+    ///
+    /// Entries whose food is no longer visible to `user`, whose serving was
+    /// deleted, or whose computed `grams_total` would overflow the
+    /// `NUMERIC(8,2)` column are silently skipped — the response contains
+    /// only the entries that were successfully inserted. Skips are logged at
+    /// `tracing::info` so production has a paper trail; the wire envelope
+    /// (`{ copied: [...] }`) is future-proofed so a `skipped` field can be
+    /// added later without breaking existing clients.
+    ///
+    /// Both `from_date == to_date` (duplicate onto the same day) and
+    /// `from_date > to_date` (backward copy) are legitimate. Pre-existing
+    /// entries on `to_date` are *not* replaced — the copy coexists with
+    /// them.
+    #[tracing::instrument(skip(self))]
+    pub async fn copy_day(
+        &self,
+        user: Uuid,
+        from_date: NaiveDate,
+        to_date: NaiveDate,
+        meal: Option<Meal>,
+    ) -> CoreResult<Vec<FoodLogEntry>> {
+        let source = self.logs.list_for_day(user, from_date).await?;
+
+        let mut persisted: Vec<PersistedLogEntry> = Vec::with_capacity(source.len());
+        for e in source.iter().filter(|e| meal.map_or(true, |m| e.meal == m)) {
+            // Re-resolve food. find_by_id returns None for "deleted or
+            // cross-tenant" — both indistinguishable here, both skip.
+            let Some(food) = self.foods.find_by_id(user, e.food_id).await? else {
+                tracing::info!(
+                    entry_id = %e.id,
+                    food_id = %e.food_id,
+                    "copy_day: skipping entry — food not visible",
+                );
+                continue;
+            };
+
+            // Without a serving id there's no way to recompute grams_total,
+            // so we can't construct a fresh snapshot. v1 always populates
+            // serving_id, but the column is nullable for forward-compat —
+            // skip rather than guess.
+            let Some(serving_id) = e.serving_id else {
+                tracing::info!(
+                    entry_id = %e.id,
+                    "copy_day: skipping entry — no serving_id on source",
+                );
+                continue;
+            };
+            let Some(serving) = self.servings.find_by_id(serving_id).await? else {
+                tracing::info!(
+                    entry_id = %e.id,
+                    serving_id = %serving_id,
+                    "copy_day: skipping entry — serving deleted",
+                );
+                continue;
+            };
+            if serving.food_id != food.id {
+                // Defensive: a serving reparented to a different food would
+                // produce a wrong snapshot. Skip rather than 500.
+                tracing::info!(
+                    entry_id = %e.id,
+                    serving_food = %serving.food_id,
+                    entry_food = %food.id,
+                    "copy_day: skipping entry — serving.food_id mismatch",
+                );
+                continue;
+            }
+
+            let grams_total = to_numeric_8_2(serving.grams * e.quantity);
+            // Same overflow guard as `create` — silently skip rather than
+            // fail the whole batch.
+            if grams_total >= Decimal::new(100_000_000, 2) {
+                tracing::info!(
+                    entry_id = %e.id,
+                    "copy_day: skipping entry — grams_total overflow",
+                );
+                continue;
+            }
+            let snapshot = Self::compute_snapshot(&food, grams_total);
+            persisted.push(PersistedLogEntry {
+                food_id: food.id,
+                serving_id: Some(serving.id),
+                consumed_on: to_date,
+                meal: e.meal,
+                quantity: e.quantity,
+                grams_total,
+                snapshot,
+                note: e.note.clone(),
+            });
+        }
+
+        self.logs.create_many(user, &persisted).await
+    }
+
     #[tracing::instrument(skip(self))]
     pub async fn list_in_range(
         &self,
@@ -227,6 +379,40 @@ impl LogService {
         to: NaiveDate,
     ) -> CoreResult<Vec<FoodLogEntry>> {
         self.logs.list_in_range(user, from, to).await
+    }
+
+    /// Paginated log entries for `user`, optionally filtered by date range.
+    ///
+    /// Returns a [`Paginated`] envelope with `total` set to the full match
+    /// count so callers can page through results. Validates that `from <= to`
+    /// when both are supplied, and delegates limit/offset defaulting to
+    /// [`resolve_page_params`].
+    #[tracing::instrument(skip(self))]
+    pub async fn list(
+        &self,
+        user: Uuid,
+        from: Option<NaiveDate>,
+        to: Option<NaiveDate>,
+        limit: Option<i64>,
+        offset: Option<i64>,
+    ) -> CoreResult<Paginated<FoodLogEntry>> {
+        if let (Some(f), Some(t)) = (from, to) {
+            if f > t {
+                return Err(CoreError::Validation("`from` must be <= `to`".into()));
+            }
+        }
+        let page = resolve_page_params(limit, offset)?;
+        let results = self
+            .logs
+            .list_paginated(user, from, to, page.limit, page.offset)
+            .await?;
+        let total = self.logs.count_in_range(user, from, to).await?;
+        Ok(Paginated {
+            results,
+            total,
+            limit: page.limit,
+            offset: page.offset,
+        })
     }
 
     #[tracing::instrument(skip(self))]
@@ -381,7 +567,7 @@ impl LogService {
                 food.nutrition.energy_kcal,
                 default_serving.as_ref().map(|s| s.grams),
             ) {
-                (Some(kcal), Some(grams)) => Some((kcal * grams / Decimal::from(100)).round_dp(2)),
+                (Some(kcal), Some(grams)) => Some((kcal * grams / Decimal::from(100)).round()),
                 _ => None,
             };
             out.push(FoodSearchHit {
@@ -399,8 +585,8 @@ impl LogService {
 }
 
 /// Round + pad a Decimal to exactly two fractional digits. This matches the
-/// `NUMERIC(8,2)` / `NUMERIC(10,2)` columns the snapshot lands in, so the
-/// in-memory value always serializes the same way Postgres would render it.
+/// `NUMERIC(8,2)` columns the snapshot lands in, so the in-memory value
+/// always serializes the same way Postgres would render it.
 fn to_numeric_8_2(value: Decimal) -> Decimal {
     let mut v = value.round_dp(2);
     v.rescale(2);

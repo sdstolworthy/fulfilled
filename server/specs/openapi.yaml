@@ -18,6 +18,22 @@ info:
     decimals — clients should avoid binary float round-trips for fields like
     `weight_kg`, `grams`, and `quantity`.
 
+    ## v1 pre-release wire-shape changes
+
+    The following endpoints returned bare JSON arrays in early drafts and
+    now return paginated envelopes (`{ results, total, limit, offset }`):
+
+    * `GET /log`
+    * `GET /weights`
+
+    Both endpoints' `from` and `to` query parameters were previously
+    required and are now optional. With no parameters, the response is
+    the 100 most-recent entries across the full history.
+
+    The `GET /foods/search` response schema migrated from the bespoke
+    `FoodSearchPage` shape to the unified `PaginatedFoodSearchHits`
+    envelope; field names are unchanged.
+
 servers:
   - url: "https://{host}/api/v1"
     description: LoseIt API. Override `host` for local development (e.g. `127.0.0.1:8080`).
@@ -105,6 +121,19 @@ paths:
               schema: { $ref: "#/components/schemas/User" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+    delete:
+      tags: [Profile]
+      operationId: delete_me
+      summary: Permanently delete the authenticated user and all their data
+      description: |
+        Cascades deletion across food log entries, weights, goals, and the
+        caller's custom foods. Returns 204 on success.
+        Note: subsequent requests with the same token will re-provision a
+        fresh user row (the token still validates locally via the JWT issuer).
+        This is accepted v1 behaviour.
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
 
   /weights:
     post:
@@ -129,6 +158,12 @@ paths:
       tags: [Weights]
       operationId: list_weights
       summary: List weight entries
+      description: |
+        Lists the caller's weight entries, newest recorded-day first.
+
+        All four query parameters are optional. With no parameters, the
+        response is the 100 most-recent entries across the full history.
+        Default `limit` is 100; server silently clamps requests above 500.
       parameters:
         - in: query
           name: from
@@ -138,14 +173,20 @@ paths:
           name: to
           schema: { type: string, format: date }
           description: Inclusive upper bound on `recorded_on`.
+        - in: query
+          name: limit
+          schema: { type: integer, format: int64, minimum: 0 }
+          description: Page size; 0 or omitted → 100.
+        - in: query
+          name: offset
+          schema: { type: integer, format: int64, minimum: 0 }
+          description: Page offset, starting at 0.
       responses:
         "200":
-          description: Matching weight entries.
+          description: Page of weight entries.
           content:
             application/json:
-              schema:
-                type: array
-                items: { $ref: "#/components/schemas/Weight" }
+              schema: { $ref: "#/components/schemas/PaginatedWeights" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
@@ -258,6 +299,10 @@ paths:
       description: |
         Full-text search across the foods catalogue (OFF, USDA, and the
         caller's custom foods). A blank `q` returns `400 bad_request`.
+
+        Default `limit` is 100; the server silently clamps requests above
+        500. Sentinel foods used by `POST /log/quick_add` are excluded
+        from results.
       parameters:
         - in: query
           name: q
@@ -266,7 +311,7 @@ paths:
           description: Search query string.
         - in: query
           name: limit
-          schema: { type: integer, format: int64, minimum: 1 }
+          schema: { type: integer, format: int64, minimum: 0 }
           description: Page size. Server applies a cap if exceeded.
         - in: query
           name: offset
@@ -277,7 +322,41 @@ paths:
           description: Search page.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/FoodSearchPage" }
+              schema: { $ref: "#/components/schemas/PaginatedFoodSearchHits" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /foods/mine:
+    get:
+      tags: [Foods]
+      operationId: list_my_foods
+      summary: List the caller's custom foods
+      description: |
+        Lists `user`-source foods owned by the caller, optionally filtered
+        by a case-insensitive substring match against `name` and `brands`.
+        The sentinel `__quick_add__` food (used by `POST /log/quick_add`)
+        is never returned.
+
+        Default `limit` is 100; server silently clamps requests above 500.
+      parameters:
+        - in: query
+          name: q
+          schema: { type: string, maxLength: 200 }
+          description: Substring filter; empty/whitespace is treated as absent.
+        - in: query
+          name: limit
+          schema: { type: integer, format: int64, minimum: 0 }
+          description: Page size; 0 or omitted → 100.
+        - in: query
+          name: offset
+          schema: { type: integer, format: int64, minimum: 0 }
+          description: Page offset, starting at 0.
+      responses:
+        "200":
+          description: Page of the caller's custom foods.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PaginatedFoodSearchHits" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
@@ -526,30 +605,97 @@ paths:
     get:
       tags: [Log]
       operationId: list_log_entries
-      summary: List log entries in a date range
+      summary: List log entries
       description: |
-        Both `from` and `to` are required and must satisfy `from <= to`.
-        Entries are returned newest consumed-day first, then newest
-        created-at within the same day.
+        Lists the caller's log entries, newest consumed-day first.
+
+        All four query parameters are optional. With no parameters, the
+        response is the 100 most-recent entries across the full history.
+        `from`/`to` are both inclusive bounds on `consumed_on`. Default
+        `limit` is 100; server silently clamps requests above 500.
       parameters:
         - in: query
           name: from
-          required: true
           schema: { type: string, format: date }
           description: Inclusive lower bound on `consumed_on`.
         - in: query
           name: to
-          required: true
           schema: { type: string, format: date }
           description: Inclusive upper bound on `consumed_on`.
+        - in: query
+          name: limit
+          schema: { type: integer, format: int64, minimum: 0 }
+          description: Page size; 0 or omitted → 100.
+        - in: query
+          name: offset
+          schema: { type: integer, format: int64, minimum: 0 }
+          description: Page offset, starting at 0.
       responses:
         "200":
-          description: Matching log entries.
+          description: Page of log entries.
           content:
             application/json:
-              schema:
-                type: array
-                items: { $ref: "#/components/schemas/LogEntry" }
+              schema: { $ref: "#/components/schemas/PaginatedLogEntries" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /log/quick_add:
+    post:
+      tags: [Log]
+      operationId: quick_add_log_entry
+      summary: Log raw calories without choosing a food
+      description: |
+        Creates a log entry against a per-user sentinel "Quick Add" food
+        owned by the caller. Only `calories_kcal` carries a value; all
+        macronutrient fields on the returned snapshot are null. The
+        sentinel food is hidden from `/foods/search`, `/foods/mine`,
+        `/foods/recent`, and `/foods/frequent`. It is auto-provisioned on
+        first use.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/QuickAddBody" }
+      responses:
+        "201":
+          description: Created. The response includes a frozen snapshot with macros null.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LogEntry" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /log/copy:
+    post:
+      tags: [Log]
+      operationId: copy_log_day
+      summary: Copy a day's log entries to another day
+      description: |
+        Re-snapshots every entry in `from_date` (optionally filtered by
+        `meal`) onto `to_date`. Snapshots are recomputed from the *current*
+        food, so edits to a custom food between the two dates are
+        reflected in the copied entries.
+
+        Entries whose food is no longer visible to the caller, or whose
+        serving has been deleted, are silently skipped. `from_date ==
+        to_date` and `from_date > to_date` (backward copy) are both
+        permitted. If `to_date` already has entries, they coexist with the
+        new ones — nothing is replaced.
+
+        The response is wrapped (`{ copied: [...] }`) rather than a bare
+        array so future fields (e.g. `skipped`) can be added without
+        breaking the wire shape.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CopyDayBody" }
+      responses:
+        "201":
+          description: Created. Body contains the inserted entries, in input order.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CopyDayResponse" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
@@ -841,7 +987,10 @@ components:
         sodium_g:
           allOf:
             - $ref: "#/components/schemas/Decimal"
-          description: Sodium in grams per 100 g (OFF convention).
+          description: |
+            Sodium in grams per 100 g (OFF convention). Clients should
+            multiply by 1000 to display as milligrams, which is the
+            customer-expected unit.
         saturated_fat_g: { $ref: "#/components/schemas/Decimal" }
 
     Serving:
@@ -929,6 +1078,9 @@ components:
     FoodCreate:
       type: object
       required: [name, nutrition]
+      description: |
+        Create a new user-custom food. The name `__quick_add__` is reserved
+        for the internal quick-add sentinel and returns 400.
       properties:
         name: { type: string }
         brands: { type: string }
@@ -939,6 +1091,40 @@ components:
           default: []
         nutrition: { $ref: "#/components/schemas/NutritionPer100g" }
         nutriscore_grade: { $ref: "#/components/schemas/NutriscoreGrade" }
+
+    QuickAddBody:
+      type: object
+      required: [calories_kcal, meal, consumed_on]
+      properties:
+        calories_kcal:
+          allOf:
+            - $ref: "#/components/schemas/Decimal"
+          description: Must be > 0 and < 9999.
+          exclusiveMinimum: 0
+          maximum: 9998
+        meal: { $ref: "#/components/schemas/Meal" }
+        consumed_on: { type: string, format: date }
+        note: { type: string }
+
+    CopyDayBody:
+      type: object
+      required: [from_date, to_date]
+      properties:
+        from_date: { type: string, format: date }
+        to_date: { type: string, format: date }
+        meal:
+          oneOf:
+            - $ref: "#/components/schemas/Meal"
+            - type: "null"
+          description: If present, only entries with this meal are copied.
+
+    CopyDayResponse:
+      type: object
+      required: [copied]
+      properties:
+        copied:
+          type: array
+          items: { $ref: "#/components/schemas/LogEntry" }
 
     FoodPatch:
       type: object
@@ -971,16 +1157,51 @@ components:
         calories_per_serving:
           $ref: "#/components/schemas/NullableDecimal"
 
-    FoodSearchPage:
+    Paginated:
       type: object
       required: [results, total, limit, offset]
       properties:
         results:
           type: array
-          items: { $ref: "#/components/schemas/FoodSearchHit" }
-        total: { type: integer, format: int64 }
-        limit: { type: integer, format: int64 }
-        offset: { type: integer, format: int64 }
+          description: Replaced by the concrete schema in allOf compositions.
+          items: {}
+        total:
+          type: integer
+          format: int64
+          description: Total matching rows across all pages.
+        limit:
+          type: integer
+          format: int64
+        offset:
+          type: integer
+          format: int64
+
+    PaginatedFoodSearchHits:
+      allOf:
+        - $ref: "#/components/schemas/Paginated"
+        - type: object
+          properties:
+            results:
+              type: array
+              items: { $ref: "#/components/schemas/FoodSearchHit" }
+
+    PaginatedLogEntries:
+      allOf:
+        - $ref: "#/components/schemas/Paginated"
+        - type: object
+          properties:
+            results:
+              type: array
+              items: { $ref: "#/components/schemas/LogEntry" }
+
+    PaginatedWeights:
+      allOf:
+        - $ref: "#/components/schemas/Paginated"
+        - type: object
+          properties:
+            results:
+              type: array
+              items: { $ref: "#/components/schemas/Weight" }
 
     LogEntry:
       type: object

@@ -18,6 +18,40 @@ impl InMemoryServingRepository {
         Self::default()
     }
 
+    /// Atomic find-or-insert of the default 100 g `kcal` serving for a food,
+    /// used by [`InMemoryFoodRepository::find_or_create_quick_add`] to mirror
+    /// the Pg `INSERT ... ON CONFLICT` against the `servings_one_default_per_food`
+    /// partial unique index.
+    ///
+    /// The full check-and-insert happens under a single lock acquisition so
+    /// two concurrent quick-add provisions on the same food converge on one
+    /// serving row, matching the Pg guarantee. Without this, the two-step
+    /// `list_for_food` → `create` pattern releases the serving-store lock
+    /// between steps and races under multi-threaded runtimes.
+    pub(crate) fn find_or_create_default_kcal_for_food(&self, food_id: Uuid) -> Serving {
+        let mut store = self.by_id.lock().unwrap();
+        if let Some(existing) = store
+            .values()
+            .find(|s| s.food_id == food_id && s.is_default)
+        {
+            return existing.clone();
+        }
+        let now = Utc::now();
+        let serving = Serving {
+            id: Uuid::new_v4(),
+            food_id,
+            label: "kcal".to_string(),
+            grams: rust_decimal::Decimal::from(100),
+            is_default: true,
+            source: ServingSource::System,
+            sort_order: 0,
+            created_at: now,
+            updated_at: now,
+        };
+        store.insert(serving.id, serving.clone());
+        serving
+    }
+
     /// Clear all servings for a food and replace with the system-100g plus
     /// optional OFF-specific serving derived from an `OffFoodUpsert`. Used
     /// by [`InMemoryFoodRepository::upsert_off_batch`].

@@ -12,13 +12,11 @@ pub mod serving;
 pub mod user;
 pub mod weight;
 
-pub use food::{FoodService, SearchPage};
+pub use food::FoodService;
 pub use goal::GoalService;
 pub use ingest::{FoodRecordSource, IngestService, OffFoodRecord};
 pub use log::{LogService, FREQUENT_WINDOW_DAYS};
-pub use page::{
-    resolve_page_params, PageParams, Paginated, DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT,
-};
+pub use page::{resolve_page_params, PageParams, Paginated, DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT};
 pub use serving::ServingService;
 pub use user::UserService;
 pub use weight::WeightService;
