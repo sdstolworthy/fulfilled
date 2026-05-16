@@ -560,30 +560,37 @@ paths:
     get:
       tags: [Log]
       operationId: list_log_entries
-      summary: List log entries in a date range
+      summary: List log entries
       description: |
-        Both `from` and `to` are required and must satisfy `from <= to`.
-        Entries are returned newest consumed-day first, then newest
-        created-at within the same day.
+        Lists the caller's log entries, newest consumed-day first.
+
+        All four query parameters are optional. With no parameters, the
+        response is the 100 most-recent entries across the full history.
+        `from`/`to` are both inclusive bounds on `consumed_on`. Default
+        `limit` is 100; server silently clamps requests above 500.
       parameters:
         - in: query
           name: from
-          required: true
           schema: { type: string, format: date }
           description: Inclusive lower bound on `consumed_on`.
         - in: query
           name: to
-          required: true
           schema: { type: string, format: date }
           description: Inclusive upper bound on `consumed_on`.
+        - in: query
+          name: limit
+          schema: { type: integer, format: int64, minimum: 0 }
+          description: Page size; 0 or omitted → 100.
+        - in: query
+          name: offset
+          schema: { type: integer, format: int64, minimum: 0 }
+          description: Page offset, starting at 0.
       responses:
         "200":
-          description: Matching log entries.
+          description: Page of log entries.
           content:
             application/json:
-              schema:
-                type: array
-                items: { $ref: "#/components/schemas/LogEntry" }
+              schema: { $ref: "#/components/schemas/PaginatedLogEntries" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
@@ -1032,6 +1039,15 @@ components:
             results:
               type: array
               items: { $ref: "#/components/schemas/FoodSearchHit" }
+
+    PaginatedLogEntries:
+      allOf:
+        - $ref: "#/components/schemas/Paginated"
+        - type: object
+          properties:
+            results:
+              type: array
+              items: { $ref: "#/components/schemas/LogEntry" }
 
     LogEntry:
       type: object

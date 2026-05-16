@@ -34,6 +34,7 @@ use uuid::Uuid;
 use crate::auth::AuthenticatedUser;
 use crate::error::ApiError;
 use crate::routes::goals::GoalResponse;
+use crate::routes::pagination::PaginatedResponse;
 use crate::server::AppState;
 
 pub fn router() -> Router<AppState> {
@@ -91,9 +92,11 @@ where
 }
 
 #[derive(Debug, Deserialize)]
-struct RangeQuery {
-    from: NaiveDate,
-    to: NaiveDate,
+struct ListLogQuery {
+    from: Option<NaiveDate>,
+    to: Option<NaiveDate>,
+    limit: Option<i64>,
+    offset: Option<i64>,
 }
 
 #[derive(Serialize)]
@@ -249,19 +252,13 @@ async fn create(
 async fn list(
     State(state): State<AppState>,
     AuthenticatedUser(user): AuthenticatedUser,
-    Query(q): Query<RangeQuery>,
-) -> Result<Json<Vec<LogEntryResponse>>, ApiError> {
-    if q.from > q.to {
-        return Err(ApiError::bad_request("`from` must be <= `to`"));
-    }
-    let mut entries = state.logs.list_in_range(user.id, q.from, q.to).await?;
-    // Newest consumed first, then newest created within a day.
-    entries.sort_by(|a, b| {
-        b.consumed_on
-            .cmp(&a.consumed_on)
-            .then(b.created_at.cmp(&a.created_at))
-    });
-    Ok(Json(entries.into_iter().map(Into::into).collect()))
+    Query(q): Query<ListLogQuery>,
+) -> Result<Json<PaginatedResponse<LogEntryResponse>>, ApiError> {
+    let page = state
+        .logs
+        .list(user.id, q.from, q.to, q.limit, q.offset)
+        .await?;
+    Ok(Json(page.into()))
 }
 
 async fn patch(

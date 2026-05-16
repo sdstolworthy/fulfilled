@@ -517,8 +517,9 @@ async fn test_get_log_filters_by_date_range_and_user() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let body = read_json(resp.into_body()).await;
-    let arr = body.as_array().expect("array");
+    let arr = body["results"].as_array().expect("results array");
     assert_eq!(arr.len(), 2);
+    assert_eq!(body["total"], 2);
     assert_eq!(arr[0]["consumed_on"], "2026-05-15");
     assert_eq!(arr[1]["consumed_on"], "2026-05-12");
 }
@@ -1012,4 +1013,229 @@ async fn test_recent_foods_respects_limit() {
     let body = read_json(resp.into_body()).await;
     let arr = body.as_array().expect("array");
     assert_eq!(arr.len(), 2);
+}
+
+// =============================================================================
+// T04 — GET /log paginated envelope.
+// =============================================================================
+
+/// Seed `count` log entries for `alice` on consecutive dates starting from
+/// `2026-01-01`, returning `(food_id, serving_id)`.
+async fn seed_entries_for_list(
+    foods: &Arc<InMemoryFoodRepository>,
+    servings: &Arc<InMemoryServingRepository>,
+    logs: &Arc<InMemoryLogRepository>,
+    alice: Uuid,
+    count: usize,
+) -> (Uuid, Uuid) {
+    let (food_id, serving_id) = seed_food_with_serving(
+        foods,
+        servings,
+        alice,
+        "ListFood",
+        Decimal::from(100),
+        Decimal::from(100),
+    )
+    .await;
+    for i in 0..count {
+        let day = NaiveDate::from_ymd_opt(2026, 1, 1 + i as u32).unwrap();
+        let entry = PersistedLogEntry {
+            food_id,
+            serving_id: Some(serving_id),
+            consumed_on: day,
+            meal: Meal::Lunch,
+            quantity: Decimal::from(1),
+            grams_total: Decimal::from(100),
+            snapshot: NutritionSnapshot {
+                calories_kcal: Decimal::from(100),
+                protein_g: None,
+                carbs_g: None,
+                fat_g: None,
+                fiber_g: None,
+                sugar_g: None,
+                sodium_mg: None,
+                saturated_fat_g: None,
+            },
+            note: None,
+        };
+        logs.create(alice, &entry).await.unwrap();
+    }
+    (food_id, serving_id)
+}
+
+#[tokio::test]
+async fn test_list_returns_paginated_envelope_with_no_params() {
+    // Seed 3 entries; GET /log with no params → envelope with total=3,
+    // limit=100, offset=0.
+    let (app, _alice) = build_test_app_with(|foods, servings, logs, _goals, alice| {
+        let foods = foods.clone();
+        let servings = servings.clone();
+        let logs = logs.clone();
+        Box::pin(async move {
+            seed_entries_for_list(&foods, &servings, &logs, alice, 3).await;
+        })
+    })
+    .await;
+
+    let resp = app
+        .oneshot(authed_request("GET", "/api/v1/log"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = read_json(resp.into_body()).await;
+    assert_eq!(body["total"], 3);
+    assert_eq!(body["limit"], 100);
+    assert_eq!(body["offset"], 0);
+    let results = body["results"].as_array().expect("results array");
+    assert_eq!(results.len(), 3);
+}
+
+#[tokio::test]
+async fn test_list_paginates_within_full_total() {
+    // Seed 5 entries; ?limit=2&offset=2 returns 2 results, total=5.
+    let (app, _alice) = build_test_app_with(|foods, servings, logs, _goals, alice| {
+        let foods = foods.clone();
+        let servings = servings.clone();
+        let logs = logs.clone();
+        Box::pin(async move {
+            seed_entries_for_list(&foods, &servings, &logs, alice, 5).await;
+        })
+    })
+    .await;
+
+    let resp = app
+        .oneshot(authed_request("GET", "/api/v1/log?limit=2&offset=2"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = read_json(resp.into_body()).await;
+    assert_eq!(body["total"], 5);
+    assert_eq!(body["limit"], 2);
+    assert_eq!(body["offset"], 2);
+    let results = body["results"].as_array().expect("results array");
+    assert_eq!(results.len(), 2);
+}
+
+#[tokio::test]
+async fn test_list_400_when_from_after_to() {
+    let (app, _alice) =
+        build_test_app_with(|_f, _s, _l, _g, _u| Box::pin(async move {})).await;
+
+    let resp = app
+        .oneshot(authed_request(
+            "GET",
+            "/api/v1/log?from=2026-02-01&to=2026-01-01",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_list_accepts_from_only() {
+    // Seed 2 entries; ?from=2026-01-02 returns only the second one.
+    let (app, _alice) = build_test_app_with(|foods, servings, logs, _goals, alice| {
+        let foods = foods.clone();
+        let servings = servings.clone();
+        let logs = logs.clone();
+        Box::pin(async move {
+            seed_entries_for_list(&foods, &servings, &logs, alice, 2).await;
+        })
+    })
+    .await;
+
+    let resp = app
+        .oneshot(authed_request("GET", "/api/v1/log?from=2026-01-02"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = read_json(resp.into_body()).await;
+    assert_eq!(body["total"], 1);
+    let results = body["results"].as_array().expect("results array");
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0]["consumed_on"], "2026-01-02");
+}
+
+#[tokio::test]
+async fn test_list_accepts_to_only() {
+    // Seed 2 entries; ?to=2026-01-01 returns only the first one.
+    let (app, _alice) = build_test_app_with(|foods, servings, logs, _goals, alice| {
+        let foods = foods.clone();
+        let servings = servings.clone();
+        let logs = logs.clone();
+        Box::pin(async move {
+            seed_entries_for_list(&foods, &servings, &logs, alice, 2).await;
+        })
+    })
+    .await;
+
+    let resp = app
+        .oneshot(authed_request("GET", "/api/v1/log?to=2026-01-01"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = read_json(resp.into_body()).await;
+    assert_eq!(body["total"], 1);
+    let results = body["results"].as_array().expect("results array");
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0]["consumed_on"], "2026-01-01");
+}
+
+#[tokio::test]
+async fn test_list_orders_newest_consumed_first_then_newest_created_at() {
+    // Seed 3 entries on 2026-01-03, 2026-01-01, 2026-01-02 (in that
+    // creation order). Expect the response in reverse consumed_on order:
+    // 2026-01-03, 2026-01-02, 2026-01-01.
+    let (app, _alice) = build_test_app_with(|foods, servings, logs, _goals, alice| {
+        let foods = foods.clone();
+        let servings = servings.clone();
+        let logs = logs.clone();
+        Box::pin(async move {
+            let (food_id, serving_id) = seed_food_with_serving(
+                &foods,
+                &servings,
+                alice,
+                "OrderFood",
+                Decimal::from(100),
+                Decimal::from(100),
+            )
+            .await;
+            for day_num in [3u32, 1, 2] {
+                let day = NaiveDate::from_ymd_opt(2026, 1, day_num).unwrap();
+                let entry = PersistedLogEntry {
+                    food_id,
+                    serving_id: Some(serving_id),
+                    consumed_on: day,
+                    meal: Meal::Lunch,
+                    quantity: Decimal::from(1),
+                    grams_total: Decimal::from(100),
+                    snapshot: NutritionSnapshot {
+                        calories_kcal: Decimal::from(100),
+                        protein_g: None,
+                        carbs_g: None,
+                        fat_g: None,
+                        fiber_g: None,
+                        sugar_g: None,
+                        sodium_mg: None,
+                        saturated_fat_g: None,
+                    },
+                    note: None,
+                };
+                logs.create(alice, &entry).await.unwrap();
+            }
+        })
+    })
+    .await;
+
+    let resp = app
+        .oneshot(authed_request("GET", "/api/v1/log"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = read_json(resp.into_body()).await;
+    let results = body["results"].as_array().expect("results array");
+    assert_eq!(results.len(), 3);
+    assert_eq!(results[0]["consumed_on"], "2026-01-03");
+    assert_eq!(results[1]["consumed_on"], "2026-01-02");
+    assert_eq!(results[2]["consumed_on"], "2026-01-01");
 }
