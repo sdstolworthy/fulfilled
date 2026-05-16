@@ -1,5 +1,40 @@
 # Developer Tickets — Overnight Pool (2026-05-16)
 
+## ⚠️ Status snapshot — 2026-05-16 (Phase 6, partial)
+
+The first Wave-0 dispatch fanned out 10 agents in parallel. Of those:
+
+- **3 completed and shipped** (commit `40eecba`, deployed live):
+  - T-004 — tenant doc updates (T-23 added, T-05 refined).
+  - T-008 — `GoalRepository.update()` + edit-goal-sheet fix (silent bug closed).
+  - T-012 — Inter font bundle.
+- **7 hit the user-daily API rate limit** (`resets 3:20am America/Los_Angeles`)
+  before completing meaningful work. Their partial output was inspected:
+  - T-001 left 2 of 5 widget lifts as orphan duplicates → reverted.
+  - T-007 referenced undefined `ServingCreate` (build break) → reverted.
+  - T-002, T-003, T-009, T-015, T-021 hit the limit on their first few
+    tool calls and left no on-disk artifacts.
+
+**Resumption plan when the limit resets:**
+
+1. Re-dispatch the 7 incomplete Wave-0 tickets in **smaller batches**
+   (2–3 agents at a time) to avoid blowing the daily quota again.
+   Suggested batch ordering by independence:
+   - Batch A: T-009 (lift calories), T-015 (web shortcuts), T-021 (paste barcode).
+   - Batch B: T-003 (primitives), T-007 (addServing + custom-food wire).
+   - Batch C: T-001 (Tier-A lifts), T-002 (stepper/serving/activity).
+2. Once Wave 0 closes, dispatch Wave 1: T-005, T-006, T-011, T-013, T-014,
+   T-016, T-020. Same small-batch strategy.
+3. Then Wave 2: T-010 (P2), T-018, T-019, T-022.
+
+**For the human in the morning**: the deploy at
+`https://sdstolworthy.github.io/fulfilled/app/` is green on `40eecba`.
+Nothing here blocks waking up to a working app. Pick up where you
+prefer — either re-dispatch agents from a fresh shell or have me
+resume from a new conversation.
+
+---
+
 Source of truth for the overnight pool. Every ticket below is sized for a
 single developer agent to pick up, finish, and review in one session.
 Agents do **not** have a Flutter SDK — they write tests to disk and ship
@@ -380,7 +415,7 @@ layout), **T-20** (every icon button has a tooltip).
 
 ## T-004  Tenant doc updates: T-23 (package imports) + T-05 refinement
 
-**Status**: pending
+**Status**: done (commit `40eecba`, 2026-05-16)
 **Priority**: P1
 **Effort**: S
 **Depends on**: none (purely doc work)
@@ -768,7 +803,7 @@ bug location (the save flow, not the "Add serving" button). Tenants
 
 ## T-008  `GoalRepository.update()` + edit-goal-sheet fix
 
-**Status**: pending
+**Status**: done (commit `40eecba`, 2026-05-16)
 **Priority**: P0
 **Effort**: S
 **Depends on**: none
@@ -1109,7 +1144,7 @@ Tenants **T-17**, **T-21** (display units are customer-expected).
 
 ## T-012  Inter font bundling
 
-**Status**: pending
+**Status**: done (commit `40eecba`, 2026-05-16)
 **Priority**: P1
 **Effort**: S
 **Depends on**: none
