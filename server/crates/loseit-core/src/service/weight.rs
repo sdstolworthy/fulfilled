@@ -22,6 +22,12 @@ impl WeightService {
         self.weights.create(user_id, &draft).await
     }
 
+    /// Paginated weight entries for `user_id`, optionally filtered by date range.
+    ///
+    /// Returns a [`Paginated`] envelope with `total` set to the full match
+    /// count so callers can page through results. Validates that `from <= to`
+    /// when both are supplied, and delegates limit/offset defaulting to
+    /// [`resolve_page_params`].
     #[tracing::instrument(skip(self))]
     pub async fn list(
         &self,

@@ -766,7 +766,7 @@ async fn weight_repo_count_for_user_matches_list_total() {
 }
 
 #[tokio::test]
-async fn weight_service_list_400_when_from_after_to() {
+async fn weight_service_list_returns_validation_error_on_from_after_to() {
     let (_weights, svc) = make_weight_service();
     let user = Uuid::new_v4();
 
@@ -790,7 +790,7 @@ async fn weight_service_list_400_when_from_after_to() {
 }
 
 #[tokio::test]
-async fn weight_service_list_applies_default_limit() {
+async fn weight_service_list_applies_default_limit_when_omitted() {
     let (_weights, svc) = make_weight_service();
     let user = Uuid::new_v4();
 
@@ -801,4 +801,88 @@ async fn weight_service_list_applies_default_limit() {
 
     assert_eq!(result.limit, 100, "default limit must be 100");
     assert_eq!(result.offset, 0, "default offset must be 0");
+}
+
+#[tokio::test]
+async fn weight_repo_list_paginated_filters_by_from_only() {
+    let repo = InMemoryWeightRepository::new();
+    let user = Uuid::new_v4();
+
+    let jan1 = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
+    let jan5 = NaiveDate::from_ymd_opt(2026, 1, 5).unwrap();
+    let jan10 = NaiveDate::from_ymd_opt(2026, 1, 10).unwrap();
+
+    repo.create(user, &make_weight_draft(jan1))
+        .await
+        .expect("create jan1");
+    repo.create(user, &make_weight_draft(jan5))
+        .await
+        .expect("create jan5");
+    repo.create(user, &make_weight_draft(jan10))
+        .await
+        .expect("create jan10");
+
+    // from=jan5 → jan5 and jan10 only.
+    let page = repo
+        .list_paginated(user, Some(jan5), None, 10, 0)
+        .await
+        .expect("list");
+    assert_eq!(page.len(), 2, "from filter should include jan5..=jan10");
+    assert!(page.iter().all(|w| w.recorded_on >= jan5));
+}
+
+#[tokio::test]
+async fn weight_repo_list_paginated_filters_by_to_only() {
+    let repo = InMemoryWeightRepository::new();
+    let user = Uuid::new_v4();
+
+    let jan1 = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
+    let jan5 = NaiveDate::from_ymd_opt(2026, 1, 5).unwrap();
+    let jan10 = NaiveDate::from_ymd_opt(2026, 1, 10).unwrap();
+
+    repo.create(user, &make_weight_draft(jan1))
+        .await
+        .expect("create jan1");
+    repo.create(user, &make_weight_draft(jan5))
+        .await
+        .expect("create jan5");
+    repo.create(user, &make_weight_draft(jan10))
+        .await
+        .expect("create jan10");
+
+    // to=jan5 → jan1 and jan5 only.
+    let page = repo
+        .list_paginated(user, None, Some(jan5), 10, 0)
+        .await
+        .expect("list");
+    assert_eq!(page.len(), 2, "to filter should include jan1..=jan5");
+    assert!(page.iter().all(|w| w.recorded_on <= jan5));
+}
+
+#[tokio::test]
+async fn weight_repo_list_paginated_filters_by_both() {
+    let repo = InMemoryWeightRepository::new();
+    let user = Uuid::new_v4();
+
+    let jan1 = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
+    let jan5 = NaiveDate::from_ymd_opt(2026, 1, 5).unwrap();
+    let jan10 = NaiveDate::from_ymd_opt(2026, 1, 10).unwrap();
+
+    repo.create(user, &make_weight_draft(jan1))
+        .await
+        .expect("create jan1");
+    repo.create(user, &make_weight_draft(jan5))
+        .await
+        .expect("create jan5");
+    repo.create(user, &make_weight_draft(jan10))
+        .await
+        .expect("create jan10");
+
+    // from=jan5, to=jan5 → jan5 only (middle date).
+    let page = repo
+        .list_paginated(user, Some(jan5), Some(jan5), 10, 0)
+        .await
+        .expect("list");
+    assert_eq!(page.len(), 1, "both filters: jan5..=jan5 returns only jan5");
+    assert_eq!(page[0].recorded_on, jan5);
 }
