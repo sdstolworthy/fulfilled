@@ -8,6 +8,7 @@
 //!   4. Handing that user to handlers as an extractor.
 
 pub mod dev;
+pub mod jwks;
 
 use std::sync::Arc;
 

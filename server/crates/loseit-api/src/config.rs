@@ -23,10 +23,16 @@ pub enum AuthConfig {
         email: Option<String>,
         display_name: Option<String>,
     },
-    /// Validate JWTs against an OIDC issuer's JWKS endpoint. Not wired up
-    /// in this initial pass — kept as a placeholder so the composition
-    /// root can dispatch on it once we add the JWKS validator.
-    Jwks { issuer: String, jwks_url: String },
+    /// Validate JWTs against an OIDC issuer's JWKS endpoint. Provider-
+    /// agnostic — anything that publishes a JWKS document at a stable URL
+    /// (Auth0, Cognito, Keycloak, Firebase, …) plugs in via these four
+    /// fields.
+    Jwks {
+        issuer: String,
+        audience: String,
+        jwks_url: String,
+        cache_ttl_secs: u64,
+    },
 }
 
 impl AppConfig {
@@ -71,9 +77,20 @@ fn load_auth(env_name: &str) -> Result<AuthConfig> {
 
     let issuer =
         env::var("OIDC_ISSUER").context("OIDC_ISSUER is required when DEV_AUTH_BYPASS is off")?;
+    let audience = env::var("OIDC_AUDIENCE")
+        .context("OIDC_AUDIENCE is required when DEV_AUTH_BYPASS is off")?;
     let jwks_url = env::var("OIDC_JWKS_URL")
         .context("OIDC_JWKS_URL is required when DEV_AUTH_BYPASS is off")?;
-    Ok(AuthConfig::Jwks { issuer, jwks_url })
+    let cache_ttl_secs = env::var("OIDC_JWKS_CACHE_TTL_SECS")
+        .unwrap_or_else(|_| "600".to_string())
+        .parse::<u64>()
+        .context("OIDC_JWKS_CACHE_TTL_SECS must be a non-negative integer (seconds)")?;
+    Ok(AuthConfig::Jwks {
+        issuer,
+        audience,
+        jwks_url,
+        cache_ttl_secs,
+    })
 }
 
 fn env_bool(key: &str, default: bool) -> bool {

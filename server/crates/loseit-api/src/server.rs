@@ -13,6 +13,7 @@
 //!   call this directly with a state built from in-memory fakes.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{anyhow, Result};
 use axum::middleware;
@@ -33,7 +34,7 @@ use loseit_db::{
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
-use crate::auth::{dev::DevAuthenticator, require_auth, DynAuthenticator};
+use crate::auth::{dev::DevAuthenticator, jwks::JwksAuthenticator, require_auth, DynAuthenticator};
 use crate::config::{AppConfig, AuthConfig};
 use crate::routes;
 
@@ -85,14 +86,19 @@ impl AppState {
 
 /// Production wiring: Postgres repositories + the authenticator selected
 /// from config.
-pub fn build_state(pool: PgPool, config: &AppConfig) -> Result<AppState> {
+///
+/// Async because the JWKS authenticator warms its cache via an initial
+/// HTTP fetch at construction. Failing that fetch means the configured
+/// idP is unreachable; we'd rather refuse to start than 503 every
+/// request.
+pub async fn build_state(pool: PgPool, config: &AppConfig) -> Result<AppState> {
     let users: Arc<dyn UserRepository> = Arc::new(PgUserRepository::new(pool.clone()));
     let weights: Arc<dyn WeightRepository> = Arc::new(PgWeightRepository::new(pool.clone()));
     let goals: Arc<dyn GoalRepository> = Arc::new(PgGoalRepository::new(pool.clone()));
     let foods: Arc<dyn FoodRepository> = Arc::new(PgFoodRepository::new(pool.clone()));
     let servings: Arc<dyn ServingRepository> = Arc::new(PgServingRepository::new(pool.clone()));
     let logs: Arc<dyn LogRepository> = Arc::new(PgLogRepository::new(pool));
-    let authenticator = build_authenticator(&config.auth, &config.env_name)?;
+    let authenticator = build_authenticator(&config.auth, &config.env_name).await?;
     Ok(AppState::from_ports(
         users,
         weights,
@@ -129,11 +135,11 @@ pub fn router(state: AppState) -> Router {
 
 /// Convenience for the production binary: build state and router in one
 /// call.
-pub fn build_router(pool: PgPool, config: &AppConfig) -> Result<Router> {
-    Ok(router(build_state(pool, config)?))
+pub async fn build_router(pool: PgPool, config: &AppConfig) -> Result<Router> {
+    Ok(router(build_state(pool, config).await?))
 }
 
-fn build_authenticator(cfg: &AuthConfig, env_name: &str) -> Result<DynAuthenticator> {
+async fn build_authenticator(cfg: &AuthConfig, env_name: &str) -> Result<DynAuthenticator> {
     match cfg {
         AuthConfig::DevBypass {
             token,
@@ -155,8 +161,21 @@ fn build_authenticator(cfg: &AuthConfig, env_name: &str) -> Result<DynAuthentica
                 Arc::new(DevAuthenticator::new(token.clone(), identity));
             Ok(authn)
         }
-        AuthConfig::Jwks { .. } => Err(anyhow!(
-            "JWKS authenticator not yet implemented; set DEV_AUTH_BYPASS=true for now"
-        )),
+        AuthConfig::Jwks {
+            issuer,
+            audience,
+            jwks_url,
+            cache_ttl_secs,
+        } => {
+            let auth = JwksAuthenticator::new(
+                issuer.clone(),
+                audience.clone(),
+                jwks_url.clone(),
+                Duration::from_secs(*cache_ttl_secs),
+            )
+            .await?;
+            let authn: Arc<dyn Authenticator> = Arc::new(auth);
+            Ok(authn)
+        }
     }
 }

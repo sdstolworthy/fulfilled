@@ -27,8 +27,14 @@ tower-http.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 uuid.workspace = true
+jsonwebtoken.workspace = true
+reqwest.workspace = true
 
 [dev-dependencies]
 loseit-testing.workspace = true
 tower = { workspace = true, features = ["util"] }
 http-body-util = "0.1"
+wiremock = "0.6"
+rsa = { version = "0.9", features = ["pem"] }
+rand = "0.8"
+base64 = "0.22"
