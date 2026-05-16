@@ -15,8 +15,8 @@ loseit-core.workspace = true
 
 async-trait.workspace = true
 chrono.workspace = true
+rust_decimal.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
 tokio.workspace = true
-rust_decimal.workspace = true

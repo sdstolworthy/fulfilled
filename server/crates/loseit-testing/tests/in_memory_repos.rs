@@ -886,3 +886,237 @@ async fn weight_repo_list_paginated_filters_by_both() {
     assert_eq!(page.len(), 1, "both filters: jan5..=jan5 returns only jan5");
     assert_eq!(page[0].recorded_on, jan5);
 }
+
+// ── find_or_create_quick_add / sentinel filter tests (T07) ─────────────────────
+
+#[tokio::test]
+async fn find_or_create_quick_add_is_idempotent() {
+    let foods = Arc::new(InMemoryFoodRepository::new());
+    let servings = Arc::new(InMemoryServingRepository::new());
+    foods.set_serving_repo(servings.clone());
+    let owner = Uuid::new_v4();
+
+    let (food_a, serving_a) = foods
+        .find_or_create_quick_add(owner)
+        .await
+        .expect("first");
+    let (food_b, serving_b) = foods
+        .find_or_create_quick_add(owner)
+        .await
+        .expect("second");
+
+    assert_eq!(food_a.id, food_b.id, "same food row across calls");
+    assert_eq!(serving_a.id, serving_b.id, "same serving row across calls");
+    assert_eq!(food_a.name, "__quick_add__");
+    assert!(serving_a.is_default);
+    assert_eq!(serving_a.label, "kcal");
+    assert_eq!(serving_a.grams, Decimal::from(100));
+}
+
+#[tokio::test]
+async fn find_or_create_quick_add_concurrent_first_uses_dont_duplicate() {
+    use tokio::task::JoinSet;
+
+    let foods = Arc::new(InMemoryFoodRepository::new());
+    let servings = Arc::new(InMemoryServingRepository::new());
+    foods.set_serving_repo(servings.clone());
+    let owner = Uuid::new_v4();
+
+    let mut set = JoinSet::new();
+    for _ in 0..8u32 {
+        let foods = foods.clone();
+        set.spawn(async move {
+            foods
+                .find_or_create_quick_add(owner)
+                .await
+                .expect("find_or_create")
+        });
+    }
+
+    let mut food_ids = std::collections::HashSet::new();
+    let mut serving_ids = std::collections::HashSet::new();
+    while let Some(res) = set.join_next().await {
+        let (food, serving) = res.expect("join");
+        food_ids.insert(food.id);
+        serving_ids.insert(serving.id);
+    }
+
+    assert_eq!(food_ids.len(), 1, "concurrent calls must collapse to one food");
+    assert_eq!(
+        serving_ids.len(),
+        1,
+        "concurrent calls must collapse to one serving"
+    );
+}
+
+#[tokio::test]
+async fn search_excludes_quick_add_sentinel() {
+    let foods = InMemoryFoodRepository::new();
+    let alice = Uuid::new_v4();
+
+    // Provision sentinel and a real food whose name shares the literal "quick"
+    // substring so a naive search would match both.
+    foods
+        .find_or_create_quick_add(alice)
+        .await
+        .expect("provision sentinel");
+    foods
+        .create_custom(alice, &sample_draft("Quick oats"))
+        .await
+        .expect("create real food");
+
+    let hits = foods.search(alice, "quick", 50, 0).await.expect("search");
+    assert_eq!(hits.len(), 1, "sentinel must be excluded from search");
+    assert_eq!(hits[0].name, "Quick oats");
+
+    let count = foods
+        .search_count(alice, "quick")
+        .await
+        .expect("search_count");
+    assert_eq!(count, 1, "search_count must also exclude the sentinel");
+}
+
+#[tokio::test]
+async fn recent_food_ids_excludes_sentinel_when_filter_wired() {
+    let foods = Arc::new(InMemoryFoodRepository::new());
+    let logs = Arc::new(InMemoryLogRepository::new());
+    logs.set_food_repo_for_sentinel_filter(foods.clone());
+    let user = Uuid::new_v4();
+
+    let (sentinel, _) = foods
+        .find_or_create_quick_add(user)
+        .await
+        .expect("provision");
+    let real = foods
+        .create_custom(user, &sample_draft("Real bar"))
+        .await
+        .expect("create");
+
+    let today = NaiveDate::from_ymd_opt(2026, 5, 15).unwrap();
+    logs.create(user, &sample_persisted_entry(sentinel.id, today))
+        .await
+        .expect("log sentinel");
+    logs.create(user, &sample_persisted_entry(real.id, today))
+        .await
+        .expect("log real");
+
+    let recents = logs.recent_food_ids(user, 50).await.expect("recents");
+    assert_eq!(recents, vec![real.id], "sentinel id must be filtered out");
+}
+
+#[tokio::test]
+async fn frequent_food_ids_excludes_sentinel_when_filter_wired() {
+    let foods = Arc::new(InMemoryFoodRepository::new());
+    let logs = Arc::new(InMemoryLogRepository::new());
+    logs.set_food_repo_for_sentinel_filter(foods.clone());
+    let user = Uuid::new_v4();
+
+    let (sentinel, _) = foods
+        .find_or_create_quick_add(user)
+        .await
+        .expect("provision");
+    let real = foods
+        .create_custom(user, &sample_draft("Real bar"))
+        .await
+        .expect("create");
+
+    let today = NaiveDate::from_ymd_opt(2026, 5, 15).unwrap();
+    // Log the sentinel many times, the real food once. Without the filter,
+    // sentinel would dominate the result by count.
+    for _ in 0..5 {
+        logs.create(user, &sample_persisted_entry(sentinel.id, today))
+            .await
+            .expect("log sentinel");
+    }
+    logs.create(user, &sample_persisted_entry(real.id, today))
+        .await
+        .expect("log real");
+
+    let freqs = logs.frequent_food_ids(user, 30, 10).await.expect("freqs");
+    assert_eq!(freqs.len(), 1, "only the real food should appear");
+    assert_eq!(freqs[0].0, real.id);
+}
+
+#[tokio::test]
+async fn create_custom_rejects_reserved_sentinel_name() {
+    use loseit_core::service::FoodService;
+
+    let foods = Arc::new(InMemoryFoodRepository::new());
+    let servings = Arc::new(InMemoryServingRepository::new());
+    let service = FoodService::new(foods.clone(), servings.clone());
+
+    let owner = Uuid::new_v4();
+    let err = service
+        .create_custom(owner, sample_draft("__quick_add__"))
+        .await
+        .expect_err("must reject reserved name");
+    match err {
+        loseit_core::CoreError::Validation(msg) => {
+            assert!(msg.contains("reserved"), "expected reserved-name validation, got: {msg}");
+        }
+        other => panic!("expected Validation, got {other:?}"),
+    }
+
+    // Case-insensitive: same rejection for upper-case / mixed.
+    let err = service
+        .create_custom(owner, sample_draft("__QUICK_ADD__"))
+        .await
+        .expect_err("must reject case-insensitive");
+    assert!(matches!(err, loseit_core::CoreError::Validation(_)));
+
+    // Whitespace-padded should also be rejected (trim before compare).
+    let err = service
+        .create_custom(owner, sample_draft("  __quick_add__  "))
+        .await
+        .expect_err("must reject whitespace-padded");
+    assert!(matches!(err, loseit_core::CoreError::Validation(_)));
+}
+
+#[tokio::test]
+async fn update_custom_on_sentinel_returns_forbidden() {
+    use loseit_core::domain::FoodPatch;
+    use loseit_core::service::FoodService;
+
+    let foods = Arc::new(InMemoryFoodRepository::new());
+    let servings = Arc::new(InMemoryServingRepository::new());
+    foods.set_serving_repo(servings.clone());
+    let service = FoodService::new(foods.clone(), servings.clone());
+
+    let owner = Uuid::new_v4();
+    let (sentinel, _) = foods
+        .find_or_create_quick_add(owner)
+        .await
+        .expect("provision");
+
+    let patch = FoodPatch {
+        name: Some("renamed".into()),
+        ..FoodPatch::default()
+    };
+    let err = service
+        .update_custom(owner, sentinel.id, patch)
+        .await
+        .expect_err("must refuse to update the sentinel");
+    assert!(matches!(err, loseit_core::CoreError::Forbidden));
+}
+
+#[tokio::test]
+async fn delete_custom_on_sentinel_returns_forbidden() {
+    use loseit_core::service::FoodService;
+
+    let foods = Arc::new(InMemoryFoodRepository::new());
+    let servings = Arc::new(InMemoryServingRepository::new());
+    foods.set_serving_repo(servings.clone());
+    let service = FoodService::new(foods.clone(), servings.clone());
+
+    let owner = Uuid::new_v4();
+    let (sentinel, _) = foods
+        .find_or_create_quick_add(owner)
+        .await
+        .expect("provision");
+
+    let err = service
+        .delete_custom(owner, sentinel.id)
+        .await
+        .expect_err("must refuse to delete the sentinel");
+    assert!(matches!(err, loseit_core::CoreError::Forbidden));
+}

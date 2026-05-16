@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use async_trait::async_trait;
 use uuid::Uuid;
 
-use crate::domain::{Food, FoodDraft, FoodPatch, FoodSearchHit};
+use crate::domain::{Food, FoodDraft, FoodPatch, FoodSearchHit, Serving};
 use crate::CoreResult;
 
 /// Sentinel name used to identify the internal "Quick Add" food that is
@@ -109,4 +109,10 @@ pub trait FoodRepository: Send + Sync + 'static {
     /// Count of user-custom foods matching the same predicates as
     /// `list_mine`, irrespective of pagination parameters.
     async fn count_mine(&self, owner: Uuid, q: Option<&str>) -> CoreResult<i64>;
+
+    /// Idempotently provision the per-user quick-add sentinel food. Returns
+    /// the food plus its synthetic 100 g default serving (label `"kcal"`,
+    /// source `system`). Safe under concurrent first-uses thanks to the
+    /// `foods_quick_add_singleton` partial unique index.
+    async fn find_or_create_quick_add(&self, owner: Uuid) -> CoreResult<(Food, Serving)>;
 }

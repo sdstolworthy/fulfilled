@@ -4,13 +4,15 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use chrono::Utc;
 use loseit_core::domain::{
-    Food, FoodDraft, FoodPatch, FoodSearchHit, FoodSource, Serving, ServingPreview,
+    Food, FoodDraft, FoodPatch, FoodSearchHit, FoodSource, NutritionPer100g, Serving, ServingDraft,
+    ServingPreview, ServingSource,
 };
+use loseit_core::repo::food::QUICK_ADD_SENTINEL_NAME;
 use loseit_core::repo::{
     FoodRepository, LogRepository, OffFoodUpsert, ServingRepository, UpsertStats,
 };
-use loseit_core::repo::food::QUICK_ADD_SENTINEL_NAME;
 use loseit_core::CoreResult;
+use rust_decimal::Decimal;
 use uuid::Uuid;
 
 use crate::logs::InMemoryLogRepository;
@@ -101,6 +103,7 @@ impl FoodRepository for InMemoryFoodRepository {
             let mut matches: Vec<Food> = store
                 .values()
                 .filter(|f| is_visible(f, viewer))
+                .filter(|f| f.name != QUICK_ADD_SENTINEL_NAME)
                 .filter(|f| {
                     let mut haystack = f.name.to_lowercase();
                     if let Some(b) = &f.brands {
@@ -146,6 +149,7 @@ impl FoodRepository for InMemoryFoodRepository {
         let n = store
             .values()
             .filter(|f| is_visible(f, viewer))
+            .filter(|f| f.name != QUICK_ADD_SENTINEL_NAME)
             .filter(|f| {
                 let mut haystack = f.name.to_lowercase();
                 if let Some(b) = &f.brands {
@@ -315,6 +319,107 @@ impl FoodRepository for InMemoryFoodRepository {
             })
             .count();
         Ok(n as i64)
+    }
+
+    async fn find_or_create_quick_add(&self, owner: Uuid) -> CoreResult<(Food, Serving)> {
+        // Idempotent: if a sentinel food already exists for `owner`, return
+        // the existing pair. Otherwise create both the food and a synthetic
+        // 100 g default serving. Mirrors the Pg `INSERT ... ON CONFLICT`
+        // behaviour without the partial-unique index, by checking-then-
+        // inserting under the food-store lock.
+        //
+        // The serving side-effect goes through the wired-in serving repo if
+        // one is attached (mirroring `upsert_off_batch`'s `set_serving_repo`).
+        // If no serving repo is attached, the fake synthesizes a Serving
+        // value to return so callers see the same `(Food, Serving)` shape
+        // as the Pg impl. Tests that exercise quick-add end-to-end attach
+        // a serving repo.
+        let now = Utc::now();
+        let servings_guard = self.servings.lock().unwrap().clone();
+
+        // Step 1: find-or-insert the sentinel food.
+        let food = {
+            let mut store = self.by_id.lock().unwrap();
+            if let Some(existing) = store.values().find(|f| {
+                f.source == FoodSource::User
+                    && f.owner_user_id == Some(owner)
+                    && f.name == QUICK_ADD_SENTINEL_NAME
+            }) {
+                existing.clone()
+            } else {
+                let food = Food {
+                    id: Uuid::new_v4(),
+                    source: FoodSource::User,
+                    owner_user_id: Some(owner),
+                    barcode: None,
+                    fdc_id: None,
+                    data_type: None,
+                    name: QUICK_ADD_SENTINEL_NAME.to_string(),
+                    brands: None,
+                    categories_tags: Vec::new(),
+                    nutrition: NutritionPer100g {
+                        energy_kcal: Some(Decimal::from(1)),
+                        protein_g: None,
+                        carbs_g: None,
+                        fat_g: None,
+                        fiber_g: None,
+                        sugar_g: None,
+                        sodium_g: None,
+                        saturated_fat_g: None,
+                    },
+                    nutriscore_grade: None,
+                    quality_score: 0,
+                    extra_nutrients: None,
+                    last_import_batch_id: None,
+                    created_at: now,
+                    updated_at: now,
+                };
+                store.insert(food.id, food.clone());
+                food
+            }
+        };
+
+        // Step 2: find-or-insert the default 100 g serving.
+        let serving = if let Some(servings) = servings_guard {
+            let existing = servings
+                .list_for_food(food.id)
+                .await?
+                .into_iter()
+                .find(|s| s.is_default);
+            if let Some(s) = existing {
+                s
+            } else {
+                servings
+                    .create(
+                        food.id,
+                        &ServingDraft {
+                            label: "kcal".to_string(),
+                            grams: Decimal::from(100),
+                            is_default: true,
+                            source: ServingSource::System,
+                            sort_order: 0,
+                        },
+                    )
+                    .await?
+            }
+        } else {
+            // No serving repo wired in — synthesize a Serving so callers can
+            // still rely on the `(Food, Serving)` shape. This matches the
+            // Pg impl which always returns a real serving row.
+            Serving {
+                id: Uuid::new_v4(),
+                food_id: food.id,
+                label: "kcal".to_string(),
+                grams: Decimal::from(100),
+                is_default: true,
+                source: ServingSource::System,
+                sort_order: 0,
+                created_at: now,
+                updated_at: now,
+            }
+        };
+
+        Ok((food, serving))
     }
 
     async fn find_ids_by_barcodes(

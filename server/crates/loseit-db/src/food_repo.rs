@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use loseit_core::domain::{
     Food, FoodDraft, FoodPatch, FoodSearchHit, FoodSource, NutriscoreGrade, NutritionPer100g,
-    ServingPreview,
+    Serving, ServingPreview, ServingSource,
 };
 use loseit_core::repo::food::{OffFoodUpsert, UpsertStats, QUICK_ADD_SENTINEL_NAME};
 use loseit_core::repo::FoodRepository;
@@ -165,7 +165,11 @@ impl FoodRepository for PgFoodRepository {
         // `brands` (0002), plus the FTS expression-index (0001). Without
         // those `%` and `to_tsvector` operators would seq-scan.
         let trimmed = q.trim();
-        let sql = "WITH scored AS ( \
+        // The sentinel exclusion (`f.name <> '__quick_add__'`) mirrors the
+        // same filter on `list_mine`/`count_mine` so the per-user quick-add
+        // food never surfaces in browse paths even to its owner.
+        let sql = format!(
+            "WITH scored AS ( \
                 SELECT \
                     f.id, f.source::text AS source, f.name, f.brands, f.barcode, \
                     f.energy_kcal_100g, f.quality_score, \
@@ -180,6 +184,7 @@ impl FoodRepository for PgFoodRepository {
                 FROM foods f \
                 LEFT JOIN servings s ON s.food_id = f.id AND s.is_default \
                 WHERE (f.source IN ('off', 'usda') OR f.owner_user_id = $2) \
+                  AND f.name <> '{sentinel}' \
                   AND ( \
                       f.name % $1 OR \
                       coalesce(f.brands, '') % $1 OR \
@@ -190,9 +195,11 @@ impl FoodRepository for PgFoodRepository {
             SELECT * FROM scored \
             ORDER BY (0.5 * sim + 0.3 * ts + 0.2 * (quality_score::float / 100.0)) DESC, \
                      name ASC \
-            LIMIT $3 OFFSET $4";
+            LIMIT $3 OFFSET $4",
+            sentinel = QUICK_ADD_SENTINEL_NAME
+        );
 
-        let rows = sqlx::query(sql)
+        let rows = sqlx::query(&sql)
             .bind(trimmed)
             .bind(viewer)
             .bind(limit)
@@ -250,15 +257,19 @@ impl FoodRepository for PgFoodRepository {
         // Same WHERE clause as `search` (sans LEFT JOIN, ORDER BY, LIMIT,
         // OFFSET) so `total` always matches the paginated result set.
         let trimmed = q.trim();
-        let sql = "SELECT count(*) FROM foods f \
+        let sql = format!(
+            "SELECT count(*) FROM foods f \
                    WHERE (f.source IN ('off', 'usda') OR f.owner_user_id = $2) \
+                     AND f.name <> '{sentinel}' \
                      AND ( \
                          f.name % $1 OR \
                          coalesce(f.brands, '') % $1 OR \
                          to_tsvector('simple', coalesce(f.name, '') || ' ' || coalesce(f.brands, '')) \
                              @@ plainto_tsquery('simple', $1) \
-                     )";
-        let cnt: i64 = sqlx::query_scalar::<_, i64>(sql)
+                     )",
+            sentinel = QUICK_ADD_SENTINEL_NAME
+        );
+        let cnt: i64 = sqlx::query_scalar::<_, i64>(&sql)
             .bind(trimmed)
             .bind(viewer)
             .fetch_one(&self.pool)
@@ -550,6 +561,79 @@ impl FoodRepository for PgFoodRepository {
             .await
             .map_err(map_sqlx)?;
         Ok(cnt)
+    }
+
+    async fn find_or_create_quick_add(&self, owner: Uuid) -> CoreResult<(Food, Serving)> {
+        // Two-step idempotent provisioning:
+        //
+        //   1. UPSERT the sentinel food against the `foods_quick_add_singleton`
+        //      partial unique index. Concurrent first-uses both surface here
+        //      — one inserts, the other takes the `DO UPDATE` branch — and
+        //      both `RETURNING` the same row. The `updated_at = now()` touch
+        //      is the cheapest possible no-op write that still produces a
+        //      RETURNING row on conflict.
+        //
+        //   2. UPSERT the synthetic default 100 g serving against the
+        //      `servings_one_default_per_food` partial unique index. On the
+        //      first call the insert fires; on subsequent calls the existing
+        //      row hits the partial index and gets a no-op touch. Either way
+        //      we get the existing serving row back.
+        //
+        // Wrapped in a single transaction so a crash between the two steps
+        // leaves no half-provisioned state.
+        let mut tx = self.pool.begin().await.map_err(map_sqlx)?;
+
+        let food_sql = format!(
+            "INSERT INTO foods ( \
+                source, owner_user_id, name, energy_kcal_100g, \
+                quality_score, categories_tags \
+             ) VALUES ('user', $1, '{sentinel}', 1, 0, ARRAY[]::text[]) \
+             ON CONFLICT ON CONSTRAINT foods_quick_add_singleton \
+               DO UPDATE SET updated_at = now() \
+             RETURNING {SELECT_FOOD_COLS}",
+            sentinel = QUICK_ADD_SENTINEL_NAME
+        );
+        let food_row: FoodRow = sqlx::query_as(&food_sql)
+            .bind(owner)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(map_sqlx)?;
+        let food: Food = food_row.into();
+
+        // The servings two-step upsert is required because there's no unique
+        // constraint on (food_id, label) — only the `is_default` partial.
+        // First call: insert succeeds. Repeat call: the existing default row
+        // collides on the partial unique index and gets a no-op touch.
+        let serving_sql = "INSERT INTO servings \
+                (food_id, label, grams, is_default, source, sort_order) \
+             VALUES ($1, 'kcal', 100, true, 'system', 0) \
+             ON CONFLICT ON CONSTRAINT servings_one_default_per_food \
+               DO UPDATE SET updated_at = now() \
+             RETURNING id, food_id, label, grams, is_default, \
+                       source::text AS source, sort_order, \
+                       created_at, updated_at";
+        let row = sqlx::query(serving_sql)
+            .bind(food.id)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(map_sqlx)?;
+        let serving = Serving {
+            id: row.try_get("id").map_err(map_sqlx)?,
+            food_id: row.try_get("food_id").map_err(map_sqlx)?,
+            label: row.try_get("label").map_err(map_sqlx)?,
+            grams: row.try_get("grams").map_err(map_sqlx)?,
+            is_default: row.try_get("is_default").map_err(map_sqlx)?,
+            source: {
+                let s: String = row.try_get("source").map_err(map_sqlx)?;
+                ServingSource::parse(&s).unwrap_or(ServingSource::System)
+            },
+            sort_order: row.try_get("sort_order").map_err(map_sqlx)?,
+            created_at: row.try_get("created_at").map_err(map_sqlx)?,
+            updated_at: row.try_get("updated_at").map_err(map_sqlx)?,
+        };
+
+        tx.commit().await.map_err(map_sqlx)?;
+        Ok((food, serving))
     }
 
     async fn find_ids_by_barcodes(

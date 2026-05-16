@@ -3,6 +3,7 @@ use chrono::{DateTime, NaiveDate, Utc};
 use loseit_core::domain::{
     FoodLogEntry, Meal, NutritionSnapshot, PersistedLogEntry, PersistedLogPatch,
 };
+use loseit_core::repo::food::QUICK_ADD_SENTINEL_NAME;
 use loseit_core::repo::LogRepository;
 use loseit_core::CoreResult;
 use rust_decimal::Decimal;
@@ -270,18 +271,26 @@ impl LogRepository for PgLogRepository {
         // GROUP BY + MAX(created_at) collapses repeat logs of the same food
         // into a single "most recent" entry per food_id, which is what the
         // suggestions service wants.
-        let rows: Vec<(Uuid,)> = sqlx::query_as(
-            "SELECT food_id FROM food_log_entries \
-             WHERE user_id = $1 \
-             GROUP BY food_id \
-             ORDER BY MAX(created_at) DESC \
+        //
+        // The inner JOIN to `foods` + `name <> '__quick_add__'` filter hides
+        // the per-user sentinel from the recents list even when the user has
+        // logged calories via /log/quick_add.
+        let sql = format!(
+            "SELECT e.food_id FROM food_log_entries e \
+             JOIN foods f ON f.id = e.food_id \
+             WHERE e.user_id = $1 \
+               AND f.name <> '{sentinel}' \
+             GROUP BY e.food_id \
+             ORDER BY MAX(e.created_at) DESC \
              LIMIT $2",
-        )
-        .bind(user_id)
-        .bind(limit)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(map_sqlx)?;
+            sentinel = QUICK_ADD_SENTINEL_NAME
+        );
+        let rows: Vec<(Uuid,)> = sqlx::query_as(&sql)
+            .bind(user_id)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx)?;
         Ok(rows.into_iter().map(|(id,)| id).collect())
     }
 
@@ -295,22 +304,28 @@ impl LogRepository for PgLogRepository {
         // so the database's clock is the single source of truth for "today".
         // The `::int` cast is required because we bind `window_days` as i32
         // — Postgres won't multiply an interval by a bigint without help.
+        //
+        // Same sentinel exclusion as `recent_food_ids` — joined via foods.
         let window_days_i32 = i32::try_from(window_days).unwrap_or(i32::MAX);
-        let rows: Vec<(Uuid, i64)> = sqlx::query_as(
-            "SELECT food_id, COUNT(*) AS cnt \
-               FROM food_log_entries \
-              WHERE user_id = $1 \
-                AND consumed_on >= (CURRENT_DATE - ($2::int * INTERVAL '1 day'))::date \
-              GROUP BY food_id \
-              ORDER BY cnt DESC, MAX(created_at) DESC \
+        let sql = format!(
+            "SELECT e.food_id, COUNT(*) AS cnt \
+               FROM food_log_entries e \
+               JOIN foods f ON f.id = e.food_id \
+              WHERE e.user_id = $1 \
+                AND e.consumed_on >= (CURRENT_DATE - ($2::int * INTERVAL '1 day'))::date \
+                AND f.name <> '{sentinel}' \
+              GROUP BY e.food_id \
+              ORDER BY cnt DESC, MAX(e.created_at) DESC \
               LIMIT $3",
-        )
-        .bind(user_id)
-        .bind(window_days_i32)
-        .bind(limit)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(map_sqlx)?;
+            sentinel = QUICK_ADD_SENTINEL_NAME
+        );
+        let rows: Vec<(Uuid, i64)> = sqlx::query_as(&sql)
+            .bind(user_id)
+            .bind(window_days_i32)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx)?;
         Ok(rows)
     }
 

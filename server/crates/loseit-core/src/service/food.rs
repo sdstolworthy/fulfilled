@@ -7,6 +7,7 @@ use crate::domain::{
     Food, FoodDraft, FoodPatch, FoodSearchHit, FoodSource, NutritionPer100g, Serving, ServingDraft,
     ServingSource,
 };
+use crate::repo::food::QUICK_ADD_SENTINEL_NAME;
 use crate::repo::{FoodRepository, ServingRepository};
 use crate::service::page::{resolve_page_params, Paginated};
 use crate::{CoreError, CoreResult};
@@ -155,6 +156,14 @@ impl FoodService {
         if draft.name.trim().is_empty() {
             return Err(CoreError::Validation("name is required".into()));
         }
+        // `__quick_add__` is reserved for the per-user quick-add sentinel food
+        // (provisioned via `FoodRepository::find_or_create_quick_add`). User
+        // creates that collide with the sentinel are rejected here so the
+        // partial unique index `foods_quick_add_singleton` never has to be
+        // the line of defense. Case-insensitive on the trimmed value.
+        if draft.name.trim().eq_ignore_ascii_case(QUICK_ADD_SENTINEL_NAME) {
+            return Err(CoreError::Validation("name is reserved".into()));
+        }
         validate_nutrition(&draft.nutrition)?;
 
         let food = self.foods.create_custom(owner, &draft).await?;
@@ -188,6 +197,13 @@ impl FoodService {
         if food.source == FoodSource::Off {
             return Err(CoreError::Forbidden);
         }
+        // The per-user quick-add sentinel is read-only for the user (it has
+        // no meaningful editable fields — name/nutrition are part of its
+        // encoding contract). Returning Forbidden is indistinguishable from
+        // an OFF-owned food, which is fine.
+        if food.name == QUICK_ADD_SENTINEL_NAME {
+            return Err(CoreError::Forbidden);
+        }
         // `find_by_id` with viewer=owner already filters out other users'
         // customs (returns None → NotFound above), so we know owner_user_id
         // matches here. The repo's `update_custom` re-enforces this via
@@ -206,6 +222,11 @@ impl FoodService {
             .await?
             .ok_or(CoreError::NotFound)?;
         if food.source == FoodSource::Off {
+            return Err(CoreError::Forbidden);
+        }
+        // Same protection as `update_custom`: the quick-add sentinel is the
+        // anchor for the user's quick-add log entries and must outlive them.
+        if food.name == QUICK_ADD_SENTINEL_NAME {
             return Err(CoreError::Forbidden);
         }
         // Repo refuses with `Conflict` if any log entry still references this

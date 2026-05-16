@@ -1,21 +1,67 @@
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use chrono::{Duration, NaiveDate, Utc};
-use loseit_core::domain::{FoodLogEntry, PersistedLogEntry, PersistedLogPatch};
-use loseit_core::repo::LogRepository;
+use loseit_core::domain::{FoodLogEntry, FoodSource, PersistedLogEntry, PersistedLogPatch};
+use loseit_core::repo::food::QUICK_ADD_SENTINEL_NAME;
+use loseit_core::repo::{FoodRepository, LogRepository};
 use loseit_core::CoreResult;
 use uuid::Uuid;
+
+use crate::foods::InMemoryFoodRepository;
 
 #[derive(Default)]
 pub struct InMemoryLogRepository {
     by_id: Mutex<HashMap<Uuid, FoodLogEntry>>,
+    // Optional cross-wire: when set, `recent_food_ids` / `frequent_food_ids`
+    // consult the food store to skip the per-user quick-add sentinel, matching
+    // the SQL `JOIN foods … AND name <> '__quick_add__'` filter in the Pg
+    // impl. Optional because most tests don't exercise the sentinel and don't
+    // want the extra wiring.
+    foods: Mutex<Option<Arc<InMemoryFoodRepository>>>,
 }
 
 impl InMemoryLogRepository {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Wire a food repo so `recent_food_ids` / `frequent_food_ids` can skip
+    /// the per-user quick-add sentinel. Optional — without it, all logged
+    /// food_ids are returned (legacy behaviour).
+    pub fn set_food_repo_for_sentinel_filter(&self, foods: Arc<InMemoryFoodRepository>) {
+        *self.foods.lock().unwrap() = Some(foods);
+    }
+
+    /// Returns the set of food_ids belonging to this `user_id` whose food
+    /// record is the quick-add sentinel. Used by the recent/frequent paths
+    /// to exclude those ids. If no food repo is wired in, returns an empty
+    /// set (no filtering applied).
+    async fn sentinel_food_ids(&self, user_id: Uuid) -> std::collections::HashSet<Uuid> {
+        let foods = self.foods.lock().unwrap().clone();
+        let Some(foods) = foods else {
+            return std::collections::HashSet::new();
+        };
+        // Collect the food_ids referenced by this user's log entries first
+        // so we only inspect a bounded set on the food store side.
+        let referenced: std::collections::HashSet<Uuid> = {
+            let store = self.by_id.lock().unwrap();
+            store
+                .values()
+                .filter(|e| e.user_id == user_id)
+                .map(|e| e.food_id)
+                .collect()
+        };
+        let mut out = std::collections::HashSet::new();
+        for id in referenced {
+            if let Ok(Some(food)) = foods.find_by_id(user_id, id).await {
+                if food.source == FoodSource::User && food.name == QUICK_ADD_SENTINEL_NAME {
+                    out.insert(id);
+                }
+            }
+        }
+        out
     }
 }
 
@@ -122,10 +168,16 @@ impl LogRepository for InMemoryLogRepository {
     }
 
     async fn recent_food_ids(&self, user_id: Uuid, limit: i64) -> CoreResult<Vec<Uuid>> {
+        // Exclude the per-user quick-add sentinel food when a food repo has
+        // been wired in. Mirrors the Pg `JOIN foods ... AND name <> '__quick_add__'`.
+        let excluded = self.sentinel_food_ids(user_id).await;
         let store = self.by_id.lock().unwrap();
         // Compute max created_at per food_id for this user, then sort desc.
         let mut by_food: HashMap<Uuid, chrono::DateTime<chrono::Utc>> = HashMap::new();
-        for e in store.values().filter(|e| e.user_id == user_id) {
+        for e in store
+            .values()
+            .filter(|e| e.user_id == user_id && !excluded.contains(&e.food_id))
+        {
             by_food
                 .entry(e.food_id)
                 .and_modify(|t| {
@@ -147,6 +199,7 @@ impl LogRepository for InMemoryLogRepository {
         window_days: i64,
         limit: i64,
     ) -> CoreResult<Vec<(Uuid, i64)>> {
+        let excluded = self.sentinel_food_ids(user_id).await;
         let store = self.by_id.lock().unwrap();
         // Use the most recent consumed_on in the store as the anchor.
         let today = match store
@@ -160,10 +213,9 @@ impl LogRepository for InMemoryLogRepository {
         };
         let cutoff = today - Duration::days(window_days);
         let mut counts: HashMap<Uuid, i64> = HashMap::new();
-        for e in store
-            .values()
-            .filter(|e| e.user_id == user_id && e.consumed_on >= cutoff)
-        {
+        for e in store.values().filter(|e| {
+            e.user_id == user_id && e.consumed_on >= cutoff && !excluded.contains(&e.food_id)
+        }) {
             *counts.entry(e.food_id).or_insert(0) += 1;
         }
         let mut pairs: Vec<(Uuid, i64)> = counts.into_iter().collect();
