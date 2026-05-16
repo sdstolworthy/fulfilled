@@ -5,7 +5,7 @@ import 'package:fulfilled/domain/units/weight.dart';
 
 /// Tests for `formatWeight` / `formatWeightWithUnit` — LU-003.
 ///
-/// kg cases mirror the existing `formatWeightKg` tests at parity (the
+/// kg cases mirror the original kg-only formatter tests at parity (the
 /// kg branch IS the old body, now routed through `formatWeight`). lb
 /// cases cover the half-to-even rule at one decimal. Stone cases
 /// cover the composite carry rule from architect §3.7.
@@ -162,14 +162,6 @@ void main() {
         formatWeightWithUnit(Decimal.parse('76.2'), WeightUnit.st),
         '12 st',
       );
-    });
-  });
-
-  group('formatWeightKg (deprecated wrapper) — still works', () {
-    // ignore: deprecated_member_use_from_same_package
-    test('routes through to the kg branch', () {
-      // ignore: deprecated_member_use_from_same_package
-      expect(formatWeightKg(Decimal.parse('70'), locale: 'en_US'), '70.0');
     });
   });
 }

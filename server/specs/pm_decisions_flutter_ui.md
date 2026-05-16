@@ -76,7 +76,7 @@ non-negotiable as `decimal_format.dart`.
 | Energy              | `kcal` (Decimal)        | `kcal` everywhere            | None (display canonical)       |
 | Macros (P/C/F/fiber/sugar/sat. fat) | `g` (Decimal) | `g` everywhere               | None (display canonical)       |
 | **Sodium**          | `g` per-100 g; `mg` on log | **`mg` everywhere on screen** | × 1000 from `g`               |
-| Body weight         | `kg` (Decimal)          | **kg-only in v1**, profile pref in v2 | × 2.2046226 to `lb`     |
+| Body weight         | `kg` (Decimal)          | **User-selectable (`kg` / `lb` / `st`)** via `User.weight_unit`; locale-aware default | × 2.2046226 to `lb`; `÷ 14 lb` then `mod` for `st` composite |
 | Height              | `cm` (Decimal)          | **cm-only in v1**, profile pref in v2 | cm → ft/in for v2       |
 | Per-100 g panel basis | `100 g`               | `per 100 g` label preserved  | None — see below               |
 | Date                | `YYYY-MM-DD`            | `EEEE, MMM d` in user locale | None                           |
@@ -127,6 +127,28 @@ the half of the user base outside the US.
 - **Follow-up ticket.** Open a v2 ticket: "Add `weight_unit` (`kg|lb`)
   to `User`, expose in profile, gate display in `units` utility on
   preference." Owner: backend (schema) + frontend (UI). Not v1.
+
+> **Addendum 2026-05-16 — body-weight units shipped.** The "kg-only in
+> v1" rider above is superseded. Per `specs/pm_log_edit_and_units.md`
+> and `specs/architect_log_edit_and_units.md`, body weight is now
+> **user-selectable** across `kg`, `lb`, and `st`, persisted on
+> `User.weight_unit` (additive wire field; client tolerates absence by
+> defaulting to `kg`). The chosen unit is the **default at first
+> onboarding submit**, picked from the platform locale (`US/LR/MM` →
+> `lb`; `GB` → `st`; everything else → `kg`); the user can override
+> from Profile → Preferences → Units at any time. The follow-up v2
+> ticket cited above is closed by this addendum and tracked end-to-end
+> in `specs/dev_tickets_log_edit_and_units.md` (LU-001..LU-012 client
+> work; BE-001 the Rust migration). Conversion is the single seam
+> `formatWeight(Decimal kg, WeightUnit) ↔ parseWeightToKg(String,
+> WeightUnit)` in `lib/domain/units/weight.dart`; the `WeightStepper`
+> widget (new in §3 of the architecture doc) is the only input
+> affordance, with stones rendered as the composite `12 st 7 lb` —
+> never as decimal stones — per the user's recognition test.
+> **Goal rate stays in `kg/week`** regardless of `weight_unit`; the
+> active goal card converts weight targets only, not the rate, per PM
+> §3 "Display format per unit". **Height stays `cm`-only** — Height
+> follow-up below is unchanged.
 
 **Height.** Same call as weight, same reasoning, same v2 ticket — ship
 `cm` only in v1, label the onboarding field "Height (cm)". The
@@ -310,6 +332,16 @@ Today / Foods / Weight / Goals / My foods.
 
 ## Risk 4 — Sodium and other display units
 
+> **Weight-unit deferral RESOLVED 2026-05-16.** The "body weight in
+> `kg`-only (lb deferred to v2)" rider in the Decision below is
+> superseded by the addendum in the Display Units Principle section
+> above. Body weight is now user-selectable (`kg` / `lb` / `st`) via
+> `User.weight_unit`. See `specs/pm_log_edit_and_units.md`,
+> `specs/architect_log_edit_and_units.md`, and the LU-001..LU-012 +
+> BE-001 ticket pack in `specs/dev_tickets_log_edit_and_units.md`.
+> Sodium / energy / per-100 g / macros / height rulings below are
+> unchanged.
+
 See the **Display Units Principle** top-level section above. The summary:
 
 ### Decision
@@ -335,7 +367,9 @@ See the principle section's "Implementation impact" subsection. Net:
   `NutritionPer100g.sodium_g`. No wire shape change.
 - **Client:** new `lib/domain/units/` directory; `food_repository`
   converts sodium; `NumberText` learns a `unit` prop.
-- **v2 tickets:** weight/height unit preference, kJ option.
+- **v2 tickets:** height unit preference, kJ option. (Weight unit
+  preference shipped 2026-05-16 — see the addendum in the Display
+  Units Principle section and `specs/dev_tickets_log_edit_and_units.md`.)
 
 ### Open follow-ups
 

@@ -214,10 +214,3 @@ Decimal _parseStoneString(String raw) {
   }
   throw FormatException('Unparseable stone weight: "$raw"');
 }
-
-/// kg-only formatter, kept as a thin wrapper for the duration of the
-/// Feature B sweep. LU-009 migrates the call sites and deletes this
-/// wrapper.
-@Deprecated('Use formatWeight(kg, unit) — kg is no longer the only unit.')
-String formatWeightKg(Decimal kg, {String? locale}) =>
-    _formatKg(kg, locale: locale);

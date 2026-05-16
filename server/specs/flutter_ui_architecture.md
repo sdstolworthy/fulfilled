@@ -156,6 +156,7 @@ The shared vocabulary. Every screen composes these. If a feature seems to want a
 | `ServingList` | List of servings with the `Default` and `Synthetic` badges. Selectable in log-entry context. | 03 (read-only), 04 (selectable) | `servings`, `selectedId`, `onSelect`, `selectable` |
 | `NutritionTable` | The per-100g panel: calories / P / C / F / sub-rows (sugars, saturated) / fiber / sodium. | 03, 05 (read-only preview) | `nutrition` (`NutritionPer100g`), `source` (badge text) |
 | `QuantityStepper` | `−` `1.5` `+` control with quick-multiplier chips (0.5/1/1.5/2/3). | 04, 05 (servings editor), 06 (weight log dialog) | `value`, `step`, `min`, `quickMultipliers`, `onChanged` |
+| `WeightStepper` | Weight-unit-aware stepper wrapping `QuantityStepper`: one field for `kg`/`lb`, two side-by-side fields (stones + pounds 0–13) for `st`. Internal model is always `Decimal kg`. | 09 (onboarding step 2), 06 (log-weight sheet), 08 (current-weight sheet), 07 (new-goal / edit-goal forms) | `valueKg`, `onChangedKg`, `unit`, `minKg`, `maxKg`, `semanticsLabel` |
 | `MealChipPicker` | 4-up grid of meal icons (breakfast/lunch/dinner/snack), single-select. | 04 | `selected`, `onSelect` |
 | `LogPreviewBlock` | Accent-soft tinted "Will log: 195 kcal · P 33 g · C 14 g · F 0 g" block with check icon. | 04, 09 (onboarding goal preview) | `nutrition` (`NutritionTotal`), `label` |
 | `LogEntrySheet` | Bottom sheet (compact/medium) or dialog (expanded) wrapping serving picker + stepper + meal chips + date + note + preview + save. | Triggered from 02, 03, FAB | `food`, `defaultMeal`, `defaultServingId`, `onSaved` |
@@ -407,7 +408,7 @@ The non-negotiables. Number them so review comments can cite them by ID (e.g., "
 
 20. **T-20 Accessibility minimums.** Every `IconButton36` has a tooltip and a `Semantics` label. Every chip and row has a usable semantic label that includes the rendered number ("Greek yogurt, 130 kilocalories"). Color is never the sole signal — over-budget macros also get a small "over" suffix in their label.
 
-21. **T-21 Display units are customer-expected, not canonical.** All quantities render in the units a customer expects — sodium in `mg`, body weight in `kg` for v1, macros in `g`, energy in `kcal`. The wire stays canonical SI. Conversion lives in `lib/domain/units/` and is the **only** place a unit transform happens. Widgets never multiply or divide by 1000 inline, never call `.toFixed` on a raw `Decimal` macro value. See `pm_decisions_flutter_ui.md` Display Units Principle for the full rulings (including how `NutritionPer100g.sodium_g` is exposed as `sodiumMg` in the presentation model).
+21. **T-21 Display units are customer-expected, not canonical.** All quantities render in the units a customer expects — sodium in `mg`, body weight in the user's chosen unit (`kg` / `lb` / `st`, persisted on `User.weight_unit` with a locale-aware default), macros in `g`, energy in `kcal`. The wire stays canonical SI (body weight on `WeightEntry` is still `weight_kg`). Conversion lives in `lib/domain/units/` and is the **only** place a unit transform happens; `formatWeight(Decimal kg, WeightUnit unit)` and `parseWeightToKg(String raw, WeightUnit unit)` are the bidirectional seam. Widgets never multiply or divide by 1000 or 2.2046226 inline, never call `.toFixed` on a raw `Decimal` macro value. See `pm_decisions_flutter_ui.md` Display Units Principle for the full rulings (including how `NutritionPer100g.sodium_g` is exposed as `sodiumMg` in the presentation model, and the kg/lb/st addendum dated 2026-05-16).
 
 22. **T-22 Pending-sync state is visible, not silent.** An optimistically-inserted log entry awaiting flush from the outbox renders with a `Pending sync` badge until the server acks (T-22 is enforced only on `FormFactor.isCompact` — the outbox doesn't exist elsewhere). Never silently retry without surfacing. Never drop a queued entry without telling the user. See section 6 "Offline log outbox".
 
@@ -496,6 +497,8 @@ Each brief tells a developer agent (a) what to compose, (b) what to fetch, (c) w
 Things the designer did not specify or where I'm making an architectural call the PM/designer should confirm.
 
 > **PM rulings applied 2026-05-15** — see `specs/pm_decisions_flutter_ui.md`. Items **1, 5, 6, 8, 11, 12** below are resolved; the resolution is noted inline. Items **2, 9, 10** were resolved by the PM rulings in `pm_overnight_features.md` ("PM rulings on open §10 items"). Items **3, 4, 7** remain open with v1.1 dispositions.
+>
+> **Addendum applied 2026-05-16** — Features A and B from `specs/pm_log_edit_and_units.md` / `specs/architect_log_edit_and_units.md` shipped. Item **8**'s "kg-only in v1" rider is superseded: body weight is now user-selectable (`kg` / `lb` / `st`) per `User.weight_unit`, with a locale-aware default at first onboarding submit. The OFF→mg sodium conversion remains the original §4 ruling and is untouched. T-21 wording updated above; the §3 component inventory now lists `WeightStepper`; PM Risk 4's "lb deferred to v2" rider is marked **resolved** in `specs/pm_decisions_flutter_ui.md`. No new tenants — §5 of the architect plan confirmed that the existing T-21 / T-22 cover the surface (edit-mode reuses `LogEntrySheet` via `existing:`, and the outbox does **not** queue edits — pending rows are gated by their `isPendingSync` flag, matching T-22). Backend ticket **BE-001** (Rust migration adding `weight_unit`) is pending; the client tolerates a missing field by defaulting to `kg` until it lands.
 
 1. **Over-budget macro behavior.** **RESOLVED (PM Risk 1):** strict `value > target`, no tolerance. T-05 already encodes this.
 
@@ -563,7 +566,7 @@ client/
       units/                       // PM-mandated display conversions (T-21)
         units.dart                 // re-exports
         sodium.dart                // gramsToMilligrams, formatSodiumMg
-        weight.dart                // kg formatter (lb deferred to v2)
+        weight.dart                // formatWeight + parseWeightToKg over kg / lb / st (per User.weight_unit)
         energy.dart                // kcal formatter (kJ deferred to v2)
         macros.dart                // gram formatters with decimal rules
     repositories/
