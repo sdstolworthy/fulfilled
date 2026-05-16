@@ -34,12 +34,15 @@ flutter create . --platforms=web,ios,android
 # 2. Pull packages.
 flutter pub get
 
-# 3. Codegen for Freezed / json_serializable / Riverpod-generator.
-dart run build_runner build --delete-conflicting-outputs
-
-# 4. Boot the placeholder shell.
+# 3. Boot the placeholder shell.
 flutter run -d chrome
 ```
+
+> No `build_runner` step is required. The foundation is intentionally
+> codegen-free: providers are hand-written and `OutboxEntry` is a plain
+> value class. When the analyzer / freezed / riverpod_generator ecosystem
+> finishes its current major-version churn we can reintroduce `@riverpod`
+> codegen without affecting screen code.
 
 The shell launches at `/today` and lets you navigate the four (compact) or
 five (expanded) tabs. Every leaf is a `PlaceholderScreen` — that's the

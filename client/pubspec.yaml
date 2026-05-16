@@ -11,9 +11,11 @@ dependencies:
   flutter:
     sdk: flutter
 
-  # State management. Code-generated providers per architecture §5.
+  # State management. Hand-written providers (Provider / StateNotifierProvider /
+  # AsyncNotifier) — no `@riverpod` codegen for now (the ecosystem version
+  # skew with newer analyzer SDKs makes the build fragile; we'll reintroduce
+  # codegen once the major-version churn settles).
   flutter_riverpod: ^2.5.1
-  riverpod_annotation: ^2.3.5
 
   # Routing. v14+ required by architecture §4 (ShellRoute + observable router).
   go_router: ^14.6.2
@@ -26,10 +28,6 @@ dependencies:
 
   # i18n number/date formatting. Drives thousands separators and EEEE, MMM d.
   intl: ^0.19.0
-
-  # Codegen support for DTOs and presentation models.
-  freezed_annotation: ^2.4.4
-  json_annotation: ^4.9.0
 
   # Local persistence: outbox Hive box + cached repositories.
   hive: ^2.2.3
@@ -51,16 +49,6 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^5.0.0
-
-  # Codegen runners. Run `dart run build_runner build --delete-conflicting-outputs`
-  # after pulling. The DTO generator config lives in `lib/data/dtos/` (TBD —
-  # currently a placeholder; see README).
-  build_runner: ^2.4.13
-  freezed: ^2.5.7
-  json_serializable: ^6.8.0
-  riverpod_generator: ^2.6.3
-  custom_lint: ^0.7.3
-  riverpod_lint: ^2.6.3
 
 flutter:
   uses-material-design: true
