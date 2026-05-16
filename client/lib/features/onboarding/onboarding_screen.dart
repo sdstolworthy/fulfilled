@@ -10,7 +10,7 @@ import '../../providers/draft_providers.dart';
 import '../../providers/repository_providers.dart';
 import '../../routing/routes.dart';
 import '../../theme/context_extensions.dart';
-import 'calories_estimate.dart';
+import '../../domain/calories/estimate.dart';
 import 'widgets/onboarding_step_shell.dart';
 import 'widgets/step_1_welcome.dart';
 import 'widgets/step_2_about_you.dart';

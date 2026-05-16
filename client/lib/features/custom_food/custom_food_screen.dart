@@ -42,7 +42,14 @@ import 'widgets/servings_section.dart';
 /// "Discard unsaved changes" path), T-17 / T-21 (`Decimal` everywhere;
 /// sodium captured in mg).
 class CustomFoodScreen extends ConsumerStatefulWidget {
-  const CustomFoodScreen({super.key});
+  const CustomFoodScreen({this.initialBarcode, super.key});
+
+  /// Optional barcode to prefill the draft's `barcode` field with on
+  /// first build. Wired by the router from the `?barcode=` query
+  /// parameter on `/foods/new` (T-021): when the barcode resolver
+  /// hits a 404, it `pushReplacement`s to `/foods/new?barcode=…` so
+  /// the user lands here with the value already typed for them.
+  final String? initialBarcode;
 
   @override
   ConsumerState<CustomFoodScreen> createState() => _CustomFoodScreenState();
@@ -56,6 +63,26 @@ class _CustomFoodScreenState extends ConsumerState<CustomFoodScreen> {
   /// True while a `createCustom` is in flight. Disables the footer
   /// button and shows a skeleton state on it (T-08).
   bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final seed = widget.initialBarcode?.trim();
+    if (seed != null && seed.isNotEmpty) {
+      // Seed the draft after the first frame so the notifier mutation
+      // happens outside of `initState`'s build-time constraints. We
+      // only seed if the current draft barcode is empty — if the user
+      // had a previous draft with their own barcode typed, we don't
+      // overwrite it.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final draft = ref.read(customFoodDraftProvider);
+        if (draft.barcode == null || draft.barcode!.isEmpty) {
+          ref.read(customFoodDraftProvider.notifier).setBarcode(seed);
+        }
+      });
+    }
+  }
 
   Future<void> _onSave() async {
     final draft = ref.read(customFoodDraftProvider);

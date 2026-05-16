@@ -7,7 +7,7 @@ import '../../../domain/units/energy.dart';
 import '../../../domain/units/macros.dart';
 import '../../../providers/draft_providers.dart';
 import '../../../theme/context_extensions.dart';
-import '../calories_estimate.dart';
+import '../../../domain/calories/estimate.dart';
 import 'goal_option.dart';
 
 /// "Set a goal" step (3 of 3). Direction picker + rate slider + a

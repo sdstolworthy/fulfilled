@@ -10,4 +10,5 @@ export 'goal_providers.dart';
 export 'log_providers.dart';
 export 'profile_providers.dart';
 export 'repository_providers.dart';
+export 'search_focus_provider.dart';
 export 'weight_providers.dart';

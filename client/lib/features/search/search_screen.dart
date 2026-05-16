@@ -93,27 +93,24 @@ class _SearchScreenBodyState extends ConsumerState<SearchScreenBody> {
     final next = value;
     if (next == _query) return;
     setState(() => _query = next);
+  }
 
-    // Web barcode-paste path: if the user pastes an 8–14 all-digit string
-    // into the search field on web desktop, route to the barcode
-    // resolver. (PM Risk 3 / `pm_decisions_flutter_ui.md`.) The route
-    // owner handles 404 → `/foods/new?barcode=...`.
-    if (FormFactor.isWeb && !context.formFactor.isCompact) {
-      final trimmed = next.trim();
-      final isAllDigits = RegExp(r'^\d+$').hasMatch(trimmed);
-      if (isAllDigits && trimmed.length >= 8 && trimmed.length <= 14) {
-        // Defer until after the frame so the controller settles first.
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted) return;
-          context.push('/foods/barcode/$trimmed');
-        });
-      }
-    }
+  /// T-021 — when the input is 8–14 digits and we're on expanded, show
+  /// the "Look up barcode …" affordance row. Returns null otherwise so
+  /// callers can render nothing. Centralised so the build method and
+  /// the Enter-key handler agree on what counts as a barcode.
+  static final RegExp _barcodeRegex = RegExp(r'^\d{8,14}$');
+
+  String? _barcodeCandidate(BuildContext context) {
+    if (!context.formFactor.isExpanded) return null;
+    final trimmed = _query.trim();
+    return _barcodeRegex.hasMatch(trimmed) ? trimmed : null;
   }
 
   @override
   Widget build(BuildContext context) {
     final isQueryActive = _query.trim().isNotEmpty;
+    final barcode = _barcodeCandidate(context);
     return ColoredBox(
       color: context.colors.bg,
       child: SafeArea(
@@ -126,12 +123,27 @@ class _SearchScreenBodyState extends ConsumerState<SearchScreenBody> {
               onQueryChanged: _onQueryChanged,
               onClose: widget.onClose,
               autofocus: widget.autofocus,
+              // T-021 — Enter on the field while the input looks like a
+              // barcode routes the same as tapping the affordance row.
+              onSubmitted: (_) {
+                final code = _barcodeCandidate(context);
+                if (code != null) context.push('/foods/barcode/$code');
+              },
             ),
             Expanded(
               child: ListView(
                 physics: const AlwaysScrollableScrollPhysics(),
                 padding: EdgeInsets.only(bottom: context.space.x8),
                 children: <Widget>[
+                  // T-021 affordance row — expanded only, shown whenever
+                  // the input matches `^\d{8,14}$`. Sits above the
+                  // chip/result body so the user sees it on first paint
+                  // after pasting.
+                  if (barcode != null)
+                    _BarcodeAffordanceRow(
+                      barcode: barcode,
+                      onTap: () => context.push('/foods/barcode/$barcode'),
+                    ),
                   if (!isQueryActive) ...<Widget>[
                     _ChipsSection(
                       provider: recentFoodsProvider,
@@ -161,6 +173,81 @@ class _SearchScreenBodyState extends ConsumerState<SearchScreenBody> {
 }
 
 // ---------------------------------------------------------------------------
+// T-021 — Desktop "paste a barcode" affordance row.
+// ---------------------------------------------------------------------------
+
+/// Compact row rendered below the search input on `expanded` whenever the
+/// input value matches `^\d{8,14}$`. Tapping (or pressing Enter on the
+/// field, handled by `_TopBar`) routes to `/foods/barcode/$value`, where
+/// the route resolver in `app_router.dart` redirects to the food detail
+/// on a hit or to the "create custom food" form prefilled with the
+/// barcode on a 404. The route owner is the source of truth for the
+/// success/404 split; this widget only emits the navigation.
+///
+/// Visual: small leading `qr_code_2` icon, `ink2` text
+/// `"Look up barcode {value} →"`, accent-tinted hover background.
+/// Honours T-06 (tap target ≥ 44 px).
+class _BarcodeAffordanceRow extends StatefulWidget {
+  const _BarcodeAffordanceRow({required this.barcode, required this.onTap});
+
+  final String barcode;
+  final VoidCallback onTap;
+
+  @override
+  State<_BarcodeAffordanceRow> createState() => _BarcodeAffordanceRowState();
+}
+
+class _BarcodeAffordanceRowState extends State<_BarcodeAffordanceRow> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.colors;
+    final space = context.space;
+    return Semantics(
+      button: true,
+      label: 'Look up barcode ${widget.barcode}',
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        child: InkWell(
+          onTap: widget.onTap,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 120),
+            constraints: const BoxConstraints(minHeight: 44),
+            margin: EdgeInsets.fromLTRB(space.x5, space.x2, space.x5, space.x1),
+            padding: EdgeInsets.symmetric(
+              horizontal: space.x3,
+              vertical: space.x2,
+            ),
+            decoration: BoxDecoration(
+              color: _hovered
+                  ? colors.accent.withValues(alpha: 0.08)
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(context.radius.r2),
+              border: Border.all(color: colors.line),
+            ),
+            child: Row(
+              children: <Widget>[
+                Icon(Icons.qr_code_2, size: 18, color: colors.ink2),
+                SizedBox(width: space.x2),
+                Expanded(
+                  child: Text(
+                    'Look up barcode ${widget.barcode} →',
+                    style: context.text.body.copyWith(color: colors.ink2),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Top bar — back / search field / scan button.
 // ---------------------------------------------------------------------------
 
@@ -170,12 +257,14 @@ class _TopBar extends StatelessWidget {
     required this.onQueryChanged,
     required this.onClose,
     required this.autofocus,
+    this.onSubmitted,
   });
 
   final TextEditingController controller;
   final ValueChanged<String> onQueryChanged;
   final VoidCallback? onClose;
   final bool autofocus;
+  final ValueChanged<String>? onSubmitted;
 
   @override
   Widget build(BuildContext context) {
@@ -194,8 +283,10 @@ class _TopBar extends StatelessWidget {
             child: SearchField(
               controller: controller,
               onChanged: onQueryChanged,
+              onSubmitted: onSubmitted,
               autofocus: autofocus,
-              hintText: 'Search foods or paste a barcode…',
+              // No explicit `hintText` — `SearchField` picks the
+              // compact / expanded variant by form factor (T-021).
             ),
           ),
           SizedBox(width: context.space.x2),

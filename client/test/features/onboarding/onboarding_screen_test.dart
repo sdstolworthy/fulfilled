@@ -5,7 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fulfilled/domain/enums.dart';
 import 'package:fulfilled/domain/goal.dart';
 import 'package:fulfilled/domain/user.dart';
-import 'package:fulfilled/features/onboarding/calories_estimate.dart';
+import 'package:fulfilled/domain/calories/estimate.dart';
 import 'package:fulfilled/features/onboarding/onboarding_screen.dart';
 import 'package:fulfilled/features/onboarding/widgets/step_1_welcome.dart';
 import 'package:fulfilled/features/onboarding/widgets/step_2_about_you.dart';
