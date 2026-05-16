@@ -137,7 +137,21 @@ class _QuickAddChip extends StatelessWidget {
     final kcal = food.caloriesPerDefaultServing;
     final kcalLabel = kcal == null ? null : formatKcal(kcal);
 
-    return Material(
+    // T-20: composed chip label — `name, N kilocalories`. The visible
+    // text reads "Greek yogurt · 130", but a screen reader gets the
+    // unit-aware phrase. Leaves are excluded below so the announcement
+    // is one phrase per chip.
+    final semantic = StringBuffer(food.name);
+    if (kcalLabel != null) {
+      semantic..write(', ')..write(kcalLabel)..write(' kilocalories');
+    }
+
+    return Semantics(
+      container: true,
+      button: true,
+      label: semantic.toString(),
+      excludeSemantics: true,
+      child: Material(
       color: Colors.transparent,
       child: InkWell(
         borderRadius: BorderRadius.circular(context.radius.rPill),
@@ -181,6 +195,7 @@ class _QuickAddChip extends StatelessWidget {
             ],
           ),
         ),
+      ),
       ),
     );
   }

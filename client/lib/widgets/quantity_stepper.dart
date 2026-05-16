@@ -164,10 +164,11 @@ class _QuantityStepperState extends State<QuantityStepper> {
     final field = Container(
       height: 46,
       decoration: BoxDecoration(
-        // TODO(T-014/B2): replace this hex with `colors.dangerSoft` when
-        // the token sweep lands. Kept as-is here to make the lift a pure
-        // refactor (no visual delta vs the pre-lift custom_food widget).
-        color: hasError ? const Color(0xFFFFF8F3) : colors.surface,
+        // T-014/B2: collapsed to `dangerSoft` per architect §B2 ruling. The
+        // pre-lift custom_food widget used a slightly cooler cream; the
+        // architect deemed the delta imperceptible against the (already
+        // pink-tinted) error border + danger ink.
+        color: hasError ? colors.dangerSoft : colors.surface,
         borderRadius: BorderRadius.circular(radius.r2),
         border: Border.all(
           color: hasError ? colors.danger : colors.line,

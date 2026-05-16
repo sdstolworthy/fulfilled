@@ -108,8 +108,18 @@ class _HistoryRow extends StatelessWidget {
     final duration = _durationDays(goal.startedOn, goal.endedOn);
     final what = _goalLabel(goal);
     final meta = _metaLine(goal);
+    final rowSemantics = _composeSemantics(
+      what: what,
+      when: when,
+      goal: goal,
+      duration: duration,
+    );
 
-    return Padding(
+    return Semantics(
+      container: true,
+      label: rowSemantics,
+      excludeSemantics: true,
+      child: Padding(
       padding: EdgeInsets.symmetric(
         horizontal: tokens.space.x4,
         vertical: tokens.space.x3 + tokens.space.x05,
@@ -192,7 +202,43 @@ class _HistoryRow extends StatelessWidget {
           ),
         ],
       ),
+      ),
     );
+  }
+
+  /// T-20: compose the row announcement so a screen reader hears one
+  /// natural-language phrase per goal: direction (Cut/Bulk/Maintain),
+  /// date range, daily kcal target, weekly rate, and the duration stat.
+  /// The visual leaves are excluded so we don't get the per-leaf raw
+  /// "DURATION" / "ENDED" pill labels read out separately.
+  static String _composeSemantics({
+    required String what,
+    required String when,
+    required Goal goal,
+    required String duration,
+  }) {
+    final kcal = goal.dailyCalorieTarget;
+    final kcalPhrase = kcal == null
+        ? 'kilocalories unknown'
+        : '${formatKcal(Decimal.fromInt(kcal))} kilocalories per day';
+
+    final rate = goal.weeklyRateKg;
+    String ratePhrase;
+    if (rate == null || rate == Decimal.zero) {
+      ratePhrase = 'maintaining weight';
+    } else {
+      final losing = rate < Decimal.zero;
+      final magnitude = rate.abs();
+      // formatGrams won't quite work for kg — reuse the existing weekly
+      // formatter (one decimal). Direction words ("losing"/"gaining")
+      // mean the screen-reader user doesn't depend on the +/- glyph.
+      final mag = magnitude.toDouble().toStringAsFixed(1);
+      ratePhrase =
+          '${losing ? 'losing' : 'gaining'} $mag kilograms per week';
+    }
+
+    final endedSuffix = goal.endedOn == null ? '' : ', ended';
+    return 'Goal $what, $when, $kcalPhrase, $ratePhrase, $duration$endedSuffix';
   }
 
   static String _goalLabel(Goal g) {

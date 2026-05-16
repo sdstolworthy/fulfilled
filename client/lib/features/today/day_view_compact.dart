@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import 'package:fulfilled/widgets/icon_button_36.dart';
 import 'package:fulfilled/widgets/meal_section.dart';
 import 'package:fulfilled/widgets/ring_summary_card.dart';
 
@@ -123,10 +124,11 @@ class _CompactHeader extends StatelessWidget {
             ),
           ),
           const Spacer(),
-          _IconBtn(
+          IconButton36(
             icon: Icons.search,
             tooltip: 'Search',
-            onTap: () => context.push(Routes.foodsSearchPath),
+            onPressed: () => context.push(Routes.foodsSearchPath),
+            color: context.colors.ink2,
           ),
         ],
       ),
@@ -165,46 +167,19 @@ class _DateBar extends StatelessWidget {
               ],
             ),
           ),
-          _IconBtn(
+          IconButton36(
             icon: Icons.chevron_left,
             tooltip: 'Previous day',
-            onTap: () => navigateDay(context, date, -1),
+            onPressed: () => navigateDay(context, date, -1),
+            color: context.colors.ink2,
           ),
-          _IconBtn(
+          IconButton36(
             icon: Icons.chevron_right,
             tooltip: 'Next day',
-            onTap: () => navigateDay(context, date, 1),
+            onPressed: () => navigateDay(context, date, 1),
+            color: context.colors.ink2,
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _IconBtn extends StatelessWidget {
-  const _IconBtn({
-    required this.icon,
-    required this.tooltip,
-    required this.onTap,
-  });
-
-  final IconData icon;
-  final String tooltip;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Tooltip(
-      message: tooltip,
-      child: InkResponse(
-        onTap: onTap,
-        radius: 24,
-        child: Container(
-          width: 36,
-          height: 36,
-          alignment: Alignment.center,
-          child: Icon(icon, size: 20, color: context.colors.ink2),
-        ),
       ),
     );
   }

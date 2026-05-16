@@ -74,6 +74,10 @@ jobs:
         working-directory: client
         run: bash tool/lint_no_cross_feature_widget_import.sh
 
+      - name: Lint — no raw hex outside tokens (T-01 / T-014)
+        working-directory: client
+        run: bash tool/lint_no_hex_outside_tokens.sh
+
       - name: Build Flutter web
         working-directory: client
         env:

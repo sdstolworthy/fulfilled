@@ -84,8 +84,10 @@ class _Chip extends StatelessWidget {
         ..write(' kilocalories');
     }
     return Semantics(
+      container: true,
       button: true,
       label: semanticLabel.toString(),
+      excludeSemantics: true,
       child: InkResponse(
         onTap: () => context.push('/foods/${food.id}'),
         containedInkWell: true,

@@ -5,6 +5,7 @@ import '../../../domain/decimal_format.dart';
 import '../../../domain/enums.dart';
 import '../../../domain/units/energy.dart';
 import '../../../theme/context_extensions.dart';
+import '../../../widgets/number_text.dart';
 
 /// Shared form body for the New / Edit goal flows.
 ///
@@ -232,8 +233,13 @@ class _PreviewBlock extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.baseline,
             textBaseline: TextBaseline.alphabetic,
             children: <Widget>[
-              Text(
-                formatKcal(Decimal.fromInt(kcal)),
+              // T-20: the kcal number announces with its unit
+              // ("2,300 kilocalories"). The visible " kcal / day" caption
+              // stays for sighted users; the `NumberText` semantic label
+              // is what the screen reader hears for the digit block.
+              NumberText(
+                value: formatKcal(Decimal.fromInt(kcal)),
+                unit: 'kilocalories',
                 style: context.text.heroNumeric.copyWith(color: colors.ink),
               ),
               SizedBox(width: tokens.space.x2),

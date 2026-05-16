@@ -62,17 +62,24 @@ class MacroBar extends StatelessWidget {
     final valueLabel = formatGrams(value);
     final targetLabel = hasTarget ? formatGrams(target) : null;
 
-    final overSuffix = overBudget
-        ? _overSuffix(value - target)
-        : null;
+    final overAmount = overBudget ? value - target : null;
+    final overSuffix =
+        overAmount == null ? null : _overSuffix(overAmount);
+    final overSemantics =
+        overAmount == null ? null : _overSuffixSemantics(overAmount);
 
+    // T-20: the screen-reader phrase reads as natural language. "Over by N
+    // grams" — not the visual "−N g over" — so a non-sighted user hears
+    // "Protein 60 grams of 50 grams, over by 10 grams" on an over-budget bar.
     final semantics =
-        '$name $valueLabel grams${targetLabel == null ? '' : ' of $targetLabel'}'
-        '${overSuffix == null ? '' : ', $overSuffix'}';
+        '$name $valueLabel grams${targetLabel == null ? '' : ' of $targetLabel grams'}'
+        '${overSemantics == null ? '' : ', $overSemantics'}';
 
     if (compact) {
       return Semantics(
+        container: true,
         label: semantics,
+        excludeSemantics: true,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
@@ -122,7 +129,9 @@ class MacroBar extends StatelessWidget {
 
     // Expanded layout: text row above a 6-px bar.
     return Semantics(
+      container: true,
       label: semantics,
+      excludeSemantics: true,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
@@ -200,11 +209,19 @@ class MacroBar extends StatelessWidget {
     }
   }
 
+  /// Visible inline suffix the row paints next to the value, e.g. `−10 g
+  /// over`. Stays terse so it fits on the same baseline as the value text.
   String _overSuffix(Decimal over) {
     // `over` is already positive (value - target > 0). Use the macro
     // formatter so 8.3 stays one decimal and 30 stays integer.
     return '-${formatGrams(over)} g over';
   }
+
+  /// Screen-reader-only phrasing for the over-budget suffix. T-20 demands
+  /// the announcement reads as natural language so a non-sighted user
+  /// hears "over by 10 grams" rather than the visual "−10 g over".
+  String _overSuffixSemantics(Decimal over) =>
+      'over by ${formatGrams(over)} grams';
 }
 
 class _Bar extends StatelessWidget {

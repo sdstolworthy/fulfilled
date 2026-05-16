@@ -455,7 +455,7 @@ class _FooterButton extends StatelessWidget {
           enabled: !saving,
           label: label,
           child: Material(
-            color: greyed ? const Color(0xFFC4D2D0) : colors.accent,
+            color: greyed ? colors.accentDisabled : colors.accent,
             borderRadius: BorderRadius.circular(radius.r3),
             child: InkWell(
               onTap: saving ? null : onTap,

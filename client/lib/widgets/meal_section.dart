@@ -15,8 +15,9 @@ import '../theme/context_extensions.dart';
 ///
 /// **Empty-meal rule (architect §9 screen-01 gotcha).** When the subtotal
 /// has zero entries the card still renders, the total shows `0 kcal`, and
-/// the dot color is `AppColors.emptyDot` (the deliberate per-empty color
-/// — `#D9D6CD`). The accent dot only appears on populated meals.
+/// the dot color is `AppColors.emptyDot` (the deliberate per-empty color,
+/// defined once in `lib/theme/tokens/colors.dart`). The accent dot only
+/// appears on populated meals.
 ///
 /// The same widget renders on compact and expanded. Per T-15 the leaves
 /// are form-factor-blind; the parent picks `dense` to tighten paddings on

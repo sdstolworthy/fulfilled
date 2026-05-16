@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
+import '../../data/auth_token.dart';
 import '../../domain/enums.dart';
 import '../../domain/units/weight.dart';
 import '../../domain/user.dart';
@@ -41,10 +42,10 @@ const bool _kDebugForceError = false;
 /// 5. Sign-out outlined row in danger color → `AlertDialog` confirm.
 /// 6. Version footnote.
 ///
-/// **Sign-out wiring TODO.** `authTokenProvider` is a plain `Provider<String?>`
-/// with no notifier surface (see `lib/data/auth_token.dart`). Confirming
-/// sign-out today is a no-op + SnackBar; once the auth surface lands the
-/// confirmation callback below picks up the real `signOut()`.
+/// **Sign-out wiring** — T-019. `authTokenProvider` is an
+/// `AuthTokenNotifier` with `signOut()`. The confirmation callback below
+/// invokes it, then `router.go('/onboarding/1')` so the back button
+/// doesn't return to a signed-in screen.
 class ProfileScreen extends ConsumerWidget {
   const ProfileScreen({super.key});
 
@@ -237,7 +238,7 @@ class _ProfileBody extends ConsumerWidget {
         Padding(
           padding: EdgeInsets.symmetric(horizontal: space.x5),
           child: _SignOutRow(
-            onConfirmed: () => _onSignOutConfirmed(context),
+            onConfirmed: () => _onSignOutConfirmed(context, ref),
           ),
         ),
 
@@ -254,13 +255,13 @@ class _ProfileBody extends ConsumerWidget {
     );
   }
 
-  void _onSignOutConfirmed(BuildContext context) {
-    // TODO(auth): wire to a real sign-out hook when `authTokenProvider`
-    // gains a notifier surface in `lib/data/auth_token.dart`. v1 runs
-    // against `DEV_AUTH_BYPASS`, so there's no session to revoke.
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Signed out (no-op in dev)')),
-    );
+  Future<void> _onSignOutConfirmed(BuildContext context, WidgetRef ref) async {
+    // T-019 — clear the token + the outbox Hive box, then push the user
+    // back to the onboarding entry point. `router.go` (not `push`) so
+    // the back button doesn't return to a signed-in screen.
+    await ref.read(authTokenProvider.notifier).signOut();
+    if (!context.mounted) return;
+    context.go('/onboarding/1');
   }
 }
 

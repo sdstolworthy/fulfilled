@@ -52,6 +52,24 @@ class AppColors {
   // not the regular meal dot at low opacity.
   final Color emptyDot;
 
+  // User-uploaded food thumbnail (the `YOU` badge in `SearchResultRow`).
+  // The tan/brown pair is mock-specific (`INDEX.html` search screen) and
+  // does NOT collapse to any existing accent/macro token. T-014/B2 lift.
+  final Color userThumbBg;
+  final Color userThumbInk;
+
+  // Disabled-accent surface for the custom-food primary CTA when validation
+  // is failing. Slightly desaturated teal (`#C4D2D0`) — not interchangeable
+  // with `accentSoft` (which is the *background* container for active accent
+  // content). Used as `Material.color` on the greyed Save button.
+  final Color accentDisabled;
+
+  // Material `ColorScheme.shadow` / `.scrim`. Pure-black alphas — the only
+  // place we let an alpha-black through is the theme assembly layer; widget
+  // code should never spell these out directly.
+  final Color shadow;
+  final Color scrim;
+
   const AppColors({
     required this.bg,
     required this.surface,
@@ -76,6 +94,11 @@ class AppColors {
     required this.goalLine,
     required this.highlight,
     required this.emptyDot,
+    required this.userThumbBg,
+    required this.userThumbInk,
+    required this.accentDisabled,
+    required this.shadow,
+    required this.scrim,
   });
 
   /// The v1 light palette. Exact values are the contract; do not edit without
@@ -104,6 +127,11 @@ class AppColors {
     goalLine: Color(0xFFC77B3A),
     highlight: Color(0xFFFFF1B8),
     emptyDot: Color(0xFFD9D6CD),
+    userThumbBg: Color(0xFFF5EFE6),
+    userThumbInk: Color(0xFF8C6B2C),
+    accentDisabled: Color(0xFFC4D2D0),
+    shadow: Color(0x1A000000),
+    scrim: Color(0x66000000),
   );
 
   AppColors copyWith({
@@ -130,6 +158,11 @@ class AppColors {
     Color? goalLine,
     Color? highlight,
     Color? emptyDot,
+    Color? userThumbBg,
+    Color? userThumbInk,
+    Color? accentDisabled,
+    Color? shadow,
+    Color? scrim,
   }) {
     return AppColors(
       bg: bg ?? this.bg,
@@ -155,6 +188,11 @@ class AppColors {
       goalLine: goalLine ?? this.goalLine,
       highlight: highlight ?? this.highlight,
       emptyDot: emptyDot ?? this.emptyDot,
+      userThumbBg: userThumbBg ?? this.userThumbBg,
+      userThumbInk: userThumbInk ?? this.userThumbInk,
+      accentDisabled: accentDisabled ?? this.accentDisabled,
+      shadow: shadow ?? this.shadow,
+      scrim: scrim ?? this.scrim,
     );
   }
 }

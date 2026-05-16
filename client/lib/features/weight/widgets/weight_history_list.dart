@@ -175,54 +175,88 @@ class _Row extends StatelessWidget {
         ? null
         : entry.weightKg - previous!.weightKg;
 
-    return Container(
-      decoration: BoxDecoration(
-        border: isLast
-            ? null
-            : Border(
-                bottom: BorderSide(color: context.colors.line2),
+    // T-20 composed row label — date, weight, plus the delta (with
+    // direction so color isn't the sole signal for "gained" vs "lost"). One
+    // announcement per row; the visual leaves are excluded.
+    final rowSemantics = _composeRowSemantics(
+      dayLabel: dayFmt.format(entry.recordedOn),
+      subtitle: subtitle,
+      weightKg: entry.weightKg,
+      delta: delta,
+    );
+
+    return Semantics(
+      container: true,
+      label: rowSemantics,
+      excludeSemantics: true,
+      child: Container(
+        decoration: BoxDecoration(
+          border: isLast
+              ? null
+              : Border(
+                  bottom: BorderSide(color: context.colors.line2),
+                ),
+        ),
+        padding: EdgeInsets.symmetric(
+          horizontal: context.space.x4,
+          vertical: context.space.x3,
+        ),
+        child: Row(
+          children: <Widget>[
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text(
+                    dayFmt.format(entry.recordedOn),
+                    style: context.text.bodyNumeric,
+                  ),
+                  SizedBox(height: context.space.x05),
+                  Text(
+                    subtitle,
+                    style: context.text.meta.copyWith(fontSize: 11),
+                  ),
+                ],
               ),
-      ),
-      padding: EdgeInsets.symmetric(
-        horizontal: context.space.x4,
-        vertical: context.space.x3,
-      ),
-      child: Row(
-        children: <Widget>[
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            ),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
               children: <Widget>[
                 Text(
-                  dayFmt.format(entry.recordedOn),
-                  style: context.text.bodyNumeric,
-                ),
-                SizedBox(height: context.space.x05),
-                Text(
-                  subtitle,
-                  style: context.text.meta.copyWith(fontSize: 11),
-                ),
-              ],
-            ),
-          ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: <Widget>[
-              Semantics(
-                label: '${formatWeightKg(entry.weightKg)} kilograms on '
-                    '${dayFmt.format(entry.recordedOn)}',
-                child: Text(
                   '${formatWeightKg(entry.weightKg)} kg',
                   style: context.text.bodyStrongNumeric,
                 ),
-              ),
-              SizedBox(height: context.space.x05),
-              if (delta != null) _DeltaText(delta: delta),
-            ],
-          ),
-        ],
+                SizedBox(height: context.space.x05),
+                if (delta != null) _DeltaText(delta: delta),
+              ],
+            ),
+          ],
+        ),
       ),
     );
+  }
+
+  String _composeRowSemantics({
+    required String dayLabel,
+    required String subtitle,
+    required Decimal weightKg,
+    required Decimal? delta,
+  }) {
+    final parts = <String>[
+      dayLabel,
+      subtitle,
+      '${formatWeightKg(weightKg)} kilograms',
+    ];
+    if (delta != null && delta != Decimal.zero) {
+      final losing = delta < Decimal.zero;
+      final magnitude = delta.abs();
+      // "down 0.4 kilograms" / "up 0.4 kilograms" — direction words so a
+      // screen-reader user gets the signal sighted users get from color.
+      parts.add(
+        '${losing ? 'down' : 'up'} ${formatWeightKg(magnitude)} kilograms',
+      );
+    }
+    return parts.join(', ');
   }
 
   String? _relativeDay(int daysAgo) {

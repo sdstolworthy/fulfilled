@@ -136,7 +136,7 @@ class _TextFieldState extends State<_TextField> {
       child: Container(
         height: 46,
         decoration: BoxDecoration(
-          color: widget.hasError ? const Color(0xFFFFF8F3) : colors.surface,
+          color: widget.hasError ? colors.dangerSoft : colors.surface,
           borderRadius: BorderRadius.circular(radius.r2),
           border: Border.all(
             color: widget.hasError ? colors.danger : colors.line,

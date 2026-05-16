@@ -1,3 +1,4 @@
+import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
@@ -44,67 +45,99 @@ class SearchResultRow extends StatelessWidget {
         ? 'per serving'
         : 'per ${_perLabel(defaultServing.name)}';
 
-    return InkWell(
-      onTap: onTap ?? () => context.push('/foods/${food.id}'),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(minHeight: 56),
-        child: Padding(
-          padding: EdgeInsets.symmetric(
-            horizontal: context.space.x5,
-            vertical: context.space.x3 + 2,
-          ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: <Widget>[
-              _Thumb(source: food.source),
-              SizedBox(width: context.space.x3),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+    // T-20: composed row label — `name, serving, N kilocalories`. Children
+    // are excluded so a screen reader announces the row once with the
+    // rendered number rather than reading each visual leaf in turn.
+    final semanticLabel = _composeSemanticLabel(
+      name: food.name,
+      servingName: defaultServing?.name,
+      kcal: kcal,
+    );
+
+    return Semantics(
+      container: true,
+      button: true,
+      label: semanticLabel,
+      excludeSemantics: true,
+      child: InkWell(
+        onTap: onTap ?? () => context.push('/foods/${food.id}'),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 56),
+          child: Padding(
+            padding: EdgeInsets.symmetric(
+              horizontal: context.space.x5,
+              vertical: context.space.x3 + 2,
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: <Widget>[
+                _Thumb(source: food.source),
+                SizedBox(width: context.space.x3),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      _HighlightedName(name: food.name, query: query),
+                      SizedBox(height: 2),
+                      Text(
+                        _metaLine(food, defaultServing),
+                        style: context.text.metaNumeric.copyWith(
+                          color: context.colors.ink2,
+                          fontSize: 12,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+                SizedBox(width: context.space.x3),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
                   mainAxisSize: MainAxisSize.min,
                   children: <Widget>[
-                    _HighlightedName(name: food.name, query: query),
+                    Text(
+                      kcal == null ? '—' : formatKcal(kcal),
+                      style: context.text.bodyNumeric.copyWith(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
                     SizedBox(height: 2),
                     Text(
-                      _metaLine(food, defaultServing),
-                      style: context.text.metaNumeric.copyWith(
+                      per,
+                      style: context.text.meta.copyWith(
                         color: context.colors.ink2,
-                        fontSize: 12,
+                        fontSize: 11,
                       ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
                     ),
                   ],
                 ),
-              ),
-              SizedBox(width: context.space.x3),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                mainAxisSize: MainAxisSize.min,
-                children: <Widget>[
-                  Text(
-                    kcal == null ? '—' : formatKcal(kcal),
-                    style: context.text.bodyNumeric.copyWith(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  SizedBox(height: 2),
-                  Text(
-                    per,
-                    style: context.text.meta.copyWith(
-                      color: context.colors.ink2,
-                      fontSize: 11,
-                    ),
-                  ),
-                ],
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
     );
   }
+}
+
+String _composeSemanticLabel({
+  required String name,
+  required String? servingName,
+  required Decimal? kcal,
+}) {
+  final parts = <String>[name];
+  if (servingName != null && servingName.trim().isNotEmpty) {
+    parts.add(servingName);
+  }
+  if (kcal != null) {
+    parts.add('${formatKcal(kcal)} kilocalories');
+  } else {
+    parts.add('kilocalories unknown');
+  }
+  return parts.join(', ');
 }
 
 class _Thumb extends StatelessWidget {
@@ -126,7 +159,7 @@ class _Thumb extends StatelessWidget {
       alignment: Alignment.center,
       decoration: BoxDecoration(
         color: isUser
-            ? const Color(0xFFF5EFE6) // mock-specific tan; no token exists.
+            ? context.colors.userThumbBg
             : context.colors.accentSoft,
         borderRadius: BorderRadius.circular(context.radius.r1 + 2),
       ),
@@ -138,7 +171,7 @@ class _Thumb extends StatelessWidget {
           fontWeight: FontWeight.w700,
           letterSpacing: 0.04 * 11,
           color: isUser
-              ? const Color(0xFF8C6B2C) // ditto — exact mock value.
+              ? context.colors.userThumbInk
               : context.colors.accent,
         ),
       ),
