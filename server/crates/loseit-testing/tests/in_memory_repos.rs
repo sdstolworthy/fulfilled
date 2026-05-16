@@ -1457,4 +1457,49 @@ mod export_repo {
         assert_ne!(fresh.id, failed.id);
         assert_eq!(fresh.status, ExportStatus::Pending);
     }
+
+    #[tokio::test]
+    async fn mark_ready_returns_not_found_on_already_ready_job() {
+        // Once a job is ready, a second mark_ready must return NotFound
+        // (mirrors the Pg `WHERE id = $1 AND status = 'pending'` guard).
+        let repo = InMemoryExportJobRepository::new();
+        let user = Uuid::new_v4();
+
+        let pending = repo.insert_or_get_pending(user).await.expect("create");
+        let expires_at = Utc::now() + ChronoDuration::hours(24);
+        repo.mark_ready(pending.id, "exports/x.json".into(), expires_at)
+            .await
+            .expect("first mark_ready");
+
+        let err = repo
+            .mark_ready(pending.id, "exports/x.json".into(), expires_at)
+            .await
+            .expect_err("second mark_ready on already-ready job must fail");
+        assert!(
+            matches!(err, loseit_core::CoreError::NotFound),
+            "expected NotFound, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn mark_failed_returns_not_found_on_already_failed_job() {
+        // Once a job is failed, a second mark_failed must return NotFound
+        // (mirrors the Pg `WHERE id = $1 AND status = 'pending'` guard).
+        let repo = InMemoryExportJobRepository::new();
+        let user = Uuid::new_v4();
+
+        let pending = repo.insert_or_get_pending(user).await.expect("create");
+        repo.mark_failed(pending.id, "disk full".into())
+            .await
+            .expect("first mark_failed");
+
+        let err = repo
+            .mark_failed(pending.id, "disk full again".into())
+            .await
+            .expect_err("second mark_failed on already-failed job must fail");
+        assert!(
+            matches!(err, loseit_core::CoreError::NotFound),
+            "expected NotFound, got {err:?}"
+        );
+    }
 }

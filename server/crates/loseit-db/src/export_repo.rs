@@ -59,10 +59,14 @@ impl ExportJobRepository for PgExportJobRepository {
         // when an existing pending row would be duplicated. In that case
         // the DO UPDATE bumps updated_at and the RETURNING surfaces the
         // existing row; otherwise we get a brand-new pending row.
+        // Use the inference form (column + WHERE predicate) rather than
+        // ON CONFLICT ON CONSTRAINT, because the uniqueness is enforced by a
+        // `CREATE UNIQUE INDEX` partial index — not a named pg_constraint.
+        // The predicate must match the migration's WHERE clause verbatim.
         let sql = format!(
             "INSERT INTO export_jobs (user_id, status) \
              VALUES ($1, 'pending') \
-             ON CONFLICT ON CONSTRAINT export_jobs_one_pending_per_user \
+             ON CONFLICT (user_id) WHERE status = 'pending' \
              DO UPDATE SET updated_at = now() \
              RETURNING {SELECT_COLS}"
         );
@@ -113,7 +117,7 @@ impl ExportJobRepository for PgExportJobRepository {
         let sql = format!(
             "UPDATE export_jobs \
                 SET status = 'ready', storage_key = $2, expires_at = $3, error = NULL \
-                WHERE id = $1 \
+                WHERE id = $1 AND status = 'pending' \
                 RETURNING {SELECT_COLS}"
         );
         let row: ExportJobRow = sqlx::query_as(&sql)
@@ -130,7 +134,7 @@ impl ExportJobRepository for PgExportJobRepository {
         let sql = format!(
             "UPDATE export_jobs \
                 SET status = 'failed', error = $2 \
-                WHERE id = $1 \
+                WHERE id = $1 AND status = 'pending' \
                 RETURNING {SELECT_COLS}"
         );
         let row: ExportJobRow = sqlx::query_as(&sql)

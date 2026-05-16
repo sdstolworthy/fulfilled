@@ -76,9 +76,10 @@ impl ExportJobRepository for InMemoryExportJobRepository {
         expires_at: DateTime<Utc>,
     ) -> CoreResult<ExportJob> {
         let mut store = self.jobs.lock().unwrap();
+        // Mirror the Pg `WHERE id = $1 AND status = 'pending'` guard.
         let job = store
             .iter_mut()
-            .find(|j| j.id == job_id)
+            .find(|j| j.id == job_id && j.status == ExportStatus::Pending)
             .ok_or(loseit_core::CoreError::NotFound)?;
         job.status = ExportStatus::Ready;
         job.storage_key = Some(storage_key);
@@ -90,9 +91,10 @@ impl ExportJobRepository for InMemoryExportJobRepository {
 
     async fn mark_failed(&self, job_id: Uuid, error: String) -> CoreResult<ExportJob> {
         let mut store = self.jobs.lock().unwrap();
+        // Mirror the Pg `WHERE id = $1 AND status = 'pending'` guard.
         let job = store
             .iter_mut()
-            .find(|j| j.id == job_id)
+            .find(|j| j.id == job_id && j.status == ExportStatus::Pending)
             .ok_or(loseit_core::CoreError::NotFound)?;
         job.status = ExportStatus::Failed;
         job.error = Some(error);
@@ -102,10 +104,14 @@ impl ExportJobRepository for InMemoryExportJobRepository {
 
     async fn list_pending(&self) -> CoreResult<Vec<ExportJob>> {
         let store = self.jobs.lock().unwrap();
-        Ok(store
+        // Mirror the Pg `ORDER BY created_at ASC` so callers see a
+        // deterministic, byte-identical ordering.
+        let mut pending: Vec<ExportJob> = store
             .iter()
             .filter(|j| j.status == ExportStatus::Pending)
             .cloned()
-            .collect())
+            .collect();
+        pending.sort_by_key(|j| j.created_at);
+        Ok(pending)
     }
 }
