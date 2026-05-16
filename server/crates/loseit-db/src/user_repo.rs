@@ -127,4 +127,52 @@ impl UserRepository for PgUserRepository {
             .map_err(map_sqlx)?;
         Ok(row.into())
     }
+
+    async fn delete_user(&self, user_id: Uuid) -> CoreResult<()> {
+        // Single transaction — order matters because food_log_entries.food_id
+        // is ON DELETE RESTRICT, so log entries must be removed before
+        // user-owned foods. export_jobs.user_id is ON DELETE CASCADE, so it
+        // would be cleaned up automatically when the users row drops, but we
+        // delete it explicitly to make the cascade order unambiguous.
+        let mut tx = self.pool.begin().await.map_err(map_sqlx)?;
+
+        sqlx::query("DELETE FROM food_log_entries WHERE user_id = $1")
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_sqlx)?;
+
+        sqlx::query("DELETE FROM weights WHERE user_id = $1")
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_sqlx)?;
+
+        sqlx::query("DELETE FROM goals WHERE user_id = $1")
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_sqlx)?;
+
+        sqlx::query("DELETE FROM foods WHERE owner_user_id = $1 AND source = 'user'")
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_sqlx)?;
+
+        sqlx::query("DELETE FROM export_jobs WHERE user_id = $1")
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_sqlx)?;
+
+        sqlx::query("DELETE FROM users WHERE id = $1")
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_sqlx)?;
+
+        tx.commit().await.map_err(map_sqlx)?;
+        Ok(())
+    }
 }

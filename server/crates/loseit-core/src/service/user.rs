@@ -40,4 +40,9 @@ impl UserService {
     pub async fn update_profile(&self, id: Uuid, patch: ProfilePatch) -> CoreResult<User> {
         self.users.update_profile(id, &patch).await
     }
+
+    #[tracing::instrument(skip(self))]
+    pub async fn delete_self(&self, user_id: Uuid) -> CoreResult<()> {
+        self.users.delete_user(user_id).await
+    }
 }

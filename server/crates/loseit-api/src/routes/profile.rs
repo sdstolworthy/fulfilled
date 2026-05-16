@@ -1,4 +1,5 @@
 use axum::extract::State;
+use axum::http::StatusCode;
 use axum::routing::{get, patch};
 use axum::{Json, Router};
 use chrono::{DateTime, NaiveDate, Utc};
@@ -14,7 +15,7 @@ use crate::server::AppState;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/me", get(get_me))
-        .route("/me", patch(patch_me))
+        .route("/me", patch(patch_me).delete(delete_me))
 }
 
 #[derive(Serialize)]
@@ -96,4 +97,12 @@ async fn patch_me(
     let patch = body.into_domain()?;
     let updated = state.users.update_profile(user.id, patch).await?;
     Ok(Json(updated.into()))
+}
+
+async fn delete_me(
+    State(state): State<AppState>,
+    AuthenticatedUser(user): AuthenticatedUser,
+) -> Result<StatusCode, ApiError> {
+    state.users.delete_self(user.id).await?;
+    Ok(StatusCode::NO_CONTENT)
 }

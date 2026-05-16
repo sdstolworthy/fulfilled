@@ -17,4 +17,11 @@ pub trait UserRepository: Send + Sync + 'static {
 
     /// Apply a profile patch to an existing user, returning the updated row.
     async fn update_profile(&self, id: Uuid, patch: &ProfilePatch) -> CoreResult<User>;
+
+    /// Permanently delete a user and all of their owned data in a single
+    /// transaction. Callers should invoke this only after confirming the
+    /// caller's identity — the repo does no ownership check beyond `id = $1`.
+    ///
+    /// Returns `Ok(())` whether or not the user existed (idempotent).
+    async fn delete_user(&self, user_id: Uuid) -> CoreResult<()>;
 }

@@ -84,4 +84,20 @@ impl UserRepository for InMemoryUserRepository {
         user.updated_at = Utc::now();
         Ok(user.clone())
     }
+
+    /// Remove the user row from the in-memory store.
+    ///
+    /// **Limitation**: this fake does not have access to the other in-memory
+    /// repositories (weights, goals, foods, log entries), so it cannot
+    /// cascade-delete the user's data. HTTP-level tests that call
+    /// `DELETE /me` and then query `/weights` etc. will still see the old
+    /// data in memory. Test the cross-table cascade at the Postgres layer;
+    /// use these in-memory tests only to verify the 204 response and
+    /// authentication behaviour.
+    ///
+    /// Returns `Ok(())` whether or not the user existed (idempotent).
+    async fn delete_user(&self, user_id: Uuid) -> CoreResult<()> {
+        self.by_id.lock().unwrap().remove(&user_id);
+        Ok(())
+    }
 }

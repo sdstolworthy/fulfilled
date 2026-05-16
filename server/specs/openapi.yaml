@@ -105,6 +105,19 @@ paths:
               schema: { $ref: "#/components/schemas/User" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
+    delete:
+      tags: [Profile]
+      operationId: delete_me
+      summary: Permanently delete the authenticated user and all their data
+      description: |
+        Cascades deletion across food log entries, weights, goals, the
+        caller's custom foods, and any export jobs. Returns 204 on success.
+        Note: subsequent requests with the same token will re-provision a
+        fresh user row (the token still validates locally via the JWT issuer).
+        This is accepted v1 behaviour.
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
 
   /weights:
     post:
