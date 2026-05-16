@@ -10,17 +10,26 @@ import 'package:fulfilled/widgets/weight_stepper.dart';
 
 /// LU-007 — `WeightStepper`.
 ///
-/// The four acceptance scenarios from the dev ticket:
+/// The four original acceptance scenarios from the dev ticket plus the
+/// keyboard-input scenarios added when the chrome was re-typeable
+/// (LU-010+):
 ///   (a) `kg` round-trips a Decimal change through the +/- button.
 ///   (b) `lb` mode emits the right canonical kg when the displayed
 ///       pounds value is bumped via the `+` button.
 ///   (c) `st` mode renders two fields and the pounds +/- carries past
 ///       13 into the stones field.
 ///   (d) `st` mode borrows from stones when decrementing past 0 pounds.
+///   (e) typing a kg value and blurring fires onChanged with the
+///       canonical Decimal.
+///   (f) typing invalid text reverts on blur.
+///   (g) typing a value outside `min/max` clamps to bounds.
+///   (h) +/- still works after typing.
+///   (i) each sub-field of stone mode accepts typing independently.
 ///
-/// Post-LU-010 the kg/lb shape is the display-only `_TapStepper` (no
-/// `TextField`), so test (b) drives the change via the `+` button
-/// rather than typed input.
+/// The kg/lb chrome is now a styled `TextField` (LU-010 keyboard input
+/// fix) — visually identical when unfocused, but assertions on the
+/// number now target the editable text + a sibling unit `Text` rather
+/// than a single composite `Text('79.4 kg')` glyph.
 
 Widget _harness({
   required Widget child,
@@ -68,9 +77,12 @@ void main() {
         ),
       );
 
-      // Renders one stepper with the value + kg suffix at 1-dp.
-      expect(find.text('79.4 kg'), findsOneWidget);
-      expect(find.textContaining('lb'), findsNothing);
+      // The number lives in the `TextField` controller; the unit
+      // suffix is a sibling `Text`. The composite `'79.4 kg'` is no
+      // longer a single rendered glyph (post-LU-010 keyboard fix).
+      expect(find.text('79.4'), findsOneWidget);
+      expect(find.text('kg'), findsOneWidget);
+      expect(find.text('lb'), findsNothing);
 
       await tester.tap(find.bySemanticsLabel('Increment'));
       await tester.pump();
@@ -103,9 +115,11 @@ void main() {
         ),
       );
 
-      // Renders the lb label inside the value text — "175.0 lb".
-      expect(find.text('175.0 lb'), findsOneWidget);
-      expect(find.textContaining('kg'), findsNothing);
+      // Renders the lb label as a sibling `Text` — the number sits in
+      // the `TextField`.
+      expect(find.text('175.0'), findsOneWidget);
+      expect(find.text('lb'), findsOneWidget);
+      expect(find.text('kg'), findsNothing);
 
       await tester.tap(find.bySemanticsLabel('Increment'));
       await tester.pump();
@@ -148,11 +162,12 @@ void main() {
         ),
       );
 
-      // Two display-only sub-steppers side-by-side — st + lb. The unit
-      // is embedded in each value label ("12 st" / "13 lb"), so we
-      // assert against the composite text rather than a bare suffix.
-      expect(find.text('12 st'), findsOneWidget);
-      expect(find.text('13 lb'), findsOneWidget);
+      // Two display sub-steppers side-by-side — st + lb. The number
+      // is in each `TextField`, the unit is a sibling `Text`.
+      expect(find.text('12'), findsOneWidget);
+      expect(find.text('13'), findsOneWidget);
+      expect(find.text('st'), findsOneWidget);
+      expect(find.text('lb'), findsOneWidget);
 
       // Two Increment buttons live in the row (one per sub-stepper).
       // The pounds +/- buttons drive the stone composite; carry kicks
@@ -206,6 +221,274 @@ void main() {
 
       expect(captured, isNotNull);
       expect(captured, equals(parseStoneToKg(11, 13)));
+    },
+  );
+
+  testWidgets(
+    '(e) kg mode: typing a new value and blurring fires onChanged with canonical kg',
+    (tester) async {
+      Decimal? captured;
+      var current = Decimal.parse('70.0');
+      await tester.pumpWidget(
+        _harness(
+          unitOverride: WeightUnit.kg,
+          child: StatefulBuilder(
+            builder: (context, setState) {
+              return Column(
+                children: <Widget>[
+                  WeightStepper(
+                    value: current,
+                    unitOverride: WeightUnit.kg,
+                    onChanged: (kg) {
+                      captured = kg;
+                      setState(() => current = kg);
+                    },
+                  ),
+                  // Sibling focusable target so we can move focus away
+                  // from the stepper and trigger the commit-on-blur
+                  // listener.
+                  const TextField(key: Key('blur-target')),
+                ],
+              );
+            },
+          ),
+        ),
+      );
+
+      // Focus the stepper's TextField (the EditableText sibling of
+      // the unit Text). `enterText` focuses and replaces the controller.
+      await tester.enterText(find.byType(TextField).first, '82.7');
+      // Move focus to the sibling field — this fires the commit-on-blur
+      // listener on the stepper's FocusNode.
+      await tester.tap(find.byKey(const Key('blur-target')));
+      await tester.pump();
+
+      expect(captured, isNotNull);
+      // kg mode is canonical, rounded to 1dp on commit.
+      expect(captured, equals(Decimal.parse('82.7')));
+      // Field re-seeds to the canonical glyph.
+      expect(find.text('82.7'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    '(f) kg mode: typing invalid text reverts to the last canonical value on blur',
+    (tester) async {
+      Decimal? captured;
+      var current = Decimal.parse('70.0');
+      await tester.pumpWidget(
+        _harness(
+          unitOverride: WeightUnit.kg,
+          child: StatefulBuilder(
+            builder: (context, setState) {
+              return Column(
+                children: <Widget>[
+                  WeightStepper(
+                    value: current,
+                    unitOverride: WeightUnit.kg,
+                    onChanged: (kg) {
+                      captured = kg;
+                      setState(() => current = kg);
+                    },
+                  ),
+                  const TextField(key: Key('blur-target')),
+                ],
+              );
+            },
+          ),
+        ),
+      );
+
+      // The input formatter strips alpha characters before the
+      // controller sees them, so feed a shape the formatter passes
+      // through but the parser rejects: two decimal points in a row,
+      // which `Decimal.parse('..')` rejects as a `FormatException`.
+      await tester.enterText(find.byType(TextField).first, '..');
+      await tester.tap(find.byKey(const Key('blur-target')));
+      await tester.pump();
+
+      // No commit fired — value stayed at 70.0.
+      expect(captured, isNull);
+      // Field reverts to the canonical glyph for 70.0 kg.
+      expect(find.text('70.0'), findsOneWidget);
+
+      // Also exercise the empty-input branch: clearing the field on
+      // blur reverts without propagating `null` (per spec).
+      await tester.enterText(find.byType(TextField).first, '');
+      await tester.tap(find.byKey(const Key('blur-target')));
+      await tester.pump();
+      expect(captured, isNull);
+      expect(find.text('70.0'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    '(g) kg mode: typing a value above max clamps to the ceiling on commit',
+    (tester) async {
+      Decimal? captured;
+      var current = Decimal.parse('70.0');
+      await tester.pumpWidget(
+        _harness(
+          unitOverride: WeightUnit.kg,
+          child: StatefulBuilder(
+            builder: (context, setState) {
+              return Column(
+                children: <Widget>[
+                  WeightStepper(
+                    value: current,
+                    unitOverride: WeightUnit.kg,
+                    minKg: Decimal.parse('40.0'),
+                    maxKg: Decimal.parse('200.0'),
+                    onChanged: (kg) {
+                      captured = kg;
+                      setState(() => current = kg);
+                    },
+                  ),
+                  const TextField(key: Key('blur-target')),
+                ],
+              );
+            },
+          ),
+        ),
+      );
+
+      await tester.enterText(find.byType(TextField).first, '999');
+      await tester.tap(find.byKey(const Key('blur-target')));
+      await tester.pump();
+
+      // Clamped to the 200 kg ceiling.
+      expect(captured, isNotNull);
+      expect(captured, equals(Decimal.parse('200.0')));
+      expect(find.text('200.0'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    '(h) kg mode: +/- still works correctly after typing a value',
+    (tester) async {
+      Decimal? captured;
+      var current = Decimal.parse('70.0');
+      await tester.pumpWidget(
+        _harness(
+          unitOverride: WeightUnit.kg,
+          child: StatefulBuilder(
+            builder: (context, setState) {
+              return Column(
+                children: <Widget>[
+                  WeightStepper(
+                    value: current,
+                    unitOverride: WeightUnit.kg,
+                    onChanged: (kg) {
+                      captured = kg;
+                      setState(() => current = kg);
+                    },
+                  ),
+                  const TextField(key: Key('blur-target')),
+                ],
+              );
+            },
+          ),
+        ),
+      );
+
+      // Type a fresh value and commit via blur.
+      await tester.enterText(find.byType(TextField).first, '80.5');
+      await tester.tap(find.byKey(const Key('blur-target')));
+      await tester.pump();
+      expect(captured, equals(Decimal.parse('80.5')));
+
+      // Now tap `+` — it should bump the displayed value (which
+      // matches the controller text post-commit) by 0.1 kg.
+      await tester.tap(find.bySemanticsLabel('Increment'));
+      await tester.pump();
+      expect(captured, equals(Decimal.parse('80.6')));
+      expect(find.text('80.6'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    '(i) st mode: each sub-field accepts typing independently',
+    (tester) async {
+      Decimal? captured;
+      // Seed: 12 st 7 lb.
+      var current = parseStoneToKg(12, 7);
+      await tester.pumpWidget(
+        _harness(
+          unitOverride: WeightUnit.st,
+          child: StatefulBuilder(
+            builder: (context, setState) {
+              return Column(
+                children: <Widget>[
+                  WeightStepper(
+                    value: current,
+                    unitOverride: WeightUnit.st,
+                    onChanged: (kg) {
+                      captured = kg;
+                      setState(() => current = kg);
+                    },
+                  ),
+                  const TextField(key: Key('blur-target')),
+                ],
+              );
+            },
+          ),
+        ),
+      );
+
+      // Two TextFields for st + lb (plus the off-stepper blur target).
+      final stepperFields = find.byType(TextField);
+      expect(stepperFields, findsNWidgets(3));
+
+      // Type a fresh stones value into the first sub-field.
+      await tester.enterText(stepperFields.at(0), '11');
+      await tester.tap(find.byKey(const Key('blur-target')));
+      await tester.pump();
+      expect(captured, equals(parseStoneToKg(11, 7)));
+
+      // Now type a fresh pounds value into the second sub-field.
+      await tester.enterText(stepperFields.at(1), '3');
+      await tester.tap(find.byKey(const Key('blur-target')));
+      await tester.pump();
+      expect(captured, equals(parseStoneToKg(11, 3)));
+    },
+  );
+
+  testWidgets(
+    'lb mode: comma decimal separator parses on commit (locale tolerance)',
+    (tester) async {
+      Decimal? captured;
+      final seedKg = parseWeightToKg('175.0', WeightUnit.lb);
+      var current = seedKg;
+      await tester.pumpWidget(
+        _harness(
+          unitOverride: WeightUnit.lb,
+          child: StatefulBuilder(
+            builder: (context, setState) {
+              return Column(
+                children: <Widget>[
+                  WeightStepper(
+                    value: current,
+                    unitOverride: WeightUnit.lb,
+                    onChanged: (kg) {
+                      captured = kg;
+                      setState(() => current = kg);
+                    },
+                  ),
+                  const TextField(key: Key('blur-target')),
+                ],
+              );
+            },
+          ),
+        ),
+      );
+
+      // de-DE-shape `,` separator — `parseWeightToKg` normalises it.
+      await tester.enterText(find.byType(TextField).first, '180,5');
+      await tester.tap(find.byKey(const Key('blur-target')));
+      await tester.pump();
+
+      expect(captured, isNotNull);
+      expect(captured, equals(parseWeightToKg('180.5', WeightUnit.lb)));
     },
   );
 }

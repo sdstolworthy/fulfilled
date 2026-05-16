@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 
 import '../../data/auth_token.dart';
 import '../../domain/enums.dart';
+import '../../domain/units/length.dart';
 import '../../domain/units/weight.dart';
 import '../../domain/user.dart';
 import '../../providers/food_providers.dart';
@@ -21,7 +22,7 @@ import 'widgets/height_stepper_sheet.dart';
 import 'widgets/settings_card.dart';
 import 'widgets/settings_row.dart';
 import 'widgets/sex_picker.dart';
-import 'widgets/weight_unit_chooser.dart';
+import 'widgets/units_chooser.dart';
 
 /// Local debug flag — flip to `true` to inspect the error/loading
 /// branches against the mock provider, then revert before committing.
@@ -158,7 +159,11 @@ class _ProfileBody extends ConsumerWidget {
               label: 'Height',
               value: user.heightCm == null
                   ? 'Set'
-                  : '${user.heightCm!.toBigInt()} cm',
+                  : formatHeightWithUnit(user.heightCm!, user.heightUnit),
+              semanticsLabel: user.heightCm == null
+                  ? 'Height. Tap to set.'
+                  : 'Height ${formatHeight(user.heightCm!, user.heightUnit)} '
+                      '${user.heightUnit.longLabel}. Tap to change.',
               onTap: () => showHeightStepperSheet(
                 context,
                 initial: user.heightCm,
@@ -195,23 +200,25 @@ class _ProfileBody extends ConsumerWidget {
         SettingsCard(
           title: 'Preferences',
           rows: <Widget>[
-            // Units row — interactive (LU-010). Tap opens the
-            // `showWeightUnitChooser` (bottom sheet on compact, popup
-            // menu on medium/expanded). The trailing value reflects
-            // the active unit's short label; the other quantities
-            // (cm, kcal, g) are locked in v1 per architect §3.12.
+            // Units row — interactive (QL-104). Tap opens the joined
+            // `showUnitsChooser` (bottom sheet on compact, anchored
+            // popup on medium/expanded). The trailing value reflects
+            // both active short labels; the other quantities (kcal, g)
+            // are locked in v1 per architect §3.12.
             SettingsRow(
               key: const Key('row-units'),
               icon: Icons.public,
               label: 'Units',
-              value: '${user.weightUnit.shortLabel}, cm, kcal, g',
+              value: '${user.weightUnit.shortLabel}, '
+                  '${user.heightUnit.shortLabel}, kcal, g',
               semanticsLabel:
-                  'Weight unit: ${user.weightUnit.longLabel}. '
-                  'Tap to change.',
-              onTap: () => showWeightUnitChooser(
+                  'Weight ${user.weightUnit.longLabel}, '
+                  'height ${user.heightUnit.longLabel}. Tap to change.',
+              onTap: () => showUnitsChooser(
                 context,
                 ref,
-                initial: user.weightUnit,
+                initialWeight: user.weightUnit,
+                initialHeight: user.heightUnit,
               ),
             ),
           ],

@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import 'package:fulfilled/widgets/activity_option.dart';
+import 'package:fulfilled/widgets/height_stepper.dart';
 import 'package:fulfilled/widgets/weight_stepper.dart';
 
 import '../../../domain/drafts.dart';
@@ -17,17 +18,24 @@ import 'segmented_select.dart';
 /// mutates the `onboardingDraftProvider` notifier directly so the screen
 /// root re-reads the draft for navigation decisions without prop-drilling.
 ///
-/// T-17: height and weight are `Decimal` end-to-end. Height keeps the
-/// local `_formatHeightCm` helper (no `formatHeightCm` exists yet —
-/// flagged inline). Weight delegates display + stepping to the lifted
-/// [WeightStepper] (LU-007), which renders the active unit's number +
-/// suffix from canonical kg.
+/// T-17: height and weight are `Decimal` end-to-end. The QL-104 sweep
+/// deleted the inline `_NumberStepper` + `_formatHeightCm` helper —
+/// height now delegates display + stepping to the lifted
+/// [HeightStepper] (QL-103) which renders cm OR ft+in based on
+/// [onboardingHeightUnitProvider]. Weight delegates display + stepping
+/// to the lifted [WeightStepper] (LU-007), which renders the active
+/// unit's number + suffix from canonical kg.
 ///
-/// LU-008: above the weight row the user picks a [WeightUnit] via a
-/// three-up [SegmentedSelect]. The selected unit comes from
-/// [onboardingWeightUnitProvider] — locale default on first build,
-/// user-chosen the moment a segment is tapped. The chosen unit lands on
-/// `UserPatch.weightUnit` at final submit (onboarding_screen.dart).
+/// QL-104: above the height + weight row sits a single `Units` label
+/// with two stacked `SegmentedSelect`s — one for weight (kg/lb/st), one
+/// for height (cm/ft·in). The picked units come from
+/// [onboardingWeightUnitProvider] / [onboardingHeightUnitProvider] —
+/// locale defaults on first build, user-chosen the moment a segment is
+/// tapped. Both land on `UserPatch.weightUnit` / `UserPatch.heightUnit`
+/// at final submit (onboarding_screen.dart). `OnboardingDraft.empty()`
+/// returns null for both unit fields; the QL-107 "Start over"
+/// affordance (covered later) resets to that state, which means the
+/// locale default takes over until the user explicitly picks.
 ///
 /// T-02: the steppers and the visible cm/kg numbers use tabular figures
 /// via `bodyNumeric` so a single-tap up/down doesn't jitter horizontally.
@@ -38,7 +46,8 @@ class Step2AboutYou extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final draft = ref.watch(onboardingDraftProvider);
     final notifier = ref.read(onboardingDraftProvider.notifier);
-    final activeUnit = ref.watch(onboardingWeightUnitProvider);
+    final activeWeightUnit = ref.watch(onboardingWeightUnitProvider);
+    final activeHeightUnit = ref.watch(onboardingHeightUnitProvider);
 
     // WeightStepper takes a non-nullable canonical kg. Seed an empty
     // draft with a sensible adult midpoint (70 kg). Tapping +/- in any
@@ -47,6 +56,12 @@ class Step2AboutYou extends ConsumerWidget {
     // affordance.
     final weightSeedKg =
         draft.currentWeightKg ?? Decimal.parse('70');
+
+    // HeightStepper also takes a non-nullable canonical cm; mirror
+    // the weight seed pattern with the adult midpoint (170 cm). The
+    // stepper writes the new canonical cm back through `setHeightCm`
+    // on every commit.
+    final heightSeedCm = draft.heightCm ?? Decimal.fromInt(170);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -67,18 +82,38 @@ class Step2AboutYou extends ConsumerWidget {
           onChanged: notifier.setBirthDate,
         ),
         SizedBox(height: context.space.x3),
-        _FieldLabel('Weight unit'),
+        _FieldLabel('Units'),
         SizedBox(height: context.space.x2),
-        SegmentedSelect<WeightUnit>(
-          key: const Key('onboarding-weight-unit-chooser'),
-          options: const <WeightUnit>[
-            WeightUnit.kg,
-            WeightUnit.lb,
-            WeightUnit.st,
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            _SubLabel('Weight'),
+            SizedBox(height: context.space.x1),
+            SegmentedSelect<WeightUnit>(
+              key: const Key('onboarding-weight-unit-chooser'),
+              options: const <WeightUnit>[
+                WeightUnit.kg,
+                WeightUnit.lb,
+                WeightUnit.st,
+              ],
+              labelBuilder: _weightUnitLabel,
+              selected: activeWeightUnit,
+              onChanged: notifier.setWeightUnit,
+            ),
+            SizedBox(height: context.space.x2),
+            _SubLabel('Height'),
+            SizedBox(height: context.space.x1),
+            SegmentedSelect<HeightUnit>(
+              key: const Key('onboarding-height-unit-chooser'),
+              options: const <HeightUnit>[
+                HeightUnit.cm,
+                HeightUnit.ftIn,
+              ],
+              labelBuilder: _heightUnitLabel,
+              selected: activeHeightUnit,
+              onChanged: notifier.setHeightUnit,
+            ),
           ],
-          labelBuilder: _weightUnitLabel,
-          selected: activeUnit,
-          onChanged: notifier.setWeightUnit,
         ),
         SizedBox(height: context.space.x3),
         Row(
@@ -90,16 +125,12 @@ class Step2AboutYou extends ConsumerWidget {
                 children: <Widget>[
                   _FieldLabel('Height'),
                   SizedBox(height: context.space.x2),
-                  _NumberStepper(
-                    valueLabel: _formatHeightCm(draft.heightCm),
-                    onIncrement: () => notifier.setHeightCm(
-                      _stepDecimal(draft.heightCm, _d('1'), min: _d('80')),
-                    ),
-                    onDecrement: () => notifier.setHeightCm(
-                      _stepDecimal(draft.heightCm, _d('-1'), min: _d('80')),
-                    ),
-                    semanticsLabel:
-                        'Height ${_formatHeightCm(draft.heightCm)}',
+                  HeightStepper(
+                    key: const Key('onboarding-height-stepper'),
+                    value: heightSeedCm,
+                    unitOverride: activeHeightUnit,
+                    onChanged: notifier.setHeightCm,
+                    semanticsLabel: 'Height',
                   ),
                 ],
               ),
@@ -114,7 +145,7 @@ class Step2AboutYou extends ConsumerWidget {
                   WeightStepper(
                     key: const Key('onboarding-weight-stepper'),
                     value: weightSeedKg,
-                    unitOverride: activeUnit,
+                    unitOverride: activeWeightUnit,
                     minKg: _d('30'),
                     onChanged: notifier.setCurrentWeightKg,
                     semanticsLabel: 'Weight',
@@ -145,6 +176,26 @@ class _FieldLabel extends StatelessWidget {
     return Text(
       text.toUpperCase(),
       style: context.text.eyebrow.copyWith(color: context.colors.ink3),
+    );
+  }
+}
+
+/// Smaller-text variant of [_FieldLabel] — feature-private. The
+/// architect (§5.9) ruled the joined Units label introduces sub-labels
+/// for Weight / Height; this is the inline shape so the widget tree
+/// doesn't sprout a new lifted primitive for two callers.
+class _SubLabel extends StatelessWidget {
+  const _SubLabel(this.text);
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      text,
+      style: context.text.meta.copyWith(
+        color: context.colors.ink2,
+        fontWeight: FontWeight.w500,
+      ),
     );
   }
 }
@@ -199,85 +250,6 @@ class _BirthDateField extends StatelessWidget {
               color: context.colors.ink2,
             ),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-class _NumberStepper extends StatelessWidget {
-  const _NumberStepper({
-    required this.valueLabel,
-    required this.onIncrement,
-    required this.onDecrement,
-    required this.semanticsLabel,
-  });
-
-  final String valueLabel;
-  final VoidCallback onIncrement;
-  final VoidCallback onDecrement;
-  final String semanticsLabel;
-
-  @override
-  Widget build(BuildContext context) {
-    return Semantics(
-      label: semanticsLabel,
-      child: Container(
-        height: 48,
-        decoration: BoxDecoration(
-          color: context.colors.surface,
-          borderRadius: BorderRadius.circular(context.radius.r2),
-          border: Border.all(color: context.colors.line),
-        ),
-        child: Row(
-          children: <Widget>[
-            _StepperButton(
-              icon: Icons.remove_rounded,
-              onTap: onDecrement,
-              tooltip: 'Decrease',
-            ),
-            Expanded(
-              child: Center(
-                child: Text(
-                  valueLabel,
-                  style: context.text.bodyStrongNumeric,
-                ),
-              ),
-            ),
-            _StepperButton(
-              icon: Icons.add_rounded,
-              onTap: onIncrement,
-              tooltip: 'Increase',
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _StepperButton extends StatelessWidget {
-  const _StepperButton({
-    required this.icon,
-    required this.onTap,
-    required this.tooltip,
-  });
-
-  final IconData icon;
-  final VoidCallback onTap;
-  final String tooltip;
-
-  @override
-  Widget build(BuildContext context) {
-    return Tooltip(
-      message: tooltip,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(context.radius.r2),
-        child: SizedBox(
-          width: 44,
-          height: 44,
-          child: Icon(icon, size: 18, color: context.colors.ink2),
         ),
       ),
     );
@@ -346,24 +318,6 @@ String _sexLabel(Sex sex) {
 
 Decimal _d(String s) => Decimal.parse(s);
 
-/// Step a nullable Decimal by [step] (signed); clamp at [min]. Initial
-/// values when null fall back to a sensible default per field — caller
-/// passes the right `min` so we land in range.
-Decimal _stepDecimal(Decimal? current, Decimal step, {required Decimal min}) {
-  // No prefill: jump to a reasonable default (server'll be patched on submit).
-  final base = current ?? (min + _d('90'));
-  final next = base + step;
-  return next < min ? min : next;
-}
-
-/// Format a height as `"182 cm"`. Lives here for now; flagged to lift into
-/// `lib/domain/units/length.dart` when v2 introduces imperial.
-String _formatHeightCm(Decimal? value) {
-  if (value == null) return '— cm';
-  final rounded = value.round(scale: 0).toBigInt().toInt();
-  return '$rounded cm';
-}
-
 /// Human label for the weight-unit segmented chooser. Renders the long
 /// form (`"Kilograms (kg)"`) so the picker is self-explanatory the
 /// first time a user sees it — the architect's call (§3.11).
@@ -375,5 +329,17 @@ String _weightUnitLabel(WeightUnit unit) {
       return 'Pounds (lb)';
     case WeightUnit.st:
       return 'Stones (st)';
+  }
+}
+
+/// Human label for the height-unit segmented chooser. Renders the long
+/// form (`"Centimeters (cm)"`) so the picker is self-explanatory the
+/// first time a user sees it — architect §5.9 verbatim.
+String _heightUnitLabel(HeightUnit unit) {
+  switch (unit) {
+    case HeightUnit.cm:
+      return 'Centimeters (cm)';
+    case HeightUnit.ftIn:
+      return 'Feet & inches';
   }
 }

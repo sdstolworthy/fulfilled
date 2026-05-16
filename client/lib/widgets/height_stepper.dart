@@ -1,5 +1,6 @@
 import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../domain/_rounding.dart';
@@ -19,31 +20,40 @@ import '../theme/context_extensions.dart';
 /// to drive it from an onboarding-local provider, the architect-blessed
 /// escape hatch).
 ///
-/// **cm** renders a single display-only stepper — a centered
-/// `bodyStrongNumeric` value flanked by tap-only `-` / `+` buttons.
-/// Visually matches `WeightStepper`'s kg/lb mode and the height stepper
-/// on onboarding step 2 (no `TextField` chrome, no smaller field-style
-/// font). The displayed value is the canonical cm rounded half-to-even
-/// to the nearest integer cm (architect §5.6); +/- bumps by 1 cm and
-/// emits canonical cm on every commit.
+/// **cm** renders a single stepper — a centered `bodyStrongNumeric`
+/// value flanked by tap-only `-` / `+` buttons. Visually matches
+/// `WeightStepper`'s kg/lb mode; the centered chrome is a styled
+/// `TextField` so the user can type a value directly. The displayed
+/// value is the canonical cm rounded half-to-even to the nearest
+/// integer cm (architect §5.6); +/- bumps by 1 cm and emits canonical
+/// cm on every commit.
 ///
 /// **ftIn** renders two integer sub-steppers side-by-side — feet (3..8
 /// soft clamp; buttons disable at edges) and inches (0..11) — using
-/// the same display-only chrome. The +/- buttons on the inches field
-/// carry / borrow across the feet field: `11 in + 1 = 1 ft 0 in` and
+/// the same chrome. Each sub-field is its own integer-only
+/// `TextField`. The +/- buttons on the inches field carry / borrow
+/// across the feet field: `11 in + 1 = 1 ft 0 in` and
 /// `0 in − 1 = (feet − 1) ft 11 in`. State for the two integers lives
 /// in `_HeightStepperState`;
 /// `onChanged(parseFeetInchesToCm(feet, inches))` fires on every
 /// commit.
 ///
 /// **Clamps.** [minCm] / [maxCm] gate the cm-mode `+`/`-` buttons so
-/// the displayed value never goes out of range. The ftIn mode uses the
-/// soft `3..8 ft` × `0..11 in` integer clamps directly — converting
-/// [minCm] / [maxCm] through 2.54 would produce non-intuitive button
-/// disable states on the feet side (e.g. `min = 80 cm` would
-/// translate to `2.6 ft` which doesn't align with the soft `3 ft`
-/// floor). PM-punted ergonomics; the ftIn integer floors are the right
-/// shape here.
+/// the displayed value never goes out of range. Typed values that fall
+/// outside the clamps are pulled to the nearest bound before commit
+/// (the revert path mirrors what the +/- buttons already do). The
+/// ftIn mode uses the soft `3..8 ft` × `0..11 in` integer clamps
+/// directly — converting [minCm] / [maxCm] through 2.54 would produce
+/// non-intuitive button disable states on the feet side (e.g.
+/// `min = 80 cm` would translate to `2.6 ft` which doesn't align with
+/// the soft `3 ft` floor). PM-punted ergonomics; the ftIn integer
+/// floors are the right shape here.
+///
+/// **Keyboard input.** Locale-tolerant — accepts both `.` and `,` as
+/// the decimal separator in cm mode (mirrors `parseHeightToCm`); ftIn
+/// sub-fields are integer-only. Empty input on blur reverts to the
+/// last canonical value; unparseable input also reverts. No error UI
+/// for v1 — the revert is the feedback.
 ///
 /// **Tenants honored:** T-01 (no hex — composes existing primitives),
 /// T-07 (numeric input always has a stepper), T-17 (Decimal in /
@@ -121,18 +131,70 @@ class _HeightStepperState extends ConsumerState<HeightStepper> {
   int _feet = 0;
   int _inches = 0;
 
+  /// Controllers for the keyboard input seam. The cm-mode field uses
+  /// [_cmCtrl]; ftIn mode uses [_feetCtrl] + [_inchesCtrl]. Each has a
+  /// matching `FocusNode` so the commit-on-blur listener can fire.
+  late final TextEditingController _cmCtrl;
+  late final FocusNode _cmFocus;
+  late final TextEditingController _feetCtrl;
+  late final FocusNode _feetFocus;
+  late final TextEditingController _inchesCtrl;
+  late final FocusNode _inchesFocus;
+
   @override
   void initState() {
     super.initState();
     _syncFtInFromCm(widget.value);
+    _cmCtrl = TextEditingController(text: _seedCmText());
+    _cmFocus = FocusNode();
+    _cmFocus.addListener(_handleCmFocusChange);
+    _feetCtrl = TextEditingController(text: '$_feet');
+    _feetFocus = FocusNode();
+    _feetFocus.addListener(_handleFeetFocusChange);
+    _inchesCtrl = TextEditingController(text: '$_inches');
+    _inchesFocus = FocusNode();
+    _inchesFocus.addListener(_handleInchesFocusChange);
   }
 
   @override
   void didUpdateWidget(covariant HeightStepper old) {
     super.didUpdateWidget(old);
-    if (widget.value != old.value) {
+    // Re-sync whenever the canonical value OR the unit override
+    // changes — toggling cm ↔ ftIn via the override should re-format
+    // the visible glyph even though the canonical cm is unchanged.
+    final unitChanged = widget.unitOverride != old.unitOverride;
+    if (widget.value != old.value || unitChanged) {
       _syncFtInFromCm(widget.value);
+      // Mirror the new canonical value into whichever controller is
+      // currently not being edited. Skipping focused controllers
+      // avoids caret thrash mid-keystroke.
+      if (!_cmFocus.hasFocus) {
+        final t = _seedCmText();
+        if (_cmCtrl.text != t) _cmCtrl.text = t;
+      }
+      if (!_feetFocus.hasFocus) {
+        final t = '$_feet';
+        if (_feetCtrl.text != t) _feetCtrl.text = t;
+      }
+      if (!_inchesFocus.hasFocus) {
+        final t = '$_inches';
+        if (_inchesCtrl.text != t) _inchesCtrl.text = t;
+      }
     }
+  }
+
+  @override
+  void dispose() {
+    _cmFocus.removeListener(_handleCmFocusChange);
+    _feetFocus.removeListener(_handleFeetFocusChange);
+    _inchesFocus.removeListener(_handleInchesFocusChange);
+    _cmCtrl.dispose();
+    _cmFocus.dispose();
+    _feetCtrl.dispose();
+    _feetFocus.dispose();
+    _inchesCtrl.dispose();
+    _inchesFocus.dispose();
+    super.dispose();
   }
 
   void _syncFtInFromCm(Decimal cm) {
@@ -146,6 +208,101 @@ class _HeightStepperState extends ConsumerState<HeightStepper> {
     final decomposed = decomposeCmToFeetInches(cm);
     _feet = decomposed.feet;
     _inches = decomposed.inches;
+  }
+
+  /// Seed text for the cm-mode `TextField`: the canonical cm rounded
+  /// to the nearest integer.
+  String _seedCmText() {
+    final rounded = roundHalfToEvenScaled(widget.value, 0);
+    return '${rounded.toBigInt()}';
+  }
+
+  void _handleCmFocusChange() {
+    if (_cmFocus.hasFocus) return;
+    _commitCmText();
+  }
+
+  void _handleFeetFocusChange() {
+    if (_feetFocus.hasFocus) return;
+    _commitFtInSubField(isFeet: true);
+  }
+
+  void _handleInchesFocusChange() {
+    if (_inchesFocus.hasFocus) return;
+    _commitFtInSubField(isFeet: false);
+  }
+
+  /// Parse the cm `TextField`, clamp to bounds, and commit. On parse
+  /// failure or empty input, revert the controller to the last
+  /// canonical value.
+  void _commitCmText() {
+    final raw = _cmCtrl.text.trim();
+    void revert() {
+      _cmCtrl.text = _seedCmText();
+    }
+    if (raw.isEmpty) {
+      revert();
+      return;
+    }
+    Decimal parsed;
+    try {
+      parsed = parseHeightToCm(raw, HeightUnit.cm);
+    } on FormatException {
+      revert();
+      return;
+    }
+    final minCm = widget.minCm ?? _defaultMinCm;
+    final maxCm = widget.maxCm ?? _defaultMaxCm;
+    if (parsed < minCm) parsed = minCm;
+    if (parsed > maxCm) parsed = maxCm;
+    // Round to integer cm before emitting so the canonical cm the
+    // parent receives matches the on-screen integer.
+    final canonical = roundHalfToEvenScaled(parsed, 0);
+    if (canonical != widget.value) {
+      widget.onChanged(canonical);
+    }
+    // Always re-seed to drop leading zeros, `.5` fragments, etc.
+    _cmCtrl.text = '${canonical.toBigInt()}';
+  }
+
+  void _commitFtInSubField({required bool isFeet}) {
+    final ctrl = isFeet ? _feetCtrl : _inchesCtrl;
+    final raw = ctrl.text.trim();
+    void revert() {
+      ctrl.text = isFeet ? '$_feet' : '$_inches';
+    }
+    if (raw.isEmpty) {
+      revert();
+      return;
+    }
+    final parsed = int.tryParse(raw);
+    if (parsed == null || parsed < 0) {
+      revert();
+      return;
+    }
+    int nextFeet = _feet;
+    int nextInches = _inches;
+    if (isFeet) {
+      // Clamp to the soft 3..8 ft range so the typed value matches the
+      // button gate behaviour.
+      nextFeet = parsed;
+      if (nextFeet < _minFeet) nextFeet = _minFeet;
+      if (nextFeet > _maxFeet) nextFeet = _maxFeet;
+    } else {
+      // Inches clamp at 0..11 (anything 12+ snaps to 11 — we don't
+      // carry on commit; the +/- buttons own the carry seam).
+      nextInches = parsed > _maxInches ? _maxInches : parsed;
+    }
+    if (nextFeet == _feet && nextInches == _inches) {
+      ctrl.text = isFeet ? '$_feet' : '$_inches';
+      return;
+    }
+    setState(() {
+      _feet = nextFeet;
+      _inches = nextInches;
+    });
+    ctrl.text = isFeet ? '$_feet' : '$_inches';
+    widget.onChanged(parseFeetInchesToCm(_feet, _inches));
   }
 
   @override
@@ -178,6 +335,8 @@ class _HeightStepperState extends ConsumerState<HeightStepper> {
       if (next < minCm) next = minCm;
       if (next > maxCm) next = maxCm;
       if (next == displayCm) return;
+      final newText = '${next.toBigInt()}';
+      if (_cmCtrl.text != newText) _cmCtrl.text = newText;
       widget.onChanged(next);
     }
 
@@ -185,7 +344,11 @@ class _HeightStepperState extends ConsumerState<HeightStepper> {
     // exact integer cm so this is lossless.
     final cmInt = displayCm.toBigInt();
     return _TapStepper(
-      valueLabel: '$cmInt cm',
+      controller: _cmCtrl,
+      focusNode: _cmFocus,
+      unitSuffix: 'cm',
+      allowDecimal: true,
+      onSubmitted: (_) => _commitCmText(),
       onIncrement: atCeiling ? null : () => bump(1),
       onDecrement: atFloor ? null : () => bump(-1),
       hasError: widget.hasError,
@@ -211,17 +374,23 @@ class _HeightStepperState extends ConsumerState<HeightStepper> {
       children: <Widget>[
         Expanded(
           child: _TapStepper(
-            valueLabel: '$_feet ft',
+            controller: _feetCtrl,
+            focusNode: _feetFocus,
+            unitSuffix: 'ft',
+            allowDecimal: false,
+            onSubmitted: (_) => _commitFtInSubField(isFeet: true),
             onIncrement: feetAtCeiling
                 ? null
                 : () {
                     setState(() => _feet += 1);
+                    _feetCtrl.text = '$_feet';
                     widget.onChanged(parseFeetInchesToCm(_feet, _inches));
                   },
             onDecrement: feetAtFloor
                 ? null
                 : () {
                     setState(() => _feet -= 1);
+                    _feetCtrl.text = '$_feet';
                     widget.onChanged(parseFeetInchesToCm(_feet, _inches));
                   },
             hasError: widget.hasError,
@@ -233,7 +402,11 @@ class _HeightStepperState extends ConsumerState<HeightStepper> {
         SizedBox(width: space.x3),
         Expanded(
           child: _TapStepper(
-            valueLabel: '$_inches in',
+            controller: _inchesCtrl,
+            focusNode: _inchesFocus,
+            unitSuffix: 'in',
+            allowDecimal: false,
+            onSubmitted: (_) => _commitFtInSubField(isFeet: false),
             onIncrement: inchesAtCeiling ? null : _incrementInches,
             onDecrement: inchesAtFloor ? null : _decrementInches,
             hasError: widget.hasError,
@@ -259,6 +432,8 @@ class _HeightStepperState extends ConsumerState<HeightStepper> {
     } else {
       setState(() => _inches = next);
     }
+    _feetCtrl.text = '$_feet';
+    _inchesCtrl.text = '$_inches';
     widget.onChanged(parseFeetInchesToCm(_feet, _inches));
   }
 
@@ -279,36 +454,49 @@ class _HeightStepperState extends ConsumerState<HeightStepper> {
     } else {
       return; // already at floor — no commit.
     }
+    _feetCtrl.text = '$_feet';
+    _inchesCtrl.text = '$_inches';
     widget.onChanged(parseFeetInchesToCm(_feet, _inches));
   }
 }
 
 /// Display-only stepper — sibling of `WeightStepper`'s inline
-/// `_TapStepper` (see `weight_stepper.dart:310–408`). Re-inlined here
-/// rather than lifted to a shared `lib/widgets/tap_stepper.dart`
-/// primitive; architect §5.6 explicitly defers that lift to v1.1, and
-/// the weight stepper already named the convergence as future work.
+/// `_TapStepper` (see `weight_stepper.dart`). Re-inlined here rather
+/// than lifted to a shared `lib/widgets/tap_stepper.dart` primitive;
+/// architect §5.6 explicitly defers that lift to v1.1, and the weight
+/// stepper already named the convergence as future work.
 ///
 /// Shape: 48-px tall `Container`, 1-px line border, `radius.r2`,
-/// `bodyStrongNumeric` centered label, `_TapStepperButton`s on either
-/// side. No `TextField`, no field-style chrome. `hasError` flips the
-/// border / background to the danger tokens — same convention as
-/// `QuantityStepper` and `WeightStepper` for consistency at the call
-/// sites.
+/// `bodyStrongNumeric` centered label (now a styled `TextField` so the
+/// user can type), unit suffix rendered as a sibling `Text` to the
+/// right of the field, `_TapStepperButton`s on either side. The
+/// `TextField` strips its own border / underline / fill so the chrome
+/// stays pixel-identical to the previous `Text`-only version when
+/// unfocused. `hasError` flips the border / background to the danger
+/// tokens — same convention as `QuantityStepper` and `WeightStepper`
+/// for consistency at the call sites.
 ///
 /// Passing `null` for [onIncrement] or [onDecrement] disables that
 /// side of the stepper — used by the clamp gates (cm at min/max, feet
 /// at 3/8, the absolute ftIn floor/ceiling).
 class _TapStepper extends StatelessWidget {
   const _TapStepper({
-    required this.valueLabel,
+    required this.controller,
+    required this.focusNode,
+    required this.unitSuffix,
+    required this.allowDecimal,
+    required this.onSubmitted,
     required this.onIncrement,
     required this.onDecrement,
     this.hasError = false,
     this.semanticsLabel,
   });
 
-  final String valueLabel;
+  final TextEditingController controller;
+  final FocusNode focusNode;
+  final String unitSuffix;
+  final bool allowDecimal;
+  final ValueChanged<String> onSubmitted;
   final VoidCallback? onIncrement;
   final VoidCallback? onDecrement;
   final bool hasError;
@@ -318,6 +506,16 @@ class _TapStepper extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = context.colors;
     final radius = context.radius;
+    final space = context.space;
+    final inputFormatters = <TextInputFormatter>[
+      // Allow digits and a single locale-tolerant decimal separator
+      // (`.` or `,`). Stripping anything else keeps the on-screen glyph
+      // close to what `parseHeightToCm` will accept on commit — which
+      // already normalises `,` → `.` for us.
+      allowDecimal
+          ? FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]'))
+          : FilteringTextInputFormatter.digitsOnly,
+    ];
     final body = Container(
       height: 48,
       decoration: BoxDecoration(
@@ -338,9 +536,39 @@ class _TapStepper extends StatelessWidget {
           ),
           Expanded(
             child: Center(
-              child: Text(
-                valueLabel,
-                style: context.text.bodyStrongNumeric,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: <Widget>[
+                  // Constrain the typeable area so the field stays
+                  // visually centered with the unit suffix to its
+                  // right. Without an `IntrinsicWidth` the `TextField`
+                  // expands the whole Center cell and the suffix sits
+                  // flush to the `+` button.
+                  IntrinsicWidth(
+                    child: TextField(
+                      controller: controller,
+                      focusNode: focusNode,
+                      textAlign: TextAlign.center,
+                      keyboardType: TextInputType.numberWithOptions(
+                        decimal: allowDecimal,
+                      ),
+                      inputFormatters: inputFormatters,
+                      onSubmitted: onSubmitted,
+                      style: context.text.bodyStrongNumeric
+                          .copyWith(color: colors.ink),
+                      decoration: const InputDecoration.collapsed(
+                        hintText: '',
+                      ),
+                    ),
+                  ),
+                  SizedBox(width: space.x1),
+                  Text(
+                    unitSuffix,
+                    style: context.text.bodyStrongNumeric
+                        .copyWith(color: colors.ink),
+                  ),
+                ],
               ),
             ),
           ),

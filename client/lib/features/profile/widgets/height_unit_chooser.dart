@@ -9,36 +9,35 @@ import '../../../providers/repository_providers.dart';
 import '../../../theme/context_extensions.dart';
 import '../../../widgets/activity_option.dart';
 
-/// Profile → Preferences → Units chooser (LU-010).
+/// Profile → Preferences → Units chooser — height axis (QL-104).
 ///
-/// Tapping the Units row opens this chooser:
-/// - On `compact`, a [showModalBottomSheet] with three
-///   [ActivityOption]-shaped rows — kilograms, pounds, stones & pounds.
+/// Mirror of `showWeightUnitChooser`. Tapping a height-axis row in the
+/// joined `showUnitsChooser` is the canonical compositional path; this
+/// standalone entry point is kept for source-compat with any caller
+/// that wants a height-only chooser (none today; architect §5.7 reserves
+/// the seam as a per-axis primitive).
+///
+/// - On `compact`, a [showModalBottomSheet] with two [ActivityOption]
+///   rows — Centimeters and Feet & inches.
 /// - On `medium` / `expanded`, an anchored popup menu (T-15).
 ///
-/// The chooser body is shared across form factors — only the shell
-/// differs. On selection the chooser PATCHes `weight_unit` through
+/// On selection the chooser PATCHes `height_unit` through
 /// [ProfileRepository.update], invalidates [meProvider], and closes.
-/// The downstream [weightUnitProvider] flips on the next frame, so
-/// every weight-rendering widget refreshes (T-18).
+/// The downstream [heightUnitProvider] flips on the next frame, so
+/// every height-rendering widget refreshes (T-18).
 ///
-/// T-24 Case 1 — pop-to-source (both form-factor branches). `/me` is
-/// the source; the compact sheet calls `navigator.pop()` after the
-/// PATCH lands, and the expanded `showMenu` flow pops itself when the
-/// user taps an item. The downstream `weightUnitProvider` re-derives
-/// from the invalidated `meProvider` on the next frame.
+/// **T-24 Case 1 — pop-to-source.** `/me` is the source; the compact
+/// sheet calls `navigator.pop()` after the PATCH lands, and the
+/// expanded `showMenu` flow pops itself when the user taps an item.
+/// The downstream `heightUnitProvider` re-derives from the invalidated
+/// `meProvider` on the next frame.
 ///
 /// Failure path: keep the chooser open and surface a SnackBar
 /// (`"Couldn't update unit. Try again."`).
-///
-/// **Feature-private**: lives under `lib/features/profile/widgets/`,
-/// not `lib/widgets/`, because nothing outside the profile screen
-/// uses it (T-23 — the lifted-widget inventory is the architect's
-/// component list; this chooser isn't in it).
-Future<void> showWeightUnitChooser(
+Future<void> showHeightUnitChooser(
   BuildContext context,
   WidgetRef ref, {
-  required WeightUnit initial,
+  required HeightUnit initial,
 }) {
   final formFactor = FormFactor.of(context);
   if (formFactor.isCompact) {
@@ -54,7 +53,7 @@ Future<void> showWeightUnitChooser(
 Future<void> _showCompactSheet(
   BuildContext context,
   WidgetRef ref, {
-  required WeightUnit initial,
+  required HeightUnit initial,
 }) {
   return showModalBottomSheet<void>(
     context: context,
@@ -67,27 +66,30 @@ Future<void> _showCompactSheet(
     ),
     builder: (sheetContext) => SafeArea(
       top: false,
-      child: _WeightUnitChooserBody(initial: initial),
+      child: _HeightUnitChooserBody(initial: initial),
     ),
   );
 }
 
-class _WeightUnitChooserBody extends ConsumerStatefulWidget {
-  const _WeightUnitChooserBody({required this.initial});
+class _HeightUnitChooserBody extends ConsumerStatefulWidget {
+  const _HeightUnitChooserBody({required this.initial});
 
-  final WeightUnit initial;
+  final HeightUnit initial;
 
   @override
-  ConsumerState<_WeightUnitChooserBody> createState() =>
-      _WeightUnitChooserBodyState();
+  ConsumerState<_HeightUnitChooserBody> createState() =>
+      _HeightUnitChooserBodyState();
 }
 
-class _WeightUnitChooserBodyState
-    extends ConsumerState<_WeightUnitChooserBody> {
-  late WeightUnit _value = widget.initial;
+class _HeightUnitChooserBodyState
+    extends ConsumerState<_HeightUnitChooserBody> {
+  late HeightUnit _value = widget.initial;
   bool _saving = false;
 
-  Future<void> _select(WeightUnit picked) async {
+  /// T-24 Case 1 — pop-to-source. `/me` is the source; the chooser
+  /// PATCHes `height_unit`, invalidates `meProvider`, then pops so the
+  /// underlying Units row re-renders with the freshly persisted unit.
+  Future<void> _select(HeightUnit picked) async {
     if (_saving) return;
     setState(() {
       _value = picked;
@@ -97,7 +99,7 @@ class _WeightUnitChooserBodyState
     final messenger = ScaffoldMessenger.maybeOf(context);
     try {
       final repo = ref.read(profileRepositoryProvider);
-      await repo.update(UserPatch(weightUnit: picked));
+      await repo.update(UserPatch(heightUnit: picked));
       ref.invalidate(meProvider);
       if (!mounted) return;
       navigator.pop();
@@ -142,16 +144,16 @@ class _WeightUnitChooserBodyState
           ),
           child: Text('Units', style: context.text.title),
         ),
-        for (final unit in WeightUnit.values)
+        for (final unit in HeightUnit.values)
           Padding(
             padding: EdgeInsets.symmetric(
               horizontal: context.space.x5,
               vertical: context.space.x1,
             ),
             child: ActivityOption(
-              key: ValueKey<String>('weight-unit-${unit.wire}'),
-              title: _title(unit),
-              subtitle: _subtitle(unit),
+              key: ValueKey<String>('height-unit-${unit.wire}'),
+              title: heightUnitTitle(unit),
+              subtitle: heightUnitSubtitle(unit),
               selected: _value == unit,
               onTap: _saving ? null : () => _select(unit),
             ),
@@ -169,7 +171,7 @@ class _WeightUnitChooserBodyState
 Future<void> _showExpandedMenu(
   BuildContext context,
   WidgetRef ref, {
-  required WeightUnit initial,
+  required HeightUnit initial,
 }) async {
   final overlay =
       Overlay.of(context).context.findRenderObject() as RenderBox?;
@@ -188,21 +190,21 @@ Future<void> _showExpandedMenu(
   final colors = context.colors;
   final messenger = ScaffoldMessenger.maybeOf(context);
 
-  final picked = await showMenu<WeightUnit>(
+  final picked = await showMenu<HeightUnit>(
     context: context,
     position: position,
     color: colors.surface,
     shape: RoundedRectangleBorder(
       borderRadius: BorderRadius.circular(context.radius.r2),
     ),
-    items: <PopupMenuEntry<WeightUnit>>[
-      for (final unit in WeightUnit.values)
-        PopupMenuItem<WeightUnit>(
-          key: ValueKey<String>('weight-unit-menu-${unit.wire}'),
+    items: <PopupMenuEntry<HeightUnit>>[
+      for (final unit in HeightUnit.values)
+        PopupMenuItem<HeightUnit>(
+          key: ValueKey<String>('height-unit-menu-${unit.wire}'),
           value: unit,
           child: _MenuRow(
-            title: _title(unit),
-            subtitle: _subtitle(unit),
+            title: heightUnitTitle(unit),
+            subtitle: heightUnitSubtitle(unit),
             selected: unit == initial,
           ),
         ),
@@ -211,7 +213,7 @@ Future<void> _showExpandedMenu(
   if (picked == null || picked == initial) return;
   try {
     final repo = ref.read(profileRepositoryProvider);
-    await repo.update(UserPatch(weightUnit: picked));
+    await repo.update(UserPatch(heightUnit: picked));
     ref.invalidate(meProvider);
   } catch (_) {
     messenger?.showSnackBar(
@@ -260,36 +262,24 @@ class _MenuRow extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Labels.
+// Labels. Exposed for composition by `units_chooser.dart` (architect
+// §5.8 — the joined sheet composes the same row labels).
 // ---------------------------------------------------------------------------
 
-String _title(WeightUnit unit) => weightUnitTitle(unit);
-
-String _subtitle(WeightUnit unit) => weightUnitSubtitle(unit);
-
-/// Public title for a weight unit row. Exposed (no underscore) so the
-/// joined `UnitsChooser` (architect §5.8) can re-use the exact same
-/// label strings the per-axis chooser uses — keeps drift from creeping
-/// in the two composition sites.
-String weightUnitTitle(WeightUnit unit) {
+String heightUnitTitle(HeightUnit unit) {
   switch (unit) {
-    case WeightUnit.kg:
-      return 'Kilograms (kg)';
-    case WeightUnit.lb:
-      return 'Pounds (lb)';
-    case WeightUnit.st:
-      return 'Stones & pounds (st)';
+    case HeightUnit.cm:
+      return 'Centimeters (cm)';
+    case HeightUnit.ftIn:
+      return 'Feet & inches (ft, in)';
   }
 }
 
-/// Public subtitle for a weight unit row. See [weightUnitTitle].
-String weightUnitSubtitle(WeightUnit unit) {
+String heightUnitSubtitle(HeightUnit unit) {
   switch (unit) {
-    case WeightUnit.kg:
+    case HeightUnit.cm:
       return 'Common worldwide';
-    case WeightUnit.lb:
-      return 'Common in the US';
-    case WeightUnit.st:
-      return 'Common in the UK';
+    case HeightUnit.ftIn:
+      return 'Common in the US and UK';
   }
 }

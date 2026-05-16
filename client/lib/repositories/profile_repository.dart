@@ -72,6 +72,7 @@ class ProfileRepository {
       u = u.copyWith(activityLevel: data.activityLevel);
     }
     if (data.weightUnit != null) u = u.copyWith(weightUnit: data.weightUnit);
+    if (data.heightUnit != null) u = u.copyWith(heightUnit: data.heightUnit);
     u = u.copyWith(updatedAt: DateTime.now());
     _user = u;
     return me();

@@ -129,10 +129,14 @@ void main() {
     await tester.pumpAndSettle();
 
     // T-20: the row's semantic announcement uses the long-form unit
-    // name, even though the visible value is the short label.
+    // name, even though the visible value is the short label. QL-104
+    // joined the chooser to cover weight + height in one row, so the
+    // label includes both axes.
     expect(
       find.bySemanticsLabel(
-        RegExp(r'Weight unit: stones and pounds\. Tap to change\.'),
+        RegExp(
+          r'Weight stones and pounds, height (centimeters|feet and inches)\. Tap to change\.',
+        ),
       ),
       findsOneWidget,
     );

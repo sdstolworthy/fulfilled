@@ -1,5 +1,6 @@
 import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../domain/_rounding.dart';
@@ -18,24 +19,34 @@ import '../theme/context_extensions.dart';
 ///
 /// **kg / lb** render a single display-only stepper — a centered
 /// `bodyStrongNumeric` value flanked by tap-only `-` / `+` buttons.
-/// Visually matches the height stepper on onboarding step 2 (no
-/// `TextField` chrome, no smaller field-style font). The displayed
-/// value is the canonical kg converted to the active unit and rounded
-/// half-to-even to one decimal place (architect §3.5); +/- bumps by
-/// `0.1` of the displayed unit and emits canonical kg on every commit.
+/// Visually matches the height stepper on onboarding step 2; the
+/// centered chrome is now a styled `TextField` so the user can type
+/// directly with the keyboard while the +/- buttons keep working
+/// exactly as before. The displayed value is the canonical kg
+/// converted to the active unit and rounded half-to-even to one
+/// decimal place (architect §3.5); +/- bumps by `0.1` of the displayed
+/// unit and emits canonical kg on every commit.
 ///
 /// **st** renders two integer sub-steppers side-by-side — stones (no
-/// upper clamp, integer) and pounds (0–13) — using the same
-/// display-only chrome. The +/- buttons on the pounds field carry /
-/// borrow across the stones field: `13 lb + 1 = 1 st 0 lb` and
-/// `0 lb − 1 = (stones − 1) st 13 lb`. State for the two integers
-/// lives in `_WeightStepperState`; `onChanged(parseStoneToKg(stones,
-/// pounds))` fires on every commit.
+/// upper clamp, integer) and pounds (0–13) — using the same chrome.
+/// Each sub-field is its own integer-only `TextField`. The +/- buttons
+/// on the pounds field carry / borrow across the stones field:
+/// `13 lb + 1 = 1 st 0 lb` and `0 lb − 1 = (stones − 1) st 13 lb`.
+/// State for the two integers lives in `_WeightStepperState`;
+/// `onChanged(parseStoneToKg(stones, pounds))` fires on every commit.
 ///
 /// **Clamps.** [minKg] / [maxKg] are converted to the active unit at
 /// build time so the inner stepper's clamp matches the on-screen
-/// number. For st the v1 implementation skips clamps (PM-punted
-/// ergonomics; the composite shape doesn't fit a single bound cleanly).
+/// number. Typed values that fall outside the clamps are pulled to the
+/// nearest bound before commit (the revert path mirrors what the +/-
+/// buttons already do). For st the v1 implementation skips clamps
+/// (PM-punted ergonomics; the composite shape doesn't fit a single
+/// bound cleanly).
+///
+/// **Keyboard input.** Locale-tolerant — accepts both `.` and `,` as
+/// the decimal separator (mirrors `parseWeightToKg`). Empty input on
+/// blur reverts to the last canonical value; unparseable input also
+/// reverts. No error UI for v1 — the revert is the feedback.
 ///
 /// **Tenants honored:** T-01 (no hex — composes existing primitives),
 /// T-07 (numeric input always has a stepper), T-17 (Decimal in /
@@ -103,18 +114,73 @@ class _WeightStepperState extends ConsumerState<WeightStepper> {
   int _stones = 0;
   int _pounds = 0;
 
+  /// Controller for the kg / lb single-field shape. Stone mode uses
+  /// [_stonesCtrl] / [_poundsCtrl] instead.
+  late final TextEditingController _singleCtrl;
+  late final FocusNode _singleFocus;
+  late final TextEditingController _stonesCtrl;
+  late final FocusNode _stonesFocus;
+  late final TextEditingController _poundsCtrl;
+  late final FocusNode _poundsFocus;
+
   @override
   void initState() {
     super.initState();
     _syncStoneFromKg(widget.value);
+    _singleCtrl = TextEditingController(text: _seedSingleText());
+    _singleFocus = FocusNode();
+    _singleFocus.addListener(_handleSingleFocusChange);
+    _stonesCtrl = TextEditingController(text: '$_stones');
+    _stonesFocus = FocusNode();
+    _stonesFocus.addListener(_handleStonesFocusChange);
+    _poundsCtrl = TextEditingController(text: '$_pounds');
+    _poundsFocus = FocusNode();
+    _poundsFocus.addListener(_handlePoundsFocusChange);
   }
 
   @override
   void didUpdateWidget(covariant WeightStepper old) {
     super.didUpdateWidget(old);
-    if (widget.value != old.value) {
+    // Re-sync whenever the canonical value OR the unit override
+    // changes — toggling kg ↔ lb via the override should re-format
+    // the visible glyph even though the canonical kg is unchanged.
+    // The ref.watch-driven unit change for non-override callers is a
+    // pre-existing rebuild path and out of scope for the keyboard
+    // input fix.
+    final unitChanged = widget.unitOverride != old.unitOverride;
+    if (widget.value != old.value || unitChanged) {
       _syncStoneFromKg(widget.value);
+      // Mirror the new canonical value into whichever controller is
+      // currently not being edited. We skip controllers that have
+      // focus — that prevents the caret from jumping mid-keystroke
+      // when the parent rebuilds with the value we just emitted.
+      if (!_singleFocus.hasFocus) {
+        final t = _seedSingleText();
+        if (_singleCtrl.text != t) _singleCtrl.text = t;
+      }
+      if (!_stonesFocus.hasFocus) {
+        final t = '$_stones';
+        if (_stonesCtrl.text != t) _stonesCtrl.text = t;
+      }
+      if (!_poundsFocus.hasFocus) {
+        final t = '$_pounds';
+        if (_poundsCtrl.text != t) _poundsCtrl.text = t;
+      }
     }
+  }
+
+  @override
+  void dispose() {
+    _singleFocus.removeListener(_handleSingleFocusChange);
+    _stonesFocus.removeListener(_handleStonesFocusChange);
+    _poundsFocus.removeListener(_handlePoundsFocusChange);
+    _singleCtrl.dispose();
+    _singleFocus.dispose();
+    _stonesCtrl.dispose();
+    _stonesFocus.dispose();
+    _poundsCtrl.dispose();
+    _poundsFocus.dispose();
+    super.dispose();
   }
 
   void _syncStoneFromKg(Decimal kg) {
@@ -156,6 +222,113 @@ class _WeightStepperState extends ConsumerState<WeightStepper> {
     return '${parts[0]}.${frac[0]}';
   }
 
+  /// Seed text for the single (kg / lb) `TextField`. Mirrors the
+  /// `valueLabel` math `_buildSingle` used to inline.
+  String _seedSingleText() {
+    final unit = widget.unitOverride ?? ref.read(weightUnitProvider);
+    switch (unit) {
+      case WeightUnit.kg:
+        return _formatOneDp(roundHalfToEvenScaled(widget.value, 1));
+      case WeightUnit.lb:
+        return _formatOneDp(roundHalfToEvenScaled(_kgToLb(widget.value), 1));
+      case WeightUnit.st:
+        return ''; // unused — stone mode uses the two-field shape.
+    }
+  }
+
+  void _handleSingleFocusChange() {
+    if (_singleFocus.hasFocus) return;
+    _commitSingleText();
+  }
+
+  void _handleStonesFocusChange() {
+    if (_stonesFocus.hasFocus) return;
+    _commitStoneSubField(isStones: true);
+  }
+
+  void _handlePoundsFocusChange() {
+    if (_poundsFocus.hasFocus) return;
+    _commitStoneSubField(isStones: false);
+  }
+
+  /// Parse the single-field TextField, clamp to bounds, and commit.
+  /// On parse failure or empty input, revert the controller to the
+  /// last canonical value.
+  void _commitSingleText() {
+    final unit = widget.unitOverride ?? ref.read(weightUnitProvider);
+    if (unit == WeightUnit.st) return; // wrong shape — guarded by callers.
+    final raw = _singleCtrl.text.trim();
+    void revert() {
+      _singleCtrl.text = _seedSingleText();
+    }
+    if (raw.isEmpty) {
+      revert();
+      return;
+    }
+    Decimal parsedKg;
+    try {
+      parsedKg = parseWeightToKg(raw, unit);
+    } on FormatException {
+      revert();
+      return;
+    }
+    if (widget.minKg != null && parsedKg < widget.minKg!) {
+      parsedKg = widget.minKg!;
+    }
+    if (widget.maxKg != null && parsedKg > widget.maxKg!) {
+      parsedKg = widget.maxKg!;
+    }
+    // Round to display resolution before emitting so the canonical
+    // kg the parent receives matches the on-screen 1-dp value.
+    final canonical = unit == WeightUnit.kg
+        ? roundHalfToEvenScaled(parsedKg, 1)
+        : _lbToKg(roundHalfToEvenScaled(_kgToLb(parsedKg), 1));
+    if (canonical != widget.value) {
+      widget.onChanged(canonical);
+    }
+    // Always re-seed the controller text so trailing whitespace,
+    // missing `.0`, or `,` separator collapses to the canonical glyph.
+    _singleCtrl.text = unit == WeightUnit.kg
+        ? _formatOneDp(roundHalfToEvenScaled(canonical, 1))
+        : _formatOneDp(roundHalfToEvenScaled(_kgToLb(canonical), 1));
+  }
+
+  void _commitStoneSubField({required bool isStones}) {
+    final ctrl = isStones ? _stonesCtrl : _poundsCtrl;
+    final raw = ctrl.text.trim();
+    void revert() {
+      ctrl.text = isStones ? '$_stones' : '$_pounds';
+    }
+    if (raw.isEmpty) {
+      revert();
+      return;
+    }
+    final parsed = int.tryParse(raw);
+    if (parsed == null || parsed < 0) {
+      revert();
+      return;
+    }
+    int nextStones = _stones;
+    int nextPounds = _pounds;
+    if (isStones) {
+      nextStones = parsed;
+    } else {
+      // Pounds clamps at 0..13. Anything else snaps to the bound.
+      nextPounds = parsed > 13 ? 13 : parsed;
+    }
+    if (nextStones == _stones && nextPounds == _pounds) {
+      // Re-seed text to canonical glyph (drops leading zeros etc).
+      ctrl.text = isStones ? '$_stones' : '$_pounds';
+      return;
+    }
+    setState(() {
+      _stones = nextStones;
+      _pounds = nextPounds;
+    });
+    ctrl.text = isStones ? '$_stones' : '$_pounds';
+    widget.onChanged(parseStoneToKg(_stones, _pounds));
+  }
+
   @override
   Widget build(BuildContext context) {
     final WeightUnit unit =
@@ -163,6 +336,7 @@ class _WeightStepperState extends ConsumerState<WeightStepper> {
     switch (unit) {
       case WeightUnit.kg:
         return _buildSingle(
+          unit: unit,
           displayValue: roundHalfToEvenScaled(widget.value, 1),
           step: Decimal.parse('0.1'),
           unitSuffix: WeightUnit.kg.shortLabel,
@@ -175,6 +349,7 @@ class _WeightStepperState extends ConsumerState<WeightStepper> {
         );
       case WeightUnit.lb:
         return _buildSingle(
+          unit: unit,
           displayValue: roundHalfToEvenScaled(_kgToLb(widget.value), 1),
           step: Decimal.parse('0.1'),
           unitSuffix: WeightUnit.lb.shortLabel,
@@ -195,6 +370,7 @@ class _WeightStepperState extends ConsumerState<WeightStepper> {
   /// flanked by `-` / `+`. `0.1` step in the displayed unit, half-to-even
   /// round on the way in, canonical kg out on every change.
   Widget _buildSingle({
+    required WeightUnit unit,
     required Decimal displayValue,
     required Decimal step,
     required String unitSuffix,
@@ -210,11 +386,17 @@ class _WeightStepperState extends ConsumerState<WeightStepper> {
       // won't, but be defensive) still renders cleanly the next frame.
       next = roundHalfToEvenScaled(next, 1);
       if (next == displayValue) return;
+      final newText = _formatOneDp(next);
+      if (_singleCtrl.text != newText) _singleCtrl.text = newText;
       widget.onChanged(toCanonicalKg(next));
     }
 
     return _TapStepper(
-      valueLabel: '${_formatOneDp(displayValue)} ${unitSuffix.toLowerCase()}',
+      controller: _singleCtrl,
+      focusNode: _singleFocus,
+      unitSuffix: unitSuffix.toLowerCase(),
+      allowDecimal: true,
+      onSubmitted: (_) => _commitSingleText(),
       onIncrement: () => bump(step),
       onDecrement: () => bump(Decimal.zero - step),
       hasError: widget.hasError,
@@ -231,14 +413,20 @@ class _WeightStepperState extends ConsumerState<WeightStepper> {
       children: <Widget>[
         Expanded(
           child: _TapStepper(
-            valueLabel: '$_stones st',
+            controller: _stonesCtrl,
+            focusNode: _stonesFocus,
+            unitSuffix: 'st',
+            allowDecimal: false,
+            onSubmitted: (_) => _commitStoneSubField(isStones: true),
             onIncrement: () {
               setState(() => _stones += 1);
+              _stonesCtrl.text = '$_stones';
               widget.onChanged(parseStoneToKg(_stones, _pounds));
             },
             onDecrement: () {
               if (_stones <= 0) return;
               setState(() => _stones -= 1);
+              _stonesCtrl.text = '$_stones';
               widget.onChanged(parseStoneToKg(_stones, _pounds));
             },
             hasError: widget.hasError,
@@ -250,7 +438,11 @@ class _WeightStepperState extends ConsumerState<WeightStepper> {
         SizedBox(width: space.x3),
         Expanded(
           child: _TapStepper(
-            valueLabel: '$_pounds lb',
+            controller: _poundsCtrl,
+            focusNode: _poundsFocus,
+            unitSuffix: 'lb',
+            allowDecimal: false,
+            onSubmitted: (_) => _commitStoneSubField(isStones: false),
             onIncrement: _incrementPounds,
             onDecrement: _decrementPounds,
             hasError: widget.hasError,
@@ -275,6 +467,8 @@ class _WeightStepperState extends ConsumerState<WeightStepper> {
     } else {
       setState(() => _pounds = next);
     }
+    _stonesCtrl.text = '$_stones';
+    _poundsCtrl.text = '$_pounds';
     widget.onChanged(parseStoneToKg(_stones, _pounds));
   }
 
@@ -292,6 +486,8 @@ class _WeightStepperState extends ConsumerState<WeightStepper> {
     } else {
       return; // already at floor — no commit.
     }
+    _stonesCtrl.text = '$_stones';
+    _poundsCtrl.text = '$_pounds';
     widget.onChanged(parseStoneToKg(_stones, _pounds));
   }
 }
@@ -303,20 +499,32 @@ class _WeightStepperState extends ConsumerState<WeightStepper> {
 /// converge the two private types into one shared primitive.
 ///
 /// Shape: 48-px tall `Container`, 1-px line border, `radius.r2`,
-/// `bodyStrongNumeric` centered label, `_TapStepperButton`s on either
-/// side. No `TextField`, no field-style chrome. `hasError` flips the
-/// border / background to the danger tokens — same convention as
-/// `QuantityStepper` for consistency at the call sites.
+/// `bodyStrongNumeric` centered label (now a styled `TextField` so the
+/// user can type), unit suffix rendered as a sibling `Text` to the
+/// right of the field, `_TapStepperButton`s on either side. The
+/// `TextField` strips its own border / underline / fill so the chrome
+/// stays pixel-identical to the previous `Text`-only version when
+/// unfocused. `hasError` flips the border / background to the danger
+/// tokens — same convention as `QuantityStepper` for consistency at the
+/// call sites.
 class _TapStepper extends StatelessWidget {
   const _TapStepper({
-    required this.valueLabel,
+    required this.controller,
+    required this.focusNode,
+    required this.unitSuffix,
+    required this.allowDecimal,
+    required this.onSubmitted,
     required this.onIncrement,
     required this.onDecrement,
     this.hasError = false,
     this.semanticsLabel,
   });
 
-  final String valueLabel;
+  final TextEditingController controller;
+  final FocusNode focusNode;
+  final String unitSuffix;
+  final bool allowDecimal;
+  final ValueChanged<String> onSubmitted;
   final VoidCallback onIncrement;
   final VoidCallback onDecrement;
   final bool hasError;
@@ -326,6 +534,16 @@ class _TapStepper extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = context.colors;
     final radius = context.radius;
+    final space = context.space;
+    final inputFormatters = <TextInputFormatter>[
+      // Allow digits and a single locale-tolerant decimal separator
+      // (`.` or `,`). Stripping anything else keeps the on-screen glyph
+      // close to what `parseWeightToKg` will accept on commit — which
+      // already normalises `,` → `.` for us.
+      allowDecimal
+          ? FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]'))
+          : FilteringTextInputFormatter.digitsOnly,
+    ];
     final body = Container(
       height: 48,
       decoration: BoxDecoration(
@@ -346,9 +564,39 @@ class _TapStepper extends StatelessWidget {
           ),
           Expanded(
             child: Center(
-              child: Text(
-                valueLabel,
-                style: context.text.bodyStrongNumeric,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: <Widget>[
+                  // Constrain the typeable area so the field stays
+                  // visually centered with the unit suffix to its
+                  // right. Without an `IntrinsicWidth` the `TextField`
+                  // expands the whole Center cell and the suffix sits
+                  // flush to the `+` button.
+                  IntrinsicWidth(
+                    child: TextField(
+                      controller: controller,
+                      focusNode: focusNode,
+                      textAlign: TextAlign.center,
+                      keyboardType: TextInputType.numberWithOptions(
+                        decimal: allowDecimal,
+                      ),
+                      inputFormatters: inputFormatters,
+                      onSubmitted: onSubmitted,
+                      style: context.text.bodyStrongNumeric
+                          .copyWith(color: colors.ink),
+                      decoration: const InputDecoration.collapsed(
+                        hintText: '',
+                      ),
+                    ),
+                  ),
+                  SizedBox(width: space.x1),
+                  Text(
+                    unitSuffix,
+                    style: context.text.bodyStrongNumeric
+                        .copyWith(color: colors.ink),
+                  ),
+                ],
               ),
             ),
           ),

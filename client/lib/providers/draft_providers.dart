@@ -131,6 +131,12 @@ class OnboardingDraftNotifier extends StateNotifier<OnboardingDraft> {
   /// chooser segment tap calls this directly.
   void setWeightUnit(WeightUnit v) => state = state.copyWith(weightUnit: v);
 
+  /// Set the user-chosen display unit for the onboarding step 2 height
+  /// row. Mirror of [setWeightUnit] — wires into
+  /// `onboardingHeightUnitProvider` (QL-104). The chosen unit also
+  /// lands on `UserPatch.heightUnit` at final submit.
+  void setHeightUnit(HeightUnit v) => state = state.copyWith(heightUnit: v);
+
   /// Restore the empty draft. Call this on successful submit — see file
   /// docstring.
   void reset() => state = const OnboardingDraft();
@@ -158,4 +164,18 @@ final onboardingDraftProvider =
 final onboardingWeightUnitProvider = Provider<WeightUnit>((ref) {
   final draft = ref.watch(onboardingDraftProvider);
   return draft.weightUnit ?? ref.watch(localeDefaultWeightUnitProvider);
+});
+
+/// Active height unit during onboarding (screen 09 step 2).
+///
+/// Mirror of [onboardingWeightUnitProvider]. Reads the draft first;
+/// once the user taps a segment in step 2's height chooser the draft
+/// carries an explicit [HeightUnit]. Until then it falls back to
+/// [localeDefaultHeightUnitProvider] so US/UK onboarders see `ft·in`
+/// without a manual tap. After the final "Get started" submit
+/// `meProvider` invalidates and the global [heightUnitProvider] takes
+/// over (architect §5.1, §5.9).
+final onboardingHeightUnitProvider = Provider<HeightUnit>((ref) {
+  final draft = ref.watch(onboardingDraftProvider);
+  return draft.heightUnit ?? ref.watch(localeDefaultHeightUnitProvider);
 });

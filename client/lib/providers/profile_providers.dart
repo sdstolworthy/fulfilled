@@ -75,17 +75,14 @@ final weightUnitProvider = Provider<WeightUnit>((ref) {
 /// record so widget rebuilds stay granular: a height-only chooser
 /// rebuild doesn't fan out to weight readers (tenant T-18).
 ///
-/// Pre-`User.heightUnit` window: `User` does not yet carry a
-/// `heightUnit` field (it lands alongside the QL-110 backend
-/// migration). Until then this provider always returns the locale
-/// default — when the data branch fires, it falls through to the
-/// `orElse` path explicitly. Once the field exists, the data branch
-/// will read `u.heightUnit` directly without any caller-site changes.
+/// QL-104 flipped the data branch to read `u.heightUnit` now that
+/// `User.heightUnit` exists with a `cm` default. While `meProvider` is
+/// loading or errored the provider falls back through
+/// [localeDefaultHeightUnitProvider] so the UI never has to render a
+/// placeholder suffix (architect §3.10, §5.1).
 final heightUnitProvider = Provider<HeightUnit>((ref) {
   return ref.watch(meProvider).maybeWhen(
-        // `User.heightUnit` does not exist yet — fall through to the
-        // locale default. QL-110 (backend) + the follow-up client
-        // ticket flip this to `(u) => u.heightUnit`.
+        data: (u) => u.heightUnit,
         orElse: () => ref.watch(localeDefaultHeightUnitProvider),
       );
 });

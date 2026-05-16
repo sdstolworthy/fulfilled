@@ -11,6 +11,7 @@ import 'package:fulfilled/providers/food_providers.dart';
 import 'package:fulfilled/providers/profile_providers.dart';
 import 'package:fulfilled/theme/theme_data.dart';
 import 'package:fulfilled/widgets/empty_state.dart';
+import 'package:fulfilled/widgets/height_stepper.dart';
 import 'package:fulfilled/widgets/skeleton.dart';
 
 User _mockUser({
@@ -129,16 +130,15 @@ void main() {
     await tester.tap(find.byKey(const Key('row-height')));
     await tester.pumpAndSettle();
 
-    // The bottom-sheet editor shell renders the title "Height" and
-    // exposes the numeric field keyed `height-field`.
-    expect(find.byKey(const Key('height-field')), findsOneWidget);
-    // The text field is seeded with the user's current height.
-    final field = tester.widget<TextField>(
-      find.byKey(const Key('height-field')),
-    );
-    expect(field.controller?.text, equals('182'));
+    // The bottom-sheet editor shell now composes the lifted
+    // `HeightStepper` (QL-104 rewrote the inline `height-field`
+    // TextField + clamp logic away).
+    expect(find.byType(HeightStepper), findsOneWidget);
     // Title is rendered in the editor shell.
     expect(find.widgetWithText(Padding, 'Height'), findsWidgets);
+    // The HeightStepper is seeded from the current user height
+    // (182 cm) — the visible number under the cm unit overrides.
+    expect(find.text('182'), findsOneWidget);
   });
 
   testWidgets('Units row exists and is non-interactive (informational)',

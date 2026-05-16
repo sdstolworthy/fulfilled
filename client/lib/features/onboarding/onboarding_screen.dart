@@ -87,16 +87,26 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
       final profile = ref.read(profileRepositoryProvider);
       final goals = ref.read(goalRepositoryProvider);
 
-      // PATCH /me with the profile bits. LU-008: include the chosen
-      // display unit so the server persists it on `User.weight_unit`.
-      // Fall back to the locale default when the user never tapped a
-      // segment (matches `onboardingWeightUnitProvider`'s fallback).
+      // PATCH /me with the profile bits.
+      //
+      // LU-008: include the chosen weight display unit so the server
+      // persists it on `User.weight_unit`. QL-104 mirrors the same line
+      // for height — both axes ride out of onboarding on a single
+      // PATCH. Fall back to the locale defaults when the user never
+      // tapped a segment (matches `onboardingWeightUnitProvider` /
+      // `onboardingHeightUnitProvider`'s fallback).
+      //
+      // T-24 Case 2 — the onboarding finish routes forward to
+      // `Routes.todayPath` (architect §3.4 row 09). Not pop-to-source:
+      // the source is the welcome screen, the destination is today.
+      final defaults = defaultUnitsForLocale();
       await profile.update(UserPatch(
         sex: draft.sex,
         birthDate: draft.birthDate,
         heightCm: draft.heightCm,
         activityLevel: draft.activityLevel,
-        weightUnit: draft.weightUnit ?? defaultWeightUnitForLocale(),
+        weightUnit: draft.weightUnit ?? defaults.weightUnit,
+        heightUnit: draft.heightUnit ?? defaults.heightUnit,
       ));
 
       // Compute the daily target client-side per architecture §9 — the

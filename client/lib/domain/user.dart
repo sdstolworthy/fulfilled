@@ -25,6 +25,7 @@ class User {
     this.activityLevel,
     this.customFoodCount = 0,
     this.weightUnit = WeightUnit.kg,
+    this.heightUnit = HeightUnit.cm,
   });
 
   final String id;
@@ -44,6 +45,8 @@ class User {
   /// omits the field (architect §3.1, §3.3, §4.2).
   final WeightUnit weightUnit;
 
+  final HeightUnit heightUnit;
+
   User copyWith({
     String? id,
     String? displayName,
@@ -57,6 +60,7 @@ class User {
     DateTime? createdAt,
     DateTime? updatedAt,
     WeightUnit? weightUnit,
+    HeightUnit? heightUnit,
   }) =>
       User(
         id: id ?? this.id,
@@ -71,6 +75,7 @@ class User {
         createdAt: createdAt ?? this.createdAt,
         updatedAt: updatedAt ?? this.updatedAt,
         weightUnit: weightUnit ?? this.weightUnit,
+        heightUnit: heightUnit ?? this.heightUnit,
       );
 
   factory User.fromJson(Map<String, dynamic> json) {
@@ -101,6 +106,12 @@ class User {
       weightUnit: json['weight_unit'] == null
           ? WeightUnit.kg
           : WeightUnit.fromWire(json['weight_unit'] as String),
+      // Pre-backend window: tolerate a missing `height_unit` key and
+      // default to `cm`. The Rust migration (QL-110) is the flip point;
+      // until then `cm` is the canonical fallback.
+      heightUnit: json['height_unit'] == null
+          ? HeightUnit.cm
+          : HeightUnit.fromWire(json['height_unit'] as String),
     );
   }
 
@@ -119,6 +130,7 @@ class User {
         'created_at': createdAt.toIso8601String(),
         'updated_at': updatedAt.toIso8601String(),
         'weight_unit': weightUnit.wire,
+        'height_unit': heightUnit.wire,
       };
 
   @override
@@ -136,7 +148,8 @@ class User {
           other.customFoodCount == customFoodCount &&
           other.createdAt == createdAt &&
           other.updatedAt == updatedAt &&
-          other.weightUnit == weightUnit;
+          other.weightUnit == weightUnit &&
+          other.heightUnit == heightUnit;
 
   @override
   int get hashCode => Object.hash(
@@ -152,6 +165,7 @@ class User {
         createdAt,
         updatedAt,
         weightUnit,
+        heightUnit,
       );
 }
 
@@ -166,6 +180,7 @@ class UserPatch {
     this.heightCm,
     this.activityLevel,
     this.weightUnit,
+    this.heightUnit,
   });
 
   final String? displayName;
@@ -179,6 +194,12 @@ class UserPatch {
   /// non-null so the patch stays minimal (architect §3.3).
   final WeightUnit? weightUnit;
 
+  /// Sparse update to `User.height_unit`. Mirror of [weightUnit] — emits
+  /// the wire key only when non-null so the patch stays minimal. The
+  /// backend column lands in QL-110; until then the Rust API ignores
+  /// unknown keys on PATCH /me (architect §3.3, §10.3).
+  final HeightUnit? heightUnit;
+
   Map<String, dynamic> toJson() => <String, dynamic>{
         if (displayName != null) 'display_name': displayName,
         if (email != null) 'email': email,
@@ -189,5 +210,6 @@ class UserPatch {
         if (heightCm != null) 'height_cm': heightCm.toString(),
         if (activityLevel != null) 'activity_level': activityLevel!.wire,
         if (weightUnit != null) 'weight_unit': weightUnit!.wire,
+        if (heightUnit != null) 'height_unit': heightUnit!.wire,
       };
 }
