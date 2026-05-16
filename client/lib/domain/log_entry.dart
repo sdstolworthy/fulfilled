@@ -161,6 +161,83 @@ class LogEntry {
       );
 }
 
+/// Outgoing `PATCH /log/{id}` payload. The log-entry sheet's edit mode
+/// builds one and hands it to `log_repository.update`. The patch is
+/// sparse on the wire — only fields the user actually changed are
+/// emitted. `food_id` is **never** serialised: the OpenAPI spec
+/// explicitly forbids mutating the food on PATCH (PM ruling), so it is
+/// not even modeled here. Callers that try to patch the food must
+/// instead delete + recreate the entry.
+///
+/// `clearNote` is the one piece of out-of-band signalling we need:
+/// "absence" of a key on the wire means "leave unchanged", while
+/// `"note": null` means "clear the existing note". The sheet sets
+/// `clearNote: true` when the user blanked a previously-non-null note.
+/// If both `note` and `clearNote` are set, the explicit `note` wins —
+/// `clearNote` only fires when `note == null`.
+class LogPatch {
+  const LogPatch({
+    this.servingId,
+    this.consumedOn,
+    this.meal,
+    this.quantity,
+    this.note,
+    this.clearNote = false,
+  });
+
+  final String? servingId;
+  final DateTime? consumedOn;
+  final Meal? meal;
+  final Decimal? quantity;
+  final String? note;
+
+  /// When `true` and [note] is null, emit `'note': null` to clear an
+  /// existing note. When `false` (default), an unset [note] is omitted
+  /// from the wire entirely. Ignored when [note] is non-null — the
+  /// explicit value always wins.
+  final bool clearNote;
+
+  /// `true` iff every patchable field is unset and we're not clearing
+  /// the note. The submit handler short-circuits on this to skip
+  /// no-op PATCHes.
+  bool get isEmpty =>
+      servingId == null &&
+      consumedOn == null &&
+      meal == null &&
+      quantity == null &&
+      note == null &&
+      !clearNote;
+
+  /// Sparse JSON encoder. Only emits keys for set fields. Never emits
+  /// `food_id` — see class docs.
+  Map<String, dynamic> toJson() {
+    final m = <String, dynamic>{};
+    if (servingId != null) m['serving_id'] = servingId;
+    if (consumedOn != null) m['consumed_on'] = _isoDate(consumedOn!);
+    if (meal != null) m['meal'] = meal!.wire;
+    if (quantity != null) m['quantity'] = quantity.toString();
+    if (note != null) {
+      m['note'] = note;
+    } else if (clearNote) {
+      m['note'] = null;
+    }
+    return m;
+  }
+}
+
+/// Thrown by `LogRepository.update` (and any future single-entry
+/// lookup) when the entry id is not in the store. Mirrors
+/// `FoodNotFoundError` from `food_repository.dart` — same shape so
+/// screen-level `try/catch` blocks read uniformly.
+class LogEntryNotFoundError implements Exception {
+  LogEntryNotFoundError(this.entryId);
+
+  final String entryId;
+
+  @override
+  String toString() => 'LogEntryNotFoundError: $entryId';
+}
+
 /// Outgoing `POST /log` payload. Screen 04's log-entry sheet builds one
 /// and hands it to `log_repository.create`. The mock repository computes
 /// the frozen snapshot from the food's per-100 g + the serving's grams +

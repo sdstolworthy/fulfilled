@@ -123,17 +123,27 @@ class LogOutboxNotifier extends StateNotifier<OutboxState> {
     state = OutboxState(entries: entries, failedCount: failed);
   }
 
-  /// Enqueue a new `POST /log` payload. Returns the client-generated id so
-  /// callers can prepend an optimistic row to the day view.
+  /// Enqueue a new `POST /log` payload. Returns the client-generated
+  /// outbox id so callers can correlate the queued row (the same value
+  /// is also stored as [OutboxEntry.optimisticId] by default and is
+  /// what `LogRepository.isPendingSync` queries against — see LU-001).
+  ///
+  /// [optimisticId] lets the log-entry sheet pass the exact same string
+  /// it just stamped onto its optimistic `LogEntry.id`
+  /// (`'optimistic_${microsecondsSinceEpoch}'`). When omitted, the
+  /// outbox falls back to using its UUID for both fields, matching
+  /// pre-LU-001 behaviour.
   ///
   /// Idempotent only by client id — callers must not retry by re-enqueuing.
   Future<String> enqueue({
     required Map<String, dynamic> payload,
+    String? optimisticId,
     DateTime? now,
   }) async {
     final id = _uuid.v4();
     final entry = OutboxEntry(
       id: id,
+      optimisticId: optimisticId ?? id,
       payload: payload,
       queuedAt: now ?? DateTime.now(),
     );

@@ -1,4 +1,5 @@
 import '../data/api_client.dart';
+import '../data/outbox/log_outbox_notifier.dart';
 import '../domain/day_summary.dart';
 import '../domain/goal.dart';
 import '../domain/log_entry.dart';
@@ -22,14 +23,23 @@ class LogRepository {
     required ApiClient api,
     required FoodRepository foodRepository,
     required GoalRepository goalRepository,
+    LogOutboxNotifier? outbox,
   })  : _api = api,
         _foodRepo = foodRepository,
-        _goalRepo = goalRepository;
+        _goalRepo = goalRepository,
+        _outbox = outbox;
 
   // ignore: unused_field — kept for parity with the eventual real client.
   final ApiClient _api;
   final FoodRepository _foodRepo;
   final GoalRepository _goalRepo;
+
+  /// Compact-only handle on the offline outbox. Null on medium/expanded
+  /// (the `repository_providers.dart` wiring decides). Read by
+  /// [isPendingSync] to project pending/failed outbox rows back to the
+  /// day-view. The repository itself never enqueues — the log-entry
+  /// sheet owns that — so this is purely a read-side projection.
+  final LogOutboxNotifier? _outbox;
 
   /// In-memory entries. Static so the day view and the create-log call
   /// share the same list across repository instances. Deletable when
@@ -121,6 +131,94 @@ class LogRepository {
     _state.add(entry);
     _foodRepo.noteFoodLogged(food.id);
     return entry;
+  }
+
+  /// Patch a log entry. Mirrors `PATCH /log/{id}` from the OpenAPI doc
+  /// (`update_log_entry`). The mock recomputes the frozen nutrition
+  /// snapshot from the (possibly new) serving + quantity against the
+  /// food's `nutritionPer100g`, the same way [create] does — the
+  /// server runs identical math, so the day-view sees identical numbers
+  /// regardless of mock-vs-live wiring (T-17, T-09).
+  ///
+  /// `food_id` is immutable in edit mode (PM ruling). The patch class
+  /// already refuses to serialise one; if a future caller somehow sneaks
+  /// one in via a subclass, the repository asserts loudly.
+  ///
+  /// Throws [LogEntryNotFoundError] when [entryId] is unknown.
+  Future<LogEntry> update(String entryId, LogPatch patch) async {
+    // Defence-in-depth against a caller smuggling in a food swap. The
+    // PM ruling is unambiguous: edit mode never re-keys an entry to a
+    // different food. `LogPatch` enforces this at the wire level by
+    // not modelling a `foodId` field, so the JSON guard below catches
+    // anyone constructing the map directly.
+    if (patch.toJson().containsKey('food_id')) {
+      throw StateError(
+        'LogPatch must not contain food_id — food is immutable on edit.',
+      );
+    }
+    await mockLatency();
+    // TODO(LU-001-wire): replace mock with ApiClient.patch
+    // ('/log/$entryId', patch.toJson())
+    final idx = _state.indexWhere((e) => e.id == entryId);
+    if (idx < 0) throw LogEntryNotFoundError(entryId);
+    final current = _state[idx];
+    final food = _foodRepo.lookup(current.foodId);
+    if (food == null) throw FoodNotFoundError(current.foodId);
+
+    final nextServingId = patch.servingId ?? current.servingId;
+    final serving = food.servings.firstWhere(
+      (s) => s.id == nextServingId,
+      orElse: () => throw FoodNotFoundError(nextServingId ?? '<no-serving>'),
+    );
+
+    final nextConsumedOn = patch.consumedOn ?? current.consumedOn;
+    final nextMeal = patch.meal ?? current.meal;
+    final nextQuantity = patch.quantity ?? current.quantity;
+
+    // Note semantics mirror the wire: an explicit non-null wins, an
+    // explicit `clearNote` clears, otherwise carry the prior value.
+    final String? nextNote;
+    if (patch.note != null) {
+      nextNote = patch.note;
+    } else if (patch.clearNote) {
+      nextNote = null;
+    } else {
+      nextNote = current.note;
+    }
+
+    final now = DateTime.now();
+    final recomputed = computeLogEntry(
+      id: current.id,
+      food: food,
+      serving: serving,
+      consumedOn: DateTime(
+        nextConsumedOn.year,
+        nextConsumedOn.month,
+        nextConsumedOn.day,
+      ),
+      meal: nextMeal,
+      quantity: nextQuantity,
+      createdAt: current.createdAt,
+      note: nextNote,
+    ).copyWith(updatedAt: now);
+    _state[idx] = recomputed;
+    return recomputed;
+  }
+
+  /// True iff [entryId] has an outbox record in `pending` or `failed`
+  /// state. Always false when the repository was constructed without
+  /// an outbox (medium/expanded). The day-view's row tap handler uses
+  /// this to suppress the edit-sheet for rows that haven't synced yet
+  /// (T-22): editing a not-yet-created entry is meaningless, and the
+  /// row's existing "Retry now / Discard" affordances are the right
+  /// interaction for that state.
+  bool isPendingSync(String entryId) {
+    final ox = _outbox;
+    if (ox == null) return false;
+    return ox.state.entries.any((e) =>
+        e.entry.optimisticId == entryId &&
+        (e.status == OutboxEntryStatus.pending ||
+            e.status == OutboxEntryStatus.failed));
   }
 
   /// Delete a log entry. The OpenAPI returns 204 — we return void.

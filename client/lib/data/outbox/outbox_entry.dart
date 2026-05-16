@@ -19,16 +19,24 @@
 class OutboxEntry {
   const OutboxEntry({
     required this.id,
+    required this.optimisticId,
     required this.payload,
     required this.queuedAt,
     this.attempt = 0,
     this.lastError,
   });
 
-  /// Client-generated UUID. Doubles as the optimistic LogEntry id so the
-  /// day-view row can be matched and replaced when the server response
-  /// returns a different server-side id (conflict policy: server wins).
+  /// Client-generated UUID. Persistence key for the Hive box; opaque to
+  /// the UI. Distinct from [optimisticId] because the outbox key is
+  /// stable across hydration but the optimistic id is what the sheet
+  /// returns to the day-view for correlation (T-22 / LU-001).
   final String id;
+
+  /// The same string the log-entry sheet's `_optimisticEntry` writes
+  /// into `LogEntry.id` (`'optimistic_${microsecondsSinceEpoch}'`).
+  /// `LogRepository.isPendingSync(entryId)` matches against this so the
+  /// day-view's pending-sync guard has a key to look against.
+  final String optimisticId;
 
   /// Raw `LogCreate` JSON. Map values are `String | num | bool | null`
   /// only — Hive cannot round-trip arbitrary Dart objects.
@@ -47,6 +55,7 @@ class OutboxEntry {
 
   OutboxEntry copyWith({
     String? id,
+    String? optimisticId,
     Map<String, dynamic>? payload,
     DateTime? queuedAt,
     int? attempt,
@@ -54,6 +63,7 @@ class OutboxEntry {
   }) =>
       OutboxEntry(
         id: id ?? this.id,
+        optimisticId: optimisticId ?? this.optimisticId,
         payload: payload ?? this.payload,
         queuedAt: queuedAt ?? this.queuedAt,
         attempt: attempt ?? this.attempt,
@@ -64,14 +74,21 @@ class OutboxEntry {
 
   Map<String, dynamic> toJson() => <String, dynamic>{
         'id': id,
+        'optimisticId': optimisticId,
         'payload': payload,
         'queuedAt': queuedAt.toIso8601String(),
         'attempt': attempt,
         if (lastError != null) 'lastError': lastError,
       };
 
+  /// Hive rehydration. Pre-LU-001 entries (written before `optimisticId`
+  /// existed) fall back to using `id` as the optimistic id — that
+  /// matches the old behaviour where the outbox `id` and the optimistic
+  /// `LogEntry.id` were conceptually the same value.
   factory OutboxEntry.fromJson(Map<String, dynamic> json) => OutboxEntry(
         id: json['id'] as String,
+        optimisticId:
+            (json['optimisticId'] as String?) ?? (json['id'] as String),
         payload: Map<String, dynamic>.from(json['payload'] as Map),
         queuedAt: DateTime.parse(json['queuedAt'] as String),
         attempt: (json['attempt'] as num?)?.toInt() ?? 0,
@@ -83,12 +100,14 @@ class OutboxEntry {
       identical(this, other) ||
       other is OutboxEntry &&
           other.id == id &&
+          other.optimisticId == optimisticId &&
           other.queuedAt == queuedAt &&
           other.attempt == attempt &&
           other.lastError == lastError;
 
   @override
-  int get hashCode => Object.hash(id, queuedAt, attempt, lastError);
+  int get hashCode =>
+      Object.hash(id, optimisticId, queuedAt, attempt, lastError);
 }
 
 const Object _sentinel = Object();

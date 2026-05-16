@@ -113,6 +113,49 @@ enum NutriscoreGrade {
   }
 }
 
+/// User-selected weight display unit. Persists on `User.weight_unit`.
+/// Wire string: lowercase enum name (`'kg' | 'lb' | 'st'`).
+///
+/// The single seam where the kg-only assumption is lifted is
+/// `domain/units/weight.dart` — `formatWeight(kg, unit)` and
+/// `parseWeightToKg(input, unit)` branch on this enum. Widgets never
+/// inspect the unit to multiply / divide; they call the helper.
+///
+/// `kg` is the on-wire canonical unit (`WeightEntry.weight_kg`,
+/// `Goal.start_weight_kg`, etc.) per the Display Units Principle.
+/// `lb` and `st` are display-only; the wire never sees them.
+enum WeightUnit {
+  kg,
+  lb,
+  st;
+
+  String get wire => name;
+
+  /// User-facing short label rendered in chooser rows + suffixes.
+  /// kg → "kg", lb → "lb", st → "st".
+  String get shortLabel => name;
+
+  /// Long-form for `Semantics` labels — "kilograms", "pounds",
+  /// "stones and pounds". T-20.
+  String get longLabel {
+    switch (this) {
+      case WeightUnit.kg:
+        return 'kilograms';
+      case WeightUnit.lb:
+        return 'pounds';
+      case WeightUnit.st:
+        return 'stones and pounds';
+    }
+  }
+
+  static WeightUnit fromWire(String wire) {
+    for (final v in WeightUnit.values) {
+      if (v.name == wire) return v;
+    }
+    throw ArgumentError.value(wire, 'wire', 'Unknown WeightUnit');
+  }
+}
+
 /// Goal direction. Not on the wire — the API stores rate as a signed
 /// `weekly_rate_kg` and lets the client interpret direction from sign.
 /// This client enum is the screen-facing presentation model used by
