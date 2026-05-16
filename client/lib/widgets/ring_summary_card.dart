@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../domain/day_summary.dart';
 import '../domain/units/energy.dart';
 import '../providers/calorie_providers.dart';
+import '../providers/log_providers.dart';
 import '../theme/context_extensions.dart';
 import 'calorie_ring.dart';
 import 'macro_bar.dart';
@@ -80,6 +81,11 @@ class RingSummaryCard extends StatelessWidget {
               Expanded(child: _KvBlock(summary: summary, compact: compact)),
             ],
           ),
+          // UX-110 / F10 — "N / 7 days logged this week" pill. Renders
+          // between the ring row and the macro bars on both compact and
+          // expanded card paths. Hidden when the week count is 0; ink2
+          // for 1..6, accent at 7. See architect_ux_pack.md §7.3.
+          const _WeekProgressPill(),
           SizedBox(height: compact ? context.space.x2 + 2 : context.space.x4),
           _MacroBars(summary: summary, compact: compact),
         ],
@@ -307,5 +313,71 @@ class _MacroBars extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+/// "N / 7 days logged this week" pill — F10 (UX-110). Renders inside
+/// [RingSummaryCard] between the ring row and the macro bars; mount
+/// site is shared by compact and expanded card paths. Hidden when the
+/// week count is 0 (the empty-state ring already carries enough
+/// signal); rendered in `ink2` for 1..6; rendered in `accent` at 7.
+///
+/// **Not routable.** PM doc §2 F10 AC: the pill is read-only — no
+/// `InkWell`, no `GestureDetector`, no tap target. The screen-reader
+/// announcement is a single Semantics node ("This week, four of seven
+/// days logged" — T-20); the inner Text Semantics are excluded so the
+/// node is the only announcement surface.
+///
+/// **No celebration.** PM doc §2 F10 forbids animation, scale, fire
+/// emoji, or haptic at 7/7. The accent colour switch is the entire
+/// signal.
+class _WeekProgressPill extends ConsumerWidget {
+  const _WeekProgressPill();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final countAsync = ref.watch(weeklyLogDaysProvider);
+    final count = countAsync.valueOrNull ?? 0;
+    // Hidden at 0 (PM doc §2 F10 AC). Loading and error states also
+    // fall through here — a transient blink before the count resolves
+    // is the right behavior; the next mutation re-ticks the provider.
+    if (count == 0) return const SizedBox.shrink();
+    final colors = context.colors;
+    final isFullWeek = count == 7;
+    return Padding(
+      padding: EdgeInsets.only(top: context.space.x1),
+      child: Semantics(
+        container: true,
+        label: 'This week, ${_spellSmallNumber(count)} of seven days logged',
+        excludeSemantics: true,
+        child: Text(
+          'This week · $count/7 days logged',
+          style: context.text.meta.copyWith(
+            color: isFullWeek ? colors.accent : colors.ink2,
+            fontWeight: isFullWeek ? FontWeight.w600 : FontWeight.w400,
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Spell 1..7 for the Semantics label so the screen-reader reads
+  /// "four of seven days logged" rather than "4 of 7 days logged"
+  /// (which TalkBack / VoiceOver render as "four of seven" but
+  /// inconsistently across locales). The visible Text keeps the
+  /// numeric form for compactness.
+  static String _spellSmallNumber(int n) {
+    const words = <String>[
+      'zero',
+      'one',
+      'two',
+      'three',
+      'four',
+      'five',
+      'six',
+      'seven',
+    ];
+    if (n < 0 || n >= words.length) return '$n';
+    return words[n];
   }
 }

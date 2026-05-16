@@ -9,6 +9,7 @@ import '../domain/log_entry.dart';
 import '../domain/meal.dart';
 import '../domain/units/energy.dart';
 import '../theme/context_extensions.dart';
+import 'icon_button_36.dart';
 import 'motion.dart';
 
 /// One meal section card: header (dot + name + kcal total) → list of food
@@ -32,6 +33,8 @@ class MealSection extends StatelessWidget {
     this.dense = false,
     this.onEntryTap,
     this.isPendingSync,
+    this.onCopyMeal,
+    this.canCopyMeal,
     super.key,
   });
 
@@ -62,6 +65,24 @@ class MealSection extends StatelessWidget {
   /// `true` slims the vertical padding for the expanded 2×2 grid.
   final bool dense;
 
+  /// UX-106 F1 — per-meal copy-day entry surface. When non-null, the
+  /// `_Header` renders a 36-px `IconButton36` (`Icons.more_horiz_outlined`)
+  /// to the right of the kcal subtotal whose `showMenu` exposes a single
+  /// "Copy <Meal> from…" item. Selecting that item invokes
+  /// `onCopyMeal(meal)` — the day view threads `(m) => showCopyDaySheet(
+  /// context, targetDate: date, preselectMeals: [m])`. Null = the overflow
+  /// icon is not rendered (back-compat for test fixtures that don't opt
+  /// in). Architect §3.4 (A).
+  final void Function(Meal meal)? onCopyMeal;
+
+  /// Optional predicate that gates the overflow icon's enabled state
+  /// (greyed when false). Null = always enabled. UX-106 ships without
+  /// the predicate wired from the day views (architect §3.4 (A) deferred);
+  /// the parameter is part of the public API so future tickets can
+  /// flip a 14-day-window-by-meal predicate in without a constructor
+  /// change.
+  final bool Function(Meal meal)? canCopyMeal;
+
   @override
   Widget build(BuildContext context) {
     final colors = context.colors;
@@ -78,7 +99,13 @@ class MealSection extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
-          _Header(meal: subtotal.meal, kcal: subtotal.kcal, isEmpty: isEmpty),
+          _Header(
+            meal: subtotal.meal,
+            kcal: subtotal.kcal,
+            isEmpty: isEmpty,
+            onCopyMeal: onCopyMeal,
+            canCopyMeal: canCopyMeal,
+          ),
           for (final entry in entries)
             _EntryRow(
               entry: entry,
@@ -98,17 +125,29 @@ class _Header extends StatelessWidget {
     required this.meal,
     required this.kcal,
     required this.isEmpty,
+    this.onCopyMeal,
+    this.canCopyMeal,
   });
 
   final Meal meal;
   final Decimal kcal;
   final bool isEmpty;
 
+  /// UX-106 — when non-null the header renders the trailing overflow
+  /// icon. The icon's `showMenu` is rooted on its render box; selecting
+  /// "Copy <Meal> from…" calls this back.
+  final void Function(Meal meal)? onCopyMeal;
+
+  /// Optional predicate gating the overflow icon's enabled state.
+  /// Null = enabled.
+  final bool Function(Meal meal)? canCopyMeal;
+
   @override
   Widget build(BuildContext context) {
     final colors = context.colors;
     final dotColor = isEmpty ? colors.emptyDot : colors.accent;
     final kcalText = formatKcal(kcal);
+    final canCopy = canCopyMeal?.call(meal) ?? true;
 
     return Padding(
       padding: EdgeInsets.fromLTRB(
@@ -149,11 +188,106 @@ class _Header extends StatelessWidget {
               ],
             ),
           ),
+          if (onCopyMeal != null) ...<Widget>[
+            SizedBox(width: context.space.x2),
+            _CopyMealOverflow(
+              meal: meal,
+              canCopy: canCopy,
+              onCopyMeal: onCopyMeal!,
+            ),
+          ],
         ],
       ),
     );
   }
 }
+
+/// UX-106 F1 — the trailing 36-px overflow icon on a `_Header` whose
+/// `showMenu` opens a single-item popup: "Copy <Meal> from…". Tapping
+/// the menu item invokes [onCopyMeal] with the section's [meal] — the
+/// day view threads that to `showCopyDaySheet(context, targetDate: date,
+/// preselectMeals: [meal])` (architect §3.4 (A)). The icon greys when
+/// [canCopy] is false, but the tap still fires (the predicate is a hint
+/// — the sheet's empty-source state is the fallback UX, per architect
+/// §3.4 (A) deferral notes). T-06 honoured via `IconButton36`'s 44-px
+/// hit slop; T-20 honoured via the per-meal tooltip.
+class _CopyMealOverflow extends StatelessWidget {
+  const _CopyMealOverflow({
+    required this.meal,
+    required this.canCopy,
+    required this.onCopyMeal,
+  });
+
+  final Meal meal;
+  final bool canCopy;
+  final void Function(Meal meal) onCopyMeal;
+
+  Future<void> _open(BuildContext context) async {
+    final overlay =
+        Overlay.of(context, rootOverlay: true).context.findRenderObject()
+            as RenderBox?;
+    final button = context.findRenderObject() as RenderBox?;
+    if (overlay == null || button == null) {
+      // Fallback: fire the copy callback directly so the affordance is
+      // still actionable when the test harness doesn't render an
+      // Overlay (defensive — production always has one).
+      onCopyMeal(meal);
+      return;
+    }
+    final position = RelativeRect.fromRect(
+      Rect.fromPoints(
+        button.localToGlobal(Offset.zero, ancestor: overlay),
+        button.localToGlobal(button.size.bottomRight(Offset.zero),
+            ancestor: overlay),
+      ),
+      Offset.zero & overlay.size,
+    );
+    final colors = context.colors;
+    final selected = await showMenu<_CopyMealAction>(
+      context: context,
+      position: position,
+      items: <PopupMenuEntry<_CopyMealAction>>[
+        PopupMenuItem<_CopyMealAction>(
+          key: Key('copy-meal-menu-item-${meal.wire}'),
+          value: _CopyMealAction.copyFrom,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Icon(
+                Icons.content_copy_outlined,
+                size: 16,
+                color: colors.ink2,
+              ),
+              const SizedBox(width: 12),
+              Text('Copy ${meal.label} from…'),
+            ],
+          ),
+        ),
+      ],
+    );
+    if (selected == _CopyMealAction.copyFrom) {
+      onCopyMeal(meal);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.colors;
+    return IconButton36(
+      key: Key('copy-meal-overflow-${meal.wire}'),
+      icon: Icons.more_horiz_outlined,
+      tooltip: 'Copy ${meal.label} from…',
+      onPressed: () => _open(context),
+      color: canCopy ? colors.ink2 : colors.ink2.withValues(alpha: 0.5),
+    );
+  }
+}
+
+/// One-action enum for the per-meal copy overflow's `showMenu`. A single
+/// member today; defining a typed enum keeps `showMenu<T>` typed and
+/// makes a v1.1 "Copy from yesterday" / "Pick a different day" split
+/// purely additive.
+enum _CopyMealAction { copyFrom }
 
 /// A single logged-entry row inside a `MealSection`.
 ///

@@ -307,9 +307,8 @@ class _CopyDaySheetState extends ConsumerState<CopyDaySheet> {
         ..invalidate(daySummaryProvider(widget.targetDate))
         ..invalidate(logEntriesProvider(widget.targetDate))
         ..invalidate(recentFoodsProvider)
-        ..invalidate(frequentFoodsProvider);
-      // TODO(UX-110): once weeklyLogDaysProvider lands, add the
-      // invalidation line here.
+        ..invalidate(frequentFoodsProvider)
+        ..invalidate(weeklyLogDaysProvider);
 
       // T-24 Case 2 — route-to-effect.
       //

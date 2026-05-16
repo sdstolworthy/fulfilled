@@ -114,6 +114,8 @@ class LogRepository {
   /// - `logEntriesProvider(consumedOn)` — the meal section list.
   /// - `recentFoodsProvider` — the logged food jumps to the head.
   /// - `frequentFoodsProvider` — the food's frequency count ticked.
+  /// - `weeklyLogDaysProvider` — the entry's date may flip from
+  ///   zero-entries to one+, bumping the 0–7 week count (UX-110 / F10).
   ///
   /// Call sites are responsible for invalidating per T-18 (minimal +
   /// explicit); this list is the **contract** the call site reads. A
@@ -176,6 +178,8 @@ class LogRepository {
   ///   the originating date's list must drop the moved entry.
   /// - `recentFoodsProvider` — the row's food may shift rank.
   /// - `frequentFoodsProvider` — same.
+  /// - `weeklyLogDaysProvider` — an update that changes `consumed_on`
+  ///   could shift the week-day count (UX-110 / F10).
   ///
   /// Call sites are responsible for invalidating per T-18 (minimal +
   /// explicit); this list is the **contract** the call site reads. A
@@ -266,6 +270,8 @@ class LogRepository {
   ///   the deleted entry's date.
   /// - `recentFoodsProvider` — the row's food may shift rank.
   /// - `frequentFoodsProvider` — same.
+  /// - `weeklyLogDaysProvider` — deleting the only entry on a date drops
+  ///   that day from the week-count (UX-110 / F10).
   ///
   /// Call sites are responsible for invalidating per T-18 (minimal +
   /// explicit); this list is the **contract** the call site reads. A
@@ -288,6 +294,8 @@ class LogRepository {
   /// - `recentFoodsProvider` — `noteFoodLogged` runs, so the food
   ///   jumps to the head of recent.
   /// - `frequentFoodsProvider` — same; the frequency count ticks.
+  /// - `weeklyLogDaysProvider` — the optimistic entry's date may flip
+  ///   from zero-entries to one+, bumping the week count (UX-110 / F10).
   ///
   /// Call sites are responsible for invalidating per T-18 (minimal +
   /// explicit); this list is the **contract** the call site reads. A
@@ -328,9 +336,8 @@ class LogRepository {
   /// - `recentFoodsProvider` — the copied foods bump rank.
   /// - `frequentFoodsProvider` — the copied foods' frequency ticks.
   /// - `weeklyLogDaysProvider` — the target day may flip from
-  ///   zero-entries to one+, affecting the 0–7 week count. (Added when
-  ///   UX-110 lands; the provider does not yet exist. UX-105 ships the
-  ///   four other invalidations and this forward-referenced line.)
+  ///   zero-entries to one+, affecting the 0–7 week count (UX-110 /
+  ///   F10).
   ///
   /// Notably **not** invalidated: `daySummaryProvider(sourceDate)` /
   /// `logEntriesProvider(sourceDate)` — the source day is read-only.
@@ -400,6 +407,53 @@ class LogRepository {
     //    requested count from the source meal-filter and compares.
     return created;
   }
+
+  /// Count distinct dates in the current local week (Mon–Sun) that
+  /// have at least one log entry. Returns 0..7.
+  ///
+  /// Backs `weeklyLogDaysProvider` (UX-110 / F10 — architect §7.2). The
+  /// mock walks the in-memory `_state`; the live client (post-BE-002)
+  /// will swap to `GET /me/weekly-logging` and the provider's behaviour
+  /// is unchanged.
+  ///
+  /// The week is Monday–Sunday in the caller's local time zone (PM
+  /// ruling, architect §12.2 resolution). [now] defaults to
+  /// `DateTime.now()`; tests inject a fixed clock so the week boundary
+  /// is deterministic.
+  Future<int> weeklyLogDayCount({DateTime? now}) async {
+    await mockLatency();
+    final clockNow = now ?? DateTime.now();
+    final weekStart = _mondayOfWeek(clockNow);
+    final weekEnd = weekStart.add(const Duration(days: 7));
+    final daysLogged = <int>{};
+    for (final e in _state) {
+      final on = DateTime(
+        e.consumedOn.year,
+        e.consumedOn.month,
+        e.consumedOn.day,
+      );
+      if (on.isBefore(weekStart)) continue;
+      if (!on.isBefore(weekEnd)) continue;
+      daysLogged.add(_dayKey(on));
+    }
+    return daysLogged.length;
+  }
+
+  /// Local midnight on the Monday of the week containing [now]. Dart's
+  /// `DateTime` rolls negative `day` arguments back into the prior
+  /// month/year correctly (e.g. `DateTime(2026, 1, 1 - 3)` →
+  /// `DateTime(2025, 12, 29)`), so this works across month and year
+  /// boundaries without special-casing.
+  DateTime _mondayOfWeek(DateTime now) {
+    // DateTime.weekday: Monday = 1, Sunday = 7.
+    final daysSinceMonday = now.weekday - 1;
+    return DateTime(now.year, now.month, now.day - daysSinceMonday);
+  }
+
+  /// Unique integer key per local calendar date. Distinguishes any two
+  /// dates within the seven-day window; the exact formula doesn't
+  /// matter so long as it's collision-free over a week.
+  int _dayKey(DateTime d) => d.year * 1000 + d.month * 32 + d.day;
 
   // Test seam — let tests reset the in-memory list to a clean seed
   // without rebuilding the whole repository.

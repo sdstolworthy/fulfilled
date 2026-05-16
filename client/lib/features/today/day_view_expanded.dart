@@ -25,13 +25,18 @@ import '../log_entry/log_entry_sheet.dart';
 import '../quick_add/quick_add_sheet.dart';
 import 'today_internals.dart';
 import 'package:fulfilled/widgets/quick_add_chips.dart';
+import 'widgets/copy_day_sheet.dart';
 import 'widgets/mini_weight_sparkline.dart';
 
 /// Expanded (desktop / iPad-landscape) variant of screen 01.
 ///
-/// Layout per `screen_01_day_view_web.html`:
+/// Layout per `screen_01_day_view_web.html`, post-UX-104:
 /// - Top bar (rendered by `AppScaffold.topBarTrailing`): page title +
-///   date chevrons + search input stub + primary "Log food" button.
+///   single tappable `DatePill` (+ optional `TodayPill` on backdated
+///   views) + search input stub + primary "Log food" button. The prior
+///   chevron-flanked date title is gone; per-day navigation is the
+///   swipe gesture (UX-103) or the date picker the `DatePill` tap
+///   opens.
 /// - Body: 2-column content. Left = 2×2 meal grid. Right rail (≥ 1024
 ///   only) = stack of three cards: ring-summary, quick-add chips, mini
 ///   weight sparkline.
@@ -85,7 +90,18 @@ class DayViewExpanded extends ConsumerWidget {
                 children: <Widget>[
                   Text('Today', style: context.text.pageTitle),
                   const Spacer(),
-                  _DateChevrons(date: date),
+                  // UX-104 — replaces the prior `_DateChevrons` cluster
+                  // (chevron + boxed date title + chevron). The single
+                  // `DatePill` is the date affordance; tap opens a date
+                  // picker bounded to [today - 60 days, today]. Per-day
+                  // navigation is the swipe gesture (UX-103). The
+                  // `TodayPill` continues to flank the pill on backdated
+                  // views — QL-009 behaviour unchanged.
+                  DatePill(date: date),
+                  if (!isLocalNowDay(date)) ...<Widget>[
+                    SizedBox(width: context.space.x2),
+                    const TodayPill(),
+                  ],
                   SizedBox(width: context.space.x4),
                   _TopSearchField(
                     onTap: () => context.push(Routes.foodsSearchPath),
@@ -159,93 +175,6 @@ class DayViewExpanded extends ConsumerWidget {
           ),
         );
       },
-    );
-  }
-}
-
-class _DateChevrons extends StatelessWidget {
-  const _DateChevrons({required this.date});
-  final DateTime date;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = context.colors;
-    final showTodayPill = !isLocalNowDay(date);
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: <Widget>[
-        _Chevron(
-          icon: Icons.chevron_left,
-          tooltip: 'Previous day',
-          onTap: () => navigateDay(context, date, -1),
-        ),
-        SizedBox(width: context.space.x2),
-        Container(
-          padding: EdgeInsets.symmetric(
-            horizontal: context.space.x3,
-            vertical: context.space.x1 + 2,
-          ),
-          decoration: BoxDecoration(
-            color: colors.surface,
-            border: Border.all(color: colors.line),
-            borderRadius: BorderRadius.circular(context.radius.r1),
-          ),
-          child: Text(
-            todayHeadline(date),
-            style: context.text.meta.copyWith(
-              color: colors.ink,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ),
-        // QL-106 — pill renders to the right of the date title, before
-        // the forward chevron, only when the rendered date isn't the
-        // local-now day. Same render rule as compact.
-        if (showTodayPill) ...<Widget>[
-          SizedBox(width: context.space.x2),
-          const TodayPill(),
-        ],
-        SizedBox(width: context.space.x2),
-        _Chevron(
-          icon: Icons.chevron_right,
-          tooltip: 'Next day',
-          onTap: () => navigateDay(context, date, 1),
-        ),
-      ],
-    );
-  }
-}
-
-class _Chevron extends StatelessWidget {
-  const _Chevron({
-    required this.icon,
-    required this.tooltip,
-    required this.onTap,
-  });
-  final IconData icon;
-  final String tooltip;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = context.colors;
-    return Tooltip(
-      message: tooltip,
-      child: InkResponse(
-        onTap: onTap,
-        radius: 22,
-        child: Container(
-          width: 30,
-          height: 30,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: colors.surface,
-            border: Border.all(color: colors.line),
-            borderRadius: BorderRadius.circular(context.radius.r1),
-          ),
-          child: Icon(icon, size: 16, color: colors.ink2),
-        ),
-      ),
     );
   }
 }
@@ -389,6 +318,16 @@ class _MealGrid extends StatelessWidget {
             onEntryTap: onEntryTap,
             isPendingSync: isPendingSync,
             dense: true,
+            // UX-106 F1 — per-meal copy-day overflow renders on the
+            // expanded card too. The empty-day "Copy from another day"
+            // affordance is compact-only (architect §3.4 (B) — the
+            // expanded grid always shows all five cards, so the
+            // per-meal path is the right scope on expanded).
+            onCopyMeal: (m) => showCopyDaySheet(
+              context,
+              targetDate: date,
+              preselectMeals: <Meal>[m],
+            ),
           ),
       ],
     );

@@ -1,14 +1,19 @@
-// UX-102 — Compact header decluttering (avatar cut + bolt → FAB).
+// UX-102 / UX-104 — Compact header decluttering (avatar cut + bolt →
+// FAB) and chevron-merge.
 //
-// Acceptance per the ticket:
-// 1. The avatar `Container` block is gone from `_CompactHeader` — no
-//    finder picks it up under the compact day-view subtree.
+// Acceptance per the tickets:
+// 1. The avatar `Container` block is gone from the header — no finder
+//    picks it up under the compact day-view subtree.
 // 2. The bolt `IconButton36` (`Icons.bolt_outlined`) is gone from the
 //    header. The search `IconButton36` stays.
-// 3. The `RingSummaryCard`'s top-edge paints within 320 vertical px
-//    of the safe-area top on a Pixel 4a reference viewport (393×851).
-//    This is the avatar-cut-only ceiling; UX-104's chevron-merge
-//    tightens the assertion to 280 px in a follow-up.
+// 3. UX-104 — neither chevron icon (`Icons.chevron_left` /
+//    `Icons.chevron_right`) is anywhere in the compact day view's tree;
+//    the chevron pair was the load-bearing per-day navigation in the
+//    pre-UX-104 `_DateBar` and is now replaced by `DatePill`'s tap +
+//    UX-103's swipe.
+// 4. The `RingSummaryCard`'s top-edge paints within the cumulative
+//    UX-102 + UX-104 ceiling (280 px) of the safe-area top on a
+//    Pixel 4a reference viewport (393×851).
 //
 // The avatar block had no `Key` in the pre-UX-102 code, so the "no
 // avatar" assertion is two-pronged: (a) the placeholder text "SS" is
@@ -185,8 +190,51 @@ void main() {
       expect(find.byIcon(Icons.search), findsOneWidget);
     });
 
+    testWidgets('chevron icons are absent from the day-view header',
+        (tester) async {
+      tester.view.physicalSize = const Size(393, 851);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final router = _router();
+      await tester.pumpWidget(
+        _harness(router: router, overrides: _baselineOverrides()),
+      );
+      await tester.pumpAndSettle();
+
+      // UX-104 removes the chevron `IconButton36` pair from `_DateBar`.
+      // Per-day navigation is now swipe (UX-103) or the date picker
+      // (`DatePill` tap).
+      //
+      // We scope the assertion to icons painted *above* the ring summary
+      // card's top edge — that's the day-view header band. (The
+      // `_EmptyDayCopyFromButton`, landed by UX-106 in the empty-day
+      // pill below the ring, includes its own `Icons.chevron_right`
+      // glyph; that's unrelated to the chevron pair this assertion
+      // targets.)
+      final ringTopY = tester.getTopLeft(find.byType(RingSummaryCard)).dy;
+      final chevronLeftAbove = find.byIcon(Icons.chevron_left).evaluate().where(
+            (e) {
+              final ro = e.renderObject;
+              if (ro is! RenderBox || !ro.attached) return false;
+              return ro.localToGlobal(Offset.zero).dy < ringTopY;
+            },
+          );
+      final chevronRightAbove =
+          find.byIcon(Icons.chevron_right).evaluate().where(
+        (e) {
+          final ro = e.renderObject;
+          if (ro is! RenderBox || !ro.attached) return false;
+          return ro.localToGlobal(Offset.zero).dy < ringTopY;
+        },
+      );
+      expect(chevronLeftAbove, isEmpty);
+      expect(chevronRightAbove, isEmpty);
+    });
+
     testWidgets(
-      'ring paints within 320 px of safe-area top on Pixel 4a viewport',
+      'ring paints within 280 px of safe-area top on Pixel 4a viewport',
       (tester) async {
         tester.view.physicalSize = const Size(393, 851);
         tester.view.devicePixelRatio = 1.0;
@@ -202,17 +250,19 @@ void main() {
         // The `RingSummaryCard`'s top-edge global y-coordinate is the
         // distance from the viewport's top — which in this harness has
         // no safe-area inset, so it equals the safe-area-top offset.
-        // The avatar cut alone targets the 320 px ceiling (architect
-        // §6.1 + §6.6 PR 2 AC). UX-104's chevron-merge tightens to
-        // 280 px in a follow-up.
+        // Architect §6.1 + §6.6 PR 4 AC: the cumulative UX-102 +
+        // UX-104 target is 280 px (the chevron-merge collapses the
+        // separate `_CompactHeader` row into the `_DateBar` band, so
+        // the ring rises by ~one row of chrome relative to UX-102's
+        // 320 px floor).
         final ringTopY =
             tester.getTopLeft(find.byType(RingSummaryCard)).dy;
         expect(
           ringTopY,
-          lessThanOrEqualTo(320),
+          lessThanOrEqualTo(280),
           reason:
-              'RingSummaryCard top-edge should be within 320 px of the '
-              'safe-area top after UX-102; was $ringTopY',
+              'RingSummaryCard top-edge should be within 280 px of the '
+              'safe-area top after UX-104; was $ringTopY',
         );
       },
     );

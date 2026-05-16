@@ -115,6 +115,30 @@ class CopyDayPreviewKey {
   }
 }
 
+/// Days with at least one log entry in the current local week
+/// (Mon–Sun). F10 from `architect_ux_pack.md` §7 — backs the
+/// `_WeekProgressPill` inside `RingSummaryCard`.
+///
+/// Returns `0..7`. The pill is hidden at 0; renders
+/// `"This week · N/7 days logged"` for 1..6 in `ink2`; renders in
+/// `accent` at 7.
+///
+/// **Invalidation.** Every `LogRepository` mutator (`create`, `update`,
+/// `delete`, `copyDay`, `adoptOptimistic`) lists this provider in its
+/// `@invalidates` block — log entries appearing or disappearing can
+/// shift the week-day count. Call sites invalidate per T-18.
+///
+/// **Local-now dependency.** `weeklyLogDayCount` reads
+/// `DateTime.now()` at request time, so a long-lived provider would
+/// stale across midnight. In practice the foreground-resume path that
+/// invalidates `daySummaryProvider` will be extended (v1.1) to
+/// invalidate this provider too. For v1 the pill re-ticks on every
+/// mutation, which dominates user-perceived freshness.
+final weeklyLogDaysProvider = FutureProvider<int>((ref) {
+  final repo = ref.watch(logRepositoryProvider);
+  return repo.weeklyLogDayCount();
+});
+
 /// Drives the live "N entries · M kcal" line in `CopyDaySheet`. The
 /// family is re-keyed on every source-date scrub or chip toggle; the
 /// preview re-runs and the sheet rebuilds. Reading existing in-memory

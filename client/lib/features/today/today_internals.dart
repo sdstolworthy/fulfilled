@@ -31,6 +31,15 @@ String todayHeadline(DateTime date) {
 String todaySubline(DateTime date) =>
     DateFormat('EEEE, MMM d').format(date);
 
+/// Single-line pill label for [DatePill] — `"Today"` on the local-now day,
+/// otherwise `"EEE, MMM d"` (e.g. `"Wed, May 14"`). UX-104 collapses the
+/// old eyebrow + sub-line stack into one line; the pill is the only date
+/// affordance now that the chevrons are gone.
+String datePillLabel(DateTime date) {
+  if (isLocalNowDay(date)) return 'Today';
+  return DateFormat('EEE, MMM d').format(date);
+}
+
 /// Group entries by meal, preserving incoming order within each meal.
 /// `logEntriesProvider` already sorts newest-first by `createdAt`, so the
 /// caller gets that order inside each meal bucket.
@@ -283,6 +292,103 @@ class TodayPill extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+/// Tappable date title for the day view. Renders [datePillLabel] —
+/// `"Today"` on the local-now day, otherwise `"EEE, MMM d"` (e.g.
+/// `"Wed, May 14"`). On tap: opens `showDatePicker` bounded to
+/// `[today - 60 days, today]`. The picker's return value, if non-null,
+/// routes via [pathForDay].
+///
+/// UX-104 — collapses three focusable nodes (title eyebrow, sub-line,
+/// chevron-left, chevron-right) into one Semantics button node (T-20).
+/// Per-day navigation is now either the swipe gesture (UX-103's
+/// [DaySwipeWrap]) or the date picker (this widget's tap). The 60-day
+/// floor matches QL-009's [TodayPill] backdate range — architect §3.4
+/// (C) names the symmetry.
+class DatePill extends StatelessWidget {
+  const DatePill({required this.date, super.key});
+
+  /// The date the surrounding day view is rendering. The picker opens
+  /// pre-seeded to this date.
+  final DateTime date;
+
+  /// Architect §6.3 — the picker's `firstDate`. 60 days back from the
+  /// current local-now day matches QL-009's backdate range and the
+  /// `CopyDaySheet`'s source-date floor (UX-105).
+  static const int _firstDateDaysBack = 60;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.colors;
+    final space = context.space;
+    final radius = context.radius;
+    final label = datePillLabel(date);
+    return Semantics(
+      container: true,
+      button: true,
+      label: '$label, open date picker',
+      excludeSemantics: true,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          key: const Key('date-pill'),
+          borderRadius: BorderRadius.circular(radius.rPill),
+          onTap: () => _openPicker(context),
+          child: Container(
+            padding: EdgeInsets.symmetric(
+              horizontal: space.x3,
+              vertical: space.x1 + 2,
+            ),
+            decoration: BoxDecoration(
+              color: colors.surface,
+              border: Border.all(color: colors.line),
+              borderRadius: BorderRadius.circular(radius.rPill),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                Text(
+                  label,
+                  style: context.text.meta.copyWith(
+                    color: colors.ink,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                SizedBox(width: space.x1 + 2),
+                Icon(
+                  Icons.expand_more,
+                  size: 16,
+                  color: colors.ink2,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openPicker(BuildContext context) async {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final firstDate = today.subtract(const Duration(days: _firstDateDaysBack));
+    // `showDatePicker` asserts `firstDate <= initialDate <= lastDate`.
+    // Clamp the seed in case the surrounding day view was navigated to a
+    // date outside the 60-day window (e.g. via a stale deep link).
+    DateTime initial = DateTime(date.year, date.month, date.day);
+    if (initial.isBefore(firstDate)) initial = firstDate;
+    if (initial.isAfter(today)) initial = today;
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: firstDate,
+      lastDate: today,
+    );
+    if (picked != null && context.mounted) {
+      context.go(pathForDay(picked));
+    }
   }
 }
 

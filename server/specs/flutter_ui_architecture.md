@@ -390,7 +390,7 @@ The non-negotiables. Number them so review comments can cite them by ID (e.g., "
 
 11. **T-11 Errors are inline, not modal.** Per-field errors live under the field (red `help` text + red border, see screen 05). Save failures show a `SnackBar` that doesn't dismiss the sheet. Modals (`AlertDialog`) are reserved for destructive confirmation (delete log entry, sign out, delete goal).
 
-12. **T-12 The FAB is the only floating action.** No floating help buttons, no floating dismissers, no floating "back". Sticky bottom CTAs (`PrimaryButton`) sit inside a `BottomAppBar`-shaped footer with a top divider — they are not floating.
+12. **T-12 The FAB is the only floating action.** No floating help buttons, no floating dismissers, no floating "back". Sticky bottom CTAs (`PrimaryButton`) sit inside a `BottomAppBar`-shaped footer with a top divider — they are not floating. *T-12 (clarifying rider, 2026-05-16 UX pack). A long-press on the FAB may surface a momentary modal menu (e.g., `showMenu`'s popup-route surface) exposing secondary actions — as shipped by `LogFoodFab` in UX-102. The menu is a route-modal, not a floating widget; the rule against floating affordances applies to persistent ones, not momentary ones.*
 
 13. **T-13 No spinners on a populated list.** A list with data + a pending refresh shows a `RefreshIndicator` on mobile and a quiet 2-px top progress bar on web. Never replace existing content with a spinner.
 
@@ -513,6 +513,8 @@ Things the designer did not specify or where I'm making an architectural call th
 > **Addendum applied 2026-05-16** — Features A and B from `specs/pm_log_edit_and_units.md` / `specs/architect_log_edit_and_units.md` shipped. Item **8**'s "kg-only in v1" rider is superseded: body weight is now user-selectable (`kg` / `lb` / `st`) per `User.weight_unit`, with a locale-aware default at first onboarding submit. The OFF→mg sodium conversion remains the original §4 ruling and is untouched. T-21 wording updated above; the §3 component inventory now lists `WeightStepper`; PM Risk 4's "lb deferred to v2" rider is marked **resolved** in `specs/pm_decisions_flutter_ui.md`. No new tenants — §5 of the architect plan confirmed that the existing T-21 / T-22 cover the surface (edit-mode reuses `LogEntrySheet` via `existing:`, and the outbox does **not** queue edits — pending rows are gated by their `isPendingSync` flag, matching T-22). Backend ticket **BE-001** (Rust migration adding `weight_unit`) is pending; the client tolerates a missing field by defaulting to `kg` until it lands.
 >
 > **Addendum applied 2026-05-16 (QoL pack)** — see `specs/architect_qol.md` / `specs/dev_tickets_qol.md`. T-24 added; no other tenants. The per-screen briefs gain `Post-save:` annotations; no shape changes. The Refactor 3 (`@invalidates` doc-tag) pass is documentation-only and lives in the repository dartdocs — there is no spec surface change beyond what this addendum names. QL-105 lands the only behavioural consumer of T-24 (the `LogEntrySheet` save → `context.go('/today/:consumedOn')` swap, Case 2).
+>
+> **Addendum applied 2026-05-16 (UX pack)** — see `specs/architect_ux_pack.md` §10.1 / `specs/dev_tickets_ux_pack.md` UX-113. T-12 was refined with a clarifying rider naming the FAB long-press menu in `LogFoodFab` (UX-102) as a route-modal that stays inside the rule. No other tenant changes; no renumbering.
 
 1. **Over-budget macro behavior.** **RESOLVED (PM Risk 1):** strict `value > target`, no tolerance. T-05 already encodes this.
 

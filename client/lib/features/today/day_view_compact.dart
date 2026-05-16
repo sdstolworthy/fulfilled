@@ -17,19 +17,21 @@ import '../../routing/routes.dart';
 import '../../theme/context_extensions.dart';
 import '../quick_add/quick_add_sheet.dart';
 import 'today_internals.dart';
+import 'widgets/copy_day_sheet.dart';
 import 'widgets/log_food_fab.dart';
 
 /// Compact (mobile / narrow-web) variant of screen 01. Renders inside the
 /// shell's `AppScaffold`, threading the FAB through the scaffold slot
 /// (T-12: the FAB is the only floating action).
 ///
-/// Layout per `screen_01_day_view.html`, post-UX-102:
-/// 1. Header row — search icon only (right-aligned). The avatar
-///    placeholder and the bolt quick-add icon are gone; the quick-add
-///    affordance is now reachable via the FAB long-press menu.
-/// 2. Date bar — "Today" + sub-line "Thursday, May 14" + chevron pair.
-/// 3. Ring-summary card.
-/// 4. Scrollable column of four MealSections.
+/// Layout per `screen_01_day_view.html`, post-UX-104:
+/// 1. Date bar — centered `DatePill` (+ optional `TodayPill` on
+///    backdated views), with the search icon pinned to the trailing
+///    edge. The pre-UX-104 chevron pair is gone (per-day nav: swipe
+///    UX-103, or the date picker the `DatePill` tap opens) and the
+///    separate `_CompactHeader` row collapses into this single band.
+/// 2. Ring-summary card.
+/// 3. Scrollable column of four MealSections.
 class DayViewCompact extends ConsumerWidget {
   const DayViewCompact({required this.date, super.key});
 
@@ -64,7 +66,12 @@ class DayViewCompact extends ConsumerWidget {
         date: date,
         child: CustomScrollView(
           slivers: <Widget>[
-            const SliverToBoxAdapter(child: _CompactHeader()),
+            // UX-104 — the header row merges the date affordance and the
+            // search icon into one band. `_DateBar` renders the centered
+            // `DatePill` (+ optional `TodayPill`) with the search
+            // `IconButton36` pinned to the trailing edge. The standalone
+            // `_CompactHeader` row is gone; this is the single-row layout
+            // the ticket's "compact visual" line specifies.
             SliverToBoxAdapter(child: _DateBar(date: date)),
             SliverToBoxAdapter(
               child: Padding(
@@ -92,7 +99,10 @@ class DayViewCompact extends ConsumerWidget {
             // `EmptyState` primitive directly — `EmptyState`-style
             // "pill" (not a card).
             SliverToBoxAdapter(
-              child: _EmptyDayPill(entriesAsync: entriesAsync),
+              child: _EmptyDayPill(
+                date: date,
+                entriesAsync: entriesAsync,
+              ),
             ),
             SliverPadding(
               padding: EdgeInsets.fromLTRB(
@@ -129,90 +139,59 @@ class DayViewCompact extends ConsumerWidget {
   }
 }
 
-/// UX-102 — the compact header collapses to a single right-aligned
-/// search `IconButton36`. The placeholder avatar (a 36×36 SS-initials
-/// circle, PM Risk 2 placeholder until auth) and the bolt
-/// "Quick add calories" icon are gone. The bolt's handler moves to the
-/// FAB's long-press menu (see `LogFoodFab.onQuickAdd`). Profile is one
-/// tap away on the bottom tab bar; carrying a placeholder avatar on the
-/// most-viewed screen was the same anti-pattern QL-006 / QL-007 cut for
-/// the bookmark and the export row. Architect §6.1 + §6.2.
-class _CompactHeader extends StatelessWidget {
-  const _CompactHeader();
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: EdgeInsets.fromLTRB(
-        context.space.x5,
-        context.space.x1 + 2,
-        context.space.x5,
-        context.space.x3,
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.end,
-        children: <Widget>[
-          IconButton36(
-            icon: Icons.search,
-            tooltip: 'Search',
-            onPressed: () => context.push(Routes.foodsSearchPath),
-            color: context.colors.ink2,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
+/// UX-104 — single-row compact header. Centered `DatePill` (+ optional
+/// `TodayPill` on backdated views), with the search `IconButton36`
+/// pinned to the trailing edge. The pre-UX-104 layout had two stacked
+/// rows: a right-aligned search row (`_CompactHeader`) above a left-
+/// aligned title block flanked by chevron `IconButton36`s. The chevrons
+/// are gone (per-day navigation is now swipe — UX-103 — or the date
+/// picker the `DatePill` tap opens), the title block collapses into the
+/// pill, and the search icon merges into the same row. Net: one band
+/// of chrome above the ring summary card instead of two.
+///
+/// Architect §6.1 + §6.2 + §6.3.
 class _DateBar extends StatelessWidget {
   const _DateBar({required this.date});
   final DateTime date;
 
   @override
   Widget build(BuildContext context) {
-    final colors = context.colors;
+    final showTodayPill = !isLocalNowDay(date);
+    // The trailing search `IconButton36` reserves ~36 px on the right.
+    // We pad the leading edge by the same amount so the
+    // `DatePill` + `TodayPill` cluster sits visually centred in the row
+    // without needing a separate `Stack`/`Align`.
     return Padding(
       padding: EdgeInsets.fromLTRB(
         context.space.x5,
-        0,
+        context.space.x1 + 2,
         context.space.x5,
         context.space.x2,
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: <Widget>[
+          // Leading spacer mirrors the trailing search button's footprint
+          // (~36 px) so the centre cluster lands on the row's true
+          // midline.
+          const SizedBox(width: 36),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisSize: MainAxisSize.max,
               children: <Widget>[
-                Text(todayHeadline(date), style: context.text.pageTitle),
-                SizedBox(height: context.space.x05),
-                Text(
-                  todaySubline(date),
-                  style: context.text.meta.copyWith(color: colors.ink2),
-                ),
+                DatePill(date: date),
+                if (showTodayPill) ...<Widget>[
+                  SizedBox(width: context.space.x2),
+                  const TodayPill(),
+                ],
               ],
             ),
           ),
-          // QL-106 — the pill sits between the title block and the
-          // chevrons. Hidden on the local-now day (the chip would tap
-          // back to the same view). Tapping calls `context.go(
-          // Routes.todayPath)`; backdated users get a one-tap return.
-          if (!isLocalNowDay(date)) ...<Widget>[
-            const TodayPill(),
-            SizedBox(width: context.space.x2),
-          ],
           IconButton36(
-            icon: Icons.chevron_left,
-            tooltip: 'Previous day',
-            onPressed: () => navigateDay(context, date, -1),
-            color: context.colors.ink2,
-          ),
-          IconButton36(
-            icon: Icons.chevron_right,
-            tooltip: 'Next day',
-            onPressed: () => navigateDay(context, date, 1),
+            icon: Icons.search,
+            tooltip: 'Search',
+            onPressed: () => context.push(Routes.foodsSearchPath),
             color: context.colors.ink2,
           ),
         ],
@@ -279,6 +258,15 @@ class _MealsSliver extends StatelessWidget {
               onAddTap: () => onAddTap(meal),
               onEntryTap: onEntryTap,
               isPendingSync: isPendingSync,
+              // UX-106 F1 — per-meal copy-day. Threads through to
+              // `showCopyDaySheet` with the section's meal preselected.
+              // The sheet's post-save flow routes via `context.go(
+              // pathForDay(targetDate))` (T-24); no extra routing here.
+              onCopyMeal: (m) => showCopyDaySheet(
+                context,
+                targetDate: date,
+                preselectMeals: <Meal>[m],
+              ),
             ),
           );
         },
@@ -303,7 +291,13 @@ class _MealsSliver extends StatelessWidget {
 /// "fresh-start" affordance; the action is a dense `PrimaryButton` that
 /// pushes the search route.
 class _EmptyDayPill extends StatelessWidget {
-  const _EmptyDayPill({required this.entriesAsync});
+  const _EmptyDayPill({required this.date, required this.entriesAsync});
+
+  /// The day this view is rendering. Threaded so the secondary
+  /// "Copy from another day" affordance can pass `targetDate: date` to
+  /// `showCopyDaySheet`, and so the today-only gate can compare against
+  /// `isLocalNowDay(date)`.
+  final DateTime date;
 
   final AsyncValue<List<LogEntry>> entriesAsync;
 
@@ -313,6 +307,11 @@ class _EmptyDayPill extends StatelessWidget {
     if (entries == null || entries.isNotEmpty) {
       return const SizedBox.shrink();
     }
+    // UX-106 F1 — the "Copy from another day" secondary affordance only
+    // renders on the local-now day. Backdated empty days keep the
+    // pre-UX-106 "Log a food only" shape per architect §3.4 (B) and
+    // PM §2 F1 AC ("only renders when the current day is empty").
+    final showCopyFrom = isLocalNowDay(date);
     return Padding(
       padding: EdgeInsets.fromLTRB(
         context.space.x5,
@@ -325,12 +324,69 @@ class _EmptyDayPill extends StatelessWidget {
         icon: Icons.eco_outlined,
         title: 'No food logged for this day',
         body: '',
-        action: SizedBox(
-          width: 200,
-          child: PrimaryButton(
-            dense: true,
-            label: 'Log a food',
-            onPressed: () => context.push(Routes.foodsSearchPath),
+        action: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            SizedBox(
+              width: 200,
+              child: PrimaryButton(
+                dense: true,
+                label: 'Log a food',
+                onPressed: () => context.push(Routes.foodsSearchPath),
+              ),
+            ),
+            if (showCopyFrom) ...<Widget>[
+              SizedBox(height: context.space.x2),
+              _EmptyDayCopyFromButton(date: date),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// UX-106 F1 — secondary "Copy from another day" affordance inside the
+/// empty-day pill. Sits below the primary "Log a food" button and is a
+/// `TextButton`-shaped low-prominence link (architect §3.4 (B): the PM
+/// names a "text-shaped secondary affordance"; the primary stays
+/// primary). Tap opens `showCopyDaySheet(context, targetDate: date)`
+/// with no meal preselect → the sheet's chip strip defaults to
+/// "All meals". Today-only by construction; the parent `_EmptyDayPill`
+/// already gates this widget on `isLocalNowDay(date)`.
+class _EmptyDayCopyFromButton extends StatelessWidget {
+  const _EmptyDayCopyFromButton({required this.date});
+
+  final DateTime date;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.colors;
+    // T-20 — merge the icon + label glyphs into a single screen-reader
+    // announcement ("Copy from another day, open copy sheet"). The
+    // TextButton's own button role is retained.
+    return MergeSemantics(
+      child: Semantics(
+        label: 'Copy from another day, open copy sheet',
+        child: TextButton(
+          key: const Key('empty-day-copy-from'),
+          onPressed: () => showCopyDaySheet(
+            context,
+            targetDate: date,
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              Text(
+                'Copy from another day',
+                style: context.text.meta.copyWith(
+                  color: colors.accent,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              const SizedBox(width: 4),
+              Icon(Icons.chevron_right, size: 16, color: colors.accent),
+            ],
           ),
         ),
       ),
