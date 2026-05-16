@@ -107,6 +107,17 @@ class LogRepository {
   /// does (architect spec §9 screen 04). On success the food's
   /// recent/frequent counters tick, so the right-rail Quick add card
   /// reflects the new ranking on the next read.
+  ///
+  /// `@invalidates`
+  /// - `daySummaryProvider(consumedOn)` — the ring + summary card.
+  /// - `logEntriesProvider(consumedOn)` — the meal section list.
+  /// - `recentFoodsProvider` — the logged food jumps to the head.
+  /// - `frequentFoodsProvider` — the food's frequency count ticked.
+  ///
+  /// Call sites are responsible for invalidating per T-18 (minimal +
+  /// explicit); this list is the **contract** the call site reads. A
+  /// new dependent provider is added by editing this list and the call
+  /// sites in the same PR.
   Future<LogEntry> create(LogCreate data) async {
     await mockLatency();
     final food = _foodRepo.lookup(data.foodId);
@@ -145,6 +156,21 @@ class LogRepository {
   /// one in via a subclass, the repository asserts loudly.
   ///
   /// Throws [LogEntryNotFoundError] when [entryId] is unknown.
+  ///
+  /// `@invalidates`
+  /// - `daySummaryProvider(newConsumedOn)` — the ring + summary card.
+  /// - `logEntriesProvider(newConsumedOn)` — the meal section list.
+  /// - `daySummaryProvider(oldConsumedOn)` IF `consumed_on` changed —
+  ///   the originating date's totals must drop the moved entry.
+  /// - `logEntriesProvider(oldConsumedOn)` IF `consumed_on` changed —
+  ///   the originating date's list must drop the moved entry.
+  /// - `recentFoodsProvider` — the row's food may shift rank.
+  /// - `frequentFoodsProvider` — same.
+  ///
+  /// Call sites are responsible for invalidating per T-18 (minimal +
+  /// explicit); this list is the **contract** the call site reads. A
+  /// new dependent provider is added by editing this list and the call
+  /// sites in the same PR.
   Future<LogEntry> update(String entryId, LogPatch patch) async {
     // Defence-in-depth against a caller smuggling in a food swap. The
     // PM ruling is unambiguous: edit mode never re-keys an entry to a
@@ -222,6 +248,19 @@ class LogRepository {
   }
 
   /// Delete a log entry. The OpenAPI returns 204 — we return void.
+  ///
+  /// `@invalidates`
+  /// - `daySummaryProvider(consumedOn)` — the ring + summary card for
+  ///   the deleted entry's date.
+  /// - `logEntriesProvider(consumedOn)` — the meal section list for
+  ///   the deleted entry's date.
+  /// - `recentFoodsProvider` — the row's food may shift rank.
+  /// - `frequentFoodsProvider` — same.
+  ///
+  /// Call sites are responsible for invalidating per T-18 (minimal +
+  /// explicit); this list is the **contract** the call site reads. A
+  /// new dependent provider is added by editing this list and the call
+  /// sites in the same PR.
   Future<void> delete(String entryId) async {
     await mockLatency();
     _state.removeWhere((e) => e.id == entryId);
@@ -231,6 +270,19 @@ class LogRepository {
   /// before the server returns). Not part of the OpenAPI surface — it
   /// only exists for the mobile outbox to inject the optimistic row
   /// without re-computing the snapshot.
+  ///
+  /// `@invalidates`
+  /// - `daySummaryProvider(entry.consumedOn)` — the ring + summary
+  ///   card for the entry's date.
+  /// - `logEntriesProvider(entry.consumedOn)` — the meal section list.
+  /// - `recentFoodsProvider` — `noteFoodLogged` runs, so the food
+  ///   jumps to the head of recent.
+  /// - `frequentFoodsProvider` — same; the frequency count ticks.
+  ///
+  /// Call sites are responsible for invalidating per T-18 (minimal +
+  /// explicit); this list is the **contract** the call site reads. A
+  /// new dependent provider is added by editing this list and the call
+  /// sites in the same PR.
   void adoptOptimistic(LogEntry entry) {
     _state.add(entry);
     _foodRepo.noteFoodLogged(entry.foodId);

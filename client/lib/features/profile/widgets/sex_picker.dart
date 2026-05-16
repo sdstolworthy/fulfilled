@@ -42,6 +42,11 @@ class _SexPickerState extends ConsumerState<SexPicker> {
     _value = widget.initial;
   }
 
+  /// T-24 Case 1 — pop-to-source.
+  ///
+  /// `/me` is the source; the user expects the picked sex to render on
+  /// the Body row they tapped from. PATCH `/me` fires before pop, then
+  /// `meProvider` invalidation drives the profile re-read (T-18).
   Future<void> _save() async {
     if (_value == null || _value == widget.initial) {
       Navigator.of(context).pop();

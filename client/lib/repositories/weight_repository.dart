@@ -67,6 +67,19 @@ class WeightRepository {
   /// real client surfaces the 409 inline; the mock paves over it for
   /// the optimistic insert path the architect calls out for `POST
   /// /weights`.
+  ///
+  /// `@invalidates`
+  /// - `weightSeriesProvider(<range>)` for every range — the active
+  ///   range first per the existing call-site convention, then the
+  ///   inactive ranges so a range-switch repaints fresh.
+  /// - `weightHistoryProvider` — the newest-first history list.
+  /// - `meProvider` — `User.currentWeightKg` is derived from the
+  ///   most recent entry (see [mostRecentKg]).
+  ///
+  /// Call sites are responsible for invalidating per T-18 (minimal +
+  /// explicit); this list is the **contract** the call site reads. A
+  /// new dependent provider is added by editing this list and the call
+  /// sites in the same PR.
   Future<WeightEntry> create(double weightKg, DateTime date) async {
     await mockLatency();
     final day = DateTime(date.year, date.month, date.day);

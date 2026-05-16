@@ -156,6 +156,71 @@ enum WeightUnit {
   }
 }
 
+/// User-selected height display unit. Persists on `User.height_unit`
+/// (pre-backend window — the Rust migration lands in QL-110; until then
+/// `fromJson` tolerates a missing key per architect §3.1, §5.1).
+/// Wire string: `'cm'` for centimetres, `'ft_in'` for feet + inches.
+///
+/// Mirrors the [WeightUnit] shape exactly so the unit-preference seam
+/// stays symmetric across axes. The single seam where the cm-only
+/// assumption is lifted will live in `domain/units/length.dart`
+/// (QL-103) — `formatHeight(cm, unit)` and `parseHeightToCm(input,
+/// unit)` branch on this enum. Widgets never inspect the unit to
+/// multiply / divide; they call the helper.
+///
+/// `cm` is the on-wire canonical unit (`User.height_cm`,
+/// `WeightEntry.*_cm`, etc.) per the Display Units Principle. `ftIn` is
+/// display-only; the wire never sees the feet/inch split.
+enum HeightUnit {
+  cm,
+  ftIn;
+
+  /// Wire string — `cm` for centimetres, `ft_in` for the imperial
+  /// feet+inches pairing. Underscore mirrors the OpenAPI convention
+  /// (see [ActivityLevel.veryActive] → `'very_active'`).
+  String get wire {
+    switch (this) {
+      case HeightUnit.cm:
+        return 'cm';
+      case HeightUnit.ftIn:
+        return 'ft_in';
+    }
+  }
+
+  /// User-facing short label rendered in chooser rows + suffixes.
+  /// cm → "cm", ftIn → "ft·in".
+  String get shortLabel {
+    switch (this) {
+      case HeightUnit.cm:
+        return 'cm';
+      case HeightUnit.ftIn:
+        return 'ft·in';
+    }
+  }
+
+  /// Long-form for `Semantics` labels — "centimeters", "feet and
+  /// inches". T-20.
+  String get longLabel {
+    switch (this) {
+      case HeightUnit.cm:
+        return 'centimeters';
+      case HeightUnit.ftIn:
+        return 'feet and inches';
+    }
+  }
+
+  static HeightUnit fromWire(String wire) {
+    switch (wire) {
+      case 'cm':
+        return HeightUnit.cm;
+      case 'ft_in':
+        return HeightUnit.ftIn;
+      default:
+        throw ArgumentError.value(wire, 'wire', 'Unknown HeightUnit');
+    }
+  }
+}
+
 /// Goal direction. Not on the wire — the API stores rate as a signed
 /// `weekly_rate_kg` and lets the client interpret direction from sign.
 /// This client enum is the screen-facing presentation model used by

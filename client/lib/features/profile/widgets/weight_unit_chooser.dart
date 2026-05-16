@@ -22,6 +22,12 @@ import '../../../widgets/activity_option.dart';
 /// The downstream [weightUnitProvider] flips on the next frame, so
 /// every weight-rendering widget refreshes (T-18).
 ///
+/// T-24 Case 1 — pop-to-source (both form-factor branches). `/me` is
+/// the source; the compact sheet calls `navigator.pop()` after the
+/// PATCH lands, and the expanded `showMenu` flow pops itself when the
+/// user taps an item. The downstream `weightUnitProvider` re-derives
+/// from the invalidated `meProvider` on the next frame.
+///
 /// Failure path: keep the chooser open and surface a SnackBar
 /// (`"Couldn't update unit. Try again."`).
 ///

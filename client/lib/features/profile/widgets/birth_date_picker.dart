@@ -10,6 +10,12 @@ import '../../../providers/repository_providers.dart';
 /// friendly and matches platform expectations on iOS / Android / web.
 ///
 /// On select: PATCH `/me`, invalidate `meProvider`, dismiss.
+///
+/// T-24 Case 1 — pop-to-source. The Material date picker already pops
+/// itself when the user confirms (via `showDatePicker`'s own
+/// `Navigator.pop(picked)`); `/me` is underneath and re-reads
+/// `meProvider` to render the updated row. No explicit pop call here —
+/// the system dialog owns its own dismissal.
 Future<void> showBirthDatePicker(
   BuildContext context,
   WidgetRef ref, {

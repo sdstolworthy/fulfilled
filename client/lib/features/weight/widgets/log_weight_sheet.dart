@@ -98,6 +98,14 @@ class _LogWeightSheetState extends ConsumerState<LogWeightSheet> {
     super.dispose();
   }
 
+  /// T-24 Case 1 — pop-to-source.
+  ///
+  /// `/weight` is the source — the user opened this sheet from the
+  /// Weight tab's FAB and wants to see the chart, summary card, and
+  /// history row update beneath them after the write. The pop drops
+  /// the sheet; the invalidated `weightSeriesProvider` /
+  /// `weightHistoryProvider` / `meProvider` drive the page re-render
+  /// (T-18).
   Future<void> _save() async {
     if (_saving) return;
     setState(() {

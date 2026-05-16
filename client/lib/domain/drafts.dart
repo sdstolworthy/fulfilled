@@ -181,6 +181,7 @@ class OnboardingDraft {
     this.rateKgPerWeek,
     this.targetWeightKg,
     this.weightUnit,
+    this.heightUnit,
   });
 
   final int currentStep;
@@ -205,6 +206,14 @@ class OnboardingDraft {
   /// submit time alongside the rest of the profile patch.
   final WeightUnit? weightUnit;
 
+  /// User-chosen height display unit during onboarding. Mirror of
+  /// [weightUnit]. `null` means "no explicit selection yet — fall back
+  /// to the locale default at read time". Set by step 2's height
+  /// chooser once that widget lands (QL-104); read by
+  /// `onboardingHeightUnitProvider` (added by QL-104) and persisted at
+  /// final submit alongside the rest of the profile patch.
+  final HeightUnit? heightUnit;
+
   OnboardingDraft copyWith({
     int? currentStep,
     Sex? sex,
@@ -216,6 +225,7 @@ class OnboardingDraft {
     Decimal? rateKgPerWeek,
     Decimal? targetWeightKg,
     WeightUnit? weightUnit,
+    HeightUnit? heightUnit,
   }) =>
       OnboardingDraft(
         currentStep: currentStep ?? this.currentStep,
@@ -228,6 +238,7 @@ class OnboardingDraft {
         rateKgPerWeek: rateKgPerWeek ?? this.rateKgPerWeek,
         targetWeightKg: targetWeightKg ?? this.targetWeightKg,
         weightUnit: weightUnit ?? this.weightUnit,
+        heightUnit: heightUnit ?? this.heightUnit,
       );
 
   bool get isStep2Complete =>
@@ -254,7 +265,8 @@ class OnboardingDraft {
           other.direction == direction &&
           other.rateKgPerWeek == rateKgPerWeek &&
           other.targetWeightKg == targetWeightKg &&
-          other.weightUnit == weightUnit;
+          other.weightUnit == weightUnit &&
+          other.heightUnit == heightUnit;
 
   @override
   int get hashCode => Object.hash(
@@ -268,5 +280,6 @@ class OnboardingDraft {
         rateKgPerWeek,
         targetWeightKg,
         weightUnit,
+        heightUnit,
       );
 }

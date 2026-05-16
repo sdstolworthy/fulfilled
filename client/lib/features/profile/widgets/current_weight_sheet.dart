@@ -57,6 +57,13 @@ class _CurrentWeightSheetState extends ConsumerState<CurrentWeightSheet> {
     if (_kg < _min || _kg > _max) _kg = Decimal.parse('70');
   }
 
+  /// T-24 Case 1 — pop-to-source.
+  ///
+  /// `/me` is the source; the user expects the just-saved weight to
+  /// surface on the Body row they tapped from. The repo write fires
+  /// before pop and `meProvider` + `weightSeriesProvider` +
+  /// `weightHistoryProvider` are invalidated, so the profile row and
+  /// any neighbouring weight surfaces re-derive on the next frame (T-18).
   Future<void> _save() async {
     if (_error != null) return;
     setState(() => _saving = true);

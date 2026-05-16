@@ -414,6 +414,8 @@ The non-negotiables. Number them so review comments can cite them by ID (e.g., "
 
 23. **T-23 Shared widgets are package-imported.** Every widget that appears in the §3 component inventory lives at `lib/widgets/<name>.dart` and is imported by call sites via `package:fulfilled/widgets/<name>.dart`. Feature folders may not import widgets from sibling feature folders. A feature-private widget that the inventory does not list stays inside that feature's `widgets/` directory and is private to the feature. Enforced by `tool/lint_no_cross_feature_widget_import.sh` (see T-005).
 
+24. **T-24 Post-mutation navigation follows one of three patterns.** After a save / mutation succeeds, the screen must land the user via exactly one of: (1) *pop-to-source* — `Navigator.pop()` returning to the screen that launched the editor (profile editors, log-weight sheet, goal editors); (2) *route-to-effect* — `context.go(target)` to a route that renders the mutation's effect, when that route is not the source (`LogEntrySheet` save → `/today/:consumedOn`, onboarding finish → `/today`); (3) *pop-with-payload* — `Navigator.pop(value)` returning the result so the source view can re-render against it (`CustomFoodScreen(existing:)` → updated `Food`). Each save handler's dartdoc names the case. New sheets are reviewed against this decision; the case is explicit, not inferred. Dialog-on-expanded sheets that use `context.go` must `pop()` the dialog first so the route change doesn't orphan a dialog frame.
+
 ---
 
 ## 9. Per-screen build briefs
@@ -426,6 +428,7 @@ Each brief tells a developer agent (a) what to compose, (b) what to fetch, (c) w
 - **Data**: `daySummaryProvider(date)` (returns `DaySummary`), `logEntriesProvider(date)` (grouped client-side by meal — server `by_meal` gives subtotals but not the entries themselves, so we still need `/log`).
 - **Web transform**: see 01-W below — entirely different screen file.
 - **Gotcha**: empty meal dinner card still shows the header with `0 kcal` and a dimmed dot color (`#D9D6CD`, not the accent). Don't suppress the section. Don't reuse the same dot color constant from `MealSection` — it's a deliberate per-empty state.
+- **Post-save**: n/a — no save handler.
 
 ### Screen 01-W — Day view (expanded)
 
@@ -433,6 +436,7 @@ Each brief tells a developer agent (a) what to compose, (b) what to fetch, (c) w
 - **Data**: same providers as compact + `recentFoodsProvider` and `frequentFoodsProvider` for the right rail, `weightSeriesProvider(range: '30d')` for the sparkline.
 - **Web transform**: this *is* the web. At `medium` width (≥ 600, < 1024), collapse to the compact stack with the right-rail cards inserted as a horizontal row below the meal grid.
 - **Gotcha**: the right-rail Quick add card opens the log-entry **dialog** (not bottom sheet) — make sure the chip → log flow goes through the same `LogEntrySheet` widget, just in a different shell. The card heights must align: ring card sets the rhythm, others fit. Use `IntrinsicHeight` sparingly — prefer fixed min-heights.
+- **Post-save**: n/a — no save handler.
 
 ### Screen 02 — Search
 
@@ -440,6 +444,7 @@ Each brief tells a developer agent (a) what to compose, (b) what to fetch, (c) w
 - **Data**: `recentFoodsProvider`, `frequentFoodsProvider`, `foodSearchProvider(query: q, debounceMs: 250)`. Debounce in the provider, not in the widget.
 - **Web transform**: lives inside the shell. Top bar shrinks, results list expands to fill the main pane. On `expanded` with ⌘K, render in a centered dialog (max-width 640, max-height 70vh).
 - **Gotcha**: the search-term highlight uses `RichText` with `AppColors.highlight` background on the matching substring (case-insensitive). Don't naive-substring — multi-word queries split on whitespace and each word gets highlighted independently. Highlight `<mark>` color from the mock is `#FFF1B8`.
+- **Post-save**: n/a — no save handler.
 
 ### Screen 03 — Food detail
 
@@ -447,6 +452,7 @@ Each brief tells a developer agent (a) what to compose, (b) what to fetch, (c) w
 - **Data**: `foodDetailProvider(foodId)` returns `FoodDetail` (includes `servings` and `nutrition`).
 - **Web transform**: drop the sticky bottom CTA, put the "Add to log" button in the top bar on the right. Two-column body on `expanded` — left is hero + servings, right is nutrition.
 - **Gotcha**: the `quality_score` from the API (`0–1.0` decimal per the schema, `0.86` shown in mock as "quality 0.86") is displayed in the nutrition top-right meta. Render it only when source is `off`; for `user` and `usda` foods, replace with the source label.
+- **Post-save**: n/a — no save handler.
 
 ### Screen 04 — Log entry (sheet)
 
@@ -454,6 +460,7 @@ Each brief tells a developer agent (a) what to compose, (b) what to fetch, (c) w
 - **Data**: receives `FoodDetail` (already fetched), `defaultMeal` (computed from time-of-day), `defaultServingId` (from `food.servings.firstWhere(is_default)`). The "Will log" preview is computed client-side: `nutrition_per_100g × (serving.grams / 100) × quantity`. On save, POST `/log` with `food_id`, `serving_id`, `consumed_on`, `meal`, `quantity`, optional `note`.
 - **Web transform**: dialog, max-width 480, no grabber, no bottom safe-area padding. Otherwise identical.
 - **Gotcha**: quick-multiplier chips (0.5×, 1×, 1.5×, 2×, 3×) must mirror the stepper value in both directions — tap a chip → stepper value updates; type a value → chip selection clears or matches. Use a single Riverpod `quantityProvider` for the sheet, not separate widget state. Also: the preview block uses `LogPreviewBlock`, **not** macro colors — its label is accent-soft tinted and macro values inside are `ink` (the macro names like "P" are `accent`).
+- **Post-save**: Case 2 — `context.go('/today/:consumedOn')` for both create and edit (edit's target uses the entry's date, which may differ from the source). Implementation lands in QL-105.
 
 ### Screen 05 — Custom food
 
@@ -461,6 +468,7 @@ Each brief tells a developer agent (a) what to compose, (b) what to fetch, (c) w
 - **Data**: form state lives in a `customFoodDraftProvider` (Riverpod `Notifier`). On save: POST `/foods` with the basics + nutrition; iterate POSTs to `/foods/{id}/servings` for each user-defined serving (the 100 g system serving is auto-seeded — do not create it client-side).
 - **Web transform**: the three-step indicator becomes a horizontal tabs row; the form lays out as 2 columns (basics + nutrition on the left, servings on the right).
 - **Gotcha**: required-field validation is `name` and `nutrition.energy_kcal` per the OpenAPI; the mock shows Carbs as "Required" in error state, which is **stricter than the API**. Treat the client validation as additive: client requires P, C, F, kcal. Don't try to round-trip a partial nutrition through the server.
+- **Post-save**: Case 1 (create) — `context.pop(food)`; the search caller doesn't need the food back but the new-food detail-route may consume the id. Case 3 (edit) — `context.pop(updatedFood)` so `/foods/:id` re-renders against the new data.
 
 ### Screen 06 — Weight log
 
@@ -468,6 +476,7 @@ Each brief tells a developer agent (a) what to compose, (b) what to fetch, (c) w
 - **Data**: `weightSeriesProvider(range)` (1W/1M/3M/1Y/All), `weightHistoryProvider(limit: 10)`, `activeGoalProvider` for the dashed goal line and stats.
 - **Web transform**: hosts inside the shell. The summary card and chart can sit side-by-side at `expanded`. FAB → top-bar `PrimaryButton`.
 - **Gotcha**: the chart shows two lines — actual weight (solid accent) and 7-day moving avg (dashed `ink3`). The moving-avg is computed client-side, not requested from the server. Use `package:decimal` for the math; never `double`. Empty state for ranges with zero entries: a single dashed goal line + "Log your first weight" CTA, not a placeholder chart.
+- **Post-save**: Case 1 — `Navigator.pop()`; `/weight` is already underneath and re-renders against the invalidated weight providers.
 
 ### Screen 07 — Goals
 
@@ -475,6 +484,7 @@ Each brief tells a developer agent (a) what to compose, (b) what to fetch, (c) w
 - **Data**: `activeGoalProvider`, `goalsProvider` (all goals; filter history client-side as `ended_on != null OR id != active.id`).
 - **Web transform**: hero card stays full-width but pulls in to a max-width 720; history below it. Edit/New are dialogs on web, full-screen routes on mobile.
 - **Gotcha**: the `GoalActiveCard` uses *lighter* macro shades than the standard macro tokens (the mock paints them at `#E8AE7C / #B7CC8A / #DDB985` against the dark teal). Define them as `AppColors.proteinOnDark / carbsOnDark / fatOnDark` in tokens — do not derive at the call site with opacity. Same rule for `#A9CBC8` (the muted-teal text-on-dark). They are extra tokens, not new colors.
+- **Post-save**: Case 1 — `Navigator.pop()` (or `Navigator.maybePop()` from the dialog host); `/goals` is already underneath and the invalidated goal providers drive its re-render.
 
 ### Screen 08 — Profile & settings
 
@@ -482,6 +492,7 @@ Each brief tells a developer agent (a) what to compose, (b) what to fetch, (c) w
 - **Data**: `meProvider` (`User`), `customFoodCountProvider`. Editing fields jumps to inline edit routes (`/me/sex`, `/me/height`, `/me/activity`) or in-line modals; pick modals on `compact` for fewer routes.
 - **Web transform**: same shell. Identity row scales up; the cards stack at the same rhythm.
 - **Gotcha**: per PM Risk 5, the Appearance row is **removed entirely** from v1 — do not render the toggle, even disabled. Dark-mode tokens ship with v2 alongside a designer hand-off.
+- **Post-save**: Case 1 — every profile editor (`HeightStepperSheet`, `CurrentWeightSheet`, `SexPicker`, `BirthDatePicker`, `ActivityLevelPicker`, `WeightUnitChooser`) pops back to `/me`, which re-reads `meProvider` and re-renders the just-edited row.
 
 ### Screen 09 — Onboarding (3-up)
 
@@ -489,6 +500,7 @@ Each brief tells a developer agent (a) what to compose, (b) what to fetch, (c) w
 - **Data**: an `onboardingDraftProvider` (`Notifier`) accumulates the partial profile and partial goal. Step 3 derives the daily-calorie target client-side using a standard Mifflin-St Jeor or Harris-Benedict formula (whichever the backend uses — confirm in section 10). On finish: PATCH `/me`, then POST `/goals`.
 - **Web transform**: at `expanded`, render all three steps as a 3-column "tour" on a single page (PM may push back — see open questions). Default in v1: still one step at a time, but at `expanded` constrain the form column to 520 px max-width centered.
 - **Gotcha**: the daily-target calculation must match the server's calculation when the goal is later patched — the server stores `daily_calorie_target` as an int (per OpenAPI). Round on the client the same way the server rounds. Fence the calculation in one place: `lib/domain/calories/estimate.dart`.
+- **Post-save**: Case 2 — `context.go(Routes.todayPath)`; the just-saved profile + goal's natural home is the day view, not a return to step 3.
 
 ---
 
@@ -499,6 +511,8 @@ Things the designer did not specify or where I'm making an architectural call th
 > **PM rulings applied 2026-05-15** — see `specs/pm_decisions_flutter_ui.md`. Items **1, 5, 6, 8, 11, 12** below are resolved; the resolution is noted inline. Items **2, 9, 10** were resolved by the PM rulings in `pm_overnight_features.md` ("PM rulings on open §10 items"). Items **3, 4, 7** remain open with v1.1 dispositions.
 >
 > **Addendum applied 2026-05-16** — Features A and B from `specs/pm_log_edit_and_units.md` / `specs/architect_log_edit_and_units.md` shipped. Item **8**'s "kg-only in v1" rider is superseded: body weight is now user-selectable (`kg` / `lb` / `st`) per `User.weight_unit`, with a locale-aware default at first onboarding submit. The OFF→mg sodium conversion remains the original §4 ruling and is untouched. T-21 wording updated above; the §3 component inventory now lists `WeightStepper`; PM Risk 4's "lb deferred to v2" rider is marked **resolved** in `specs/pm_decisions_flutter_ui.md`. No new tenants — §5 of the architect plan confirmed that the existing T-21 / T-22 cover the surface (edit-mode reuses `LogEntrySheet` via `existing:`, and the outbox does **not** queue edits — pending rows are gated by their `isPendingSync` flag, matching T-22). Backend ticket **BE-001** (Rust migration adding `weight_unit`) is pending; the client tolerates a missing field by defaulting to `kg` until it lands.
+>
+> **Addendum applied 2026-05-16 (QoL pack)** — see `specs/architect_qol.md` / `specs/dev_tickets_qol.md`. T-24 added; no other tenants. The per-screen briefs gain `Post-save:` annotations; no shape changes. The Refactor 3 (`@invalidates` doc-tag) pass is documentation-only and lives in the repository dartdocs — there is no spec surface change beyond what this addendum names. QL-105 lands the only behavioural consumer of T-24 (the `LogEntrySheet` save → `context.go('/today/:consumedOn')` swap, Case 2).
 
 1. **Over-budget macro behavior.** **RESOLVED (PM Risk 1):** strict `value > target`, no tolerance. T-05 already encodes this.
 

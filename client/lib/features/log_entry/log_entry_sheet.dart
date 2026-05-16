@@ -353,6 +353,14 @@ class _LogEntrySheetBodyState extends ConsumerState<LogEntrySheetBody> {
     }
   }
 
+  /// T-24 Case 2 — route-to-effect.
+  ///
+  /// The natural home of a just-created log entry is the day view for
+  /// `consumedOn`, not the food-detail page the user tapped from.
+  /// Implementation lands in QL-105 (see ticket); this dartdoc is
+  /// forward-declaring the case for reviewer reference. Today's handler
+  /// still pops; QL-105 swaps to `context.go('/today/$consumedOn')`
+  /// with the dialog-pop-first ordering required by T-24.
   Future<void> _onCreatePressed() async {
     setState(() => _submitting = true);
     final logCreate = _buildLogCreate();
@@ -414,6 +422,16 @@ class _LogEntrySheetBodyState extends ConsumerState<LogEntrySheetBody> {
     }
   }
 
+  /// T-24 Case 2 — route-to-effect.
+  ///
+  /// The natural home of a just-edited log entry is the day view for
+  /// the entry's (possibly new) `consumedOn` — the user wants to see
+  /// the row land in its meal section, not stare at the source.
+  /// Implementation lands in QL-105 (see ticket); this dartdoc is
+  /// forward-declaring the case for reviewer reference. Today's handler
+  /// still pops; QL-105 swaps to `context.go('/today/$newDate')` and
+  /// keeps the cross-date invalidation already wired below.
+  ///
   /// Edit-mode submit. Per architect §2.5 / PM "edits don't queue":
   /// PATCH on every form factor, sheet stays open until the server
   /// returns, failure surfaces inline (T-11). Defence-in-depth note:

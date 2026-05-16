@@ -50,6 +50,16 @@ class ProfileRepository {
 
   /// Patch the user. Only the fields set on [data] are applied; nothing
   /// else changes. Returns the post-update presentation model.
+  ///
+  /// `@invalidates`
+  /// - `meProvider` — the user record changed; every dependent
+  ///   provider (`weightUnitProvider`, `heightUnitProvider`, etc.)
+  ///   re-derives automatically via `ref.watch(meProvider)` per T-18.
+  ///
+  /// Call sites are responsible for invalidating per T-18 (minimal +
+  /// explicit); this list is the **contract** the call site reads. A
+  /// new dependent provider is added by editing this list and the call
+  /// sites in the same PR.
   Future<User> update(UserPatch data) async {
     await mockLatency();
     var u = _state;

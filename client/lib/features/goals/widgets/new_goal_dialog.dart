@@ -178,6 +178,13 @@ class _NewGoalFormState extends ConsumerState<_NewGoalForm> {
     );
   }
 
+  /// T-24 Case 1 — pop-to-source.
+  ///
+  /// `/goals` is the source — the user opened New goal from the Goals
+  /// screen and wants the just-saved goal to render in the active card
+  /// + history list underneath. `navigator.maybePop()` drops the route
+  /// (compact) or dialog (expanded); `activeGoalProvider` /
+  /// `goalsProvider` invalidation drives the parent re-read (T-18).
   Future<void> _save() async {
     setState(() => _saving = true);
     final navigator = Navigator.of(context);

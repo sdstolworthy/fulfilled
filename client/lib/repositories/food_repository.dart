@@ -153,6 +153,14 @@ class FoodRepository {
   ///
   /// Throws [FoodNotFoundError] when [foodId] is unknown — matches
   /// `get()`'s shape so callers can render a consistent error.
+  ///
+  /// `@invalidates`
+  /// - `foodDetailProvider(foodId)` — the food's serving list grew.
+  ///
+  /// Call sites are responsible for invalidating per T-18 (minimal +
+  /// explicit); this list is the **contract** the call site reads. A
+  /// new dependent provider is added by editing this list and the call
+  /// sites in the same PR.
   Future<Serving> addServing(String foodId, ServingCreate input) async {
     await mockLatency();
     for (var i = 0; i < _foods.length; i++) {
@@ -187,6 +195,17 @@ class FoodRepository {
   /// Create a custom food. Returns the created row with `source == user`
   /// and a synthetic 100 g serving auto-seeded — mirroring the OpenAPI
   /// `POST /foods` description.
+  ///
+  /// `@invalidates`
+  /// - `myFoodsProvider` — the new row joins the custom-food library.
+  /// - `customFoodCountProvider` — the `source == user` count ticked.
+  /// - `meProvider` — `User.customFoodCount` is derived from the count
+  ///   in some contexts and must repaint.
+  ///
+  /// Call sites are responsible for invalidating per T-18 (minimal +
+  /// explicit); this list is the **contract** the call site reads. A
+  /// new dependent provider is added by editing this list and the call
+  /// sites in the same PR.
   Future<Food> createCustom(FoodCreate data) async {
     await mockLatency();
     final id = 'f_custom_${DateTime.now().microsecondsSinceEpoch}';
@@ -229,6 +248,22 @@ class FoodRepository {
   /// defence-in-depth.
   ///
   /// Throws [FoodNotFoundError] when [foodId] is unknown.
+  ///
+  /// `@invalidates`
+  /// - `foodDetailProvider(foodId)` — the food's fields and serving
+  ///   list may have shifted.
+  /// - `myFoodsProvider` — the row's display fields (name, brand)
+  ///   surface in the library list.
+  /// - `customFoodCountProvider` — the count is stable in practice,
+  ///   but the provider reads through the same catalog list that just
+  ///   mutated; invalidate for symmetry with `createCustom`.
+  /// - `meProvider` — `User.customFoodCount` is derived from the count
+  ///   in some contexts; keep paired with `customFoodCountProvider`.
+  ///
+  /// Call sites are responsible for invalidating per T-18 (minimal +
+  /// explicit); this list is the **contract** the call site reads. A
+  /// new dependent provider is added by editing this list and the call
+  /// sites in the same PR.
   Future<Food> updateCustom(String foodId, FoodPatch patch) async {
     // Defence-in-depth against a caller smuggling in an id swap. The
     // PM ruling is unambiguous: edit mode never re-keys the food.
@@ -354,6 +389,16 @@ class FoodRepository {
   /// recent list. Called by `LogRepository.create` so the
   /// recent/frequent providers reflect a freshly-logged item without a
   /// reload.
+  ///
+  /// `@invalidates`
+  /// - `recentFoodsProvider` — `foodId` jumps to the head.
+  /// - `frequentFoodsProvider` — the frequency count ticked.
+  ///
+  /// The caller (`LogRepository.create` / `adoptOptimistic`) owns the
+  /// invalidation per T-18; these providers are already listed on
+  /// those mutators' `@invalidates` blocks. This block exists so a dev
+  /// who reaches `noteFoodLogged` directly sees the contract without a
+  /// round-trip to the caller.
   void noteFoodLogged(String foodId) {
     _frequencyById[foodId] = (_frequencyById[foodId] ?? 0) + 1;
     _recentIds.remove(foodId);

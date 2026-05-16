@@ -72,6 +72,19 @@ class GoalRepository {
   /// previously-active row gets its `endedOn` stamped to yesterday so
   /// the active invariant holds. Mirrors what the server does on
   /// `POST /goals` for a contiguous goal stream.
+  ///
+  /// `@invalidates`
+  /// - `activeGoalProvider` — the new row supersedes the prior active
+  ///   goal.
+  /// - `goalsProvider` — the history list gains the new row and the
+  ///   prior active row's `endedOn` was stamped.
+  /// - `daySummaryProvider(date)` — the kcal/macro targets feeding the
+  ///   ring and macro bars changed.
+  ///
+  /// Call sites are responsible for invalidating per T-18 (minimal +
+  /// explicit); this list is the **contract** the call site reads. A
+  /// new dependent provider is added by editing this list and the call
+  /// sites in the same PR.
   Future<Goal> create(GoalCreate data) async {
     await mockLatency();
     final id = 'g_new_${_seq++}_${DateTime.now().microsecondsSinceEpoch}';
@@ -116,6 +129,18 @@ class GoalRepository {
   /// prior active row and inserts a new one). Use `update` for "save
   /// changes to the current goal" flows; use `create` for "start a new
   /// goal from today".
+  ///
+  /// `@invalidates`
+  /// - `activeGoalProvider` — the active row's fields may have shifted
+  ///   (kcal/macro targets, dates, weights).
+  /// - `goalsProvider` — the history list reflects the edited row.
+  /// - `daySummaryProvider(date)` — the kcal/macro targets feeding the
+  ///   ring and macro bars may have changed.
+  ///
+  /// Call sites are responsible for invalidating per T-18 (minimal +
+  /// explicit); this list is the **contract** the call site reads. A
+  /// new dependent provider is added by editing this list and the call
+  /// sites in the same PR.
   Future<Goal> update(Goal goal) async {
     await mockLatency();
     for (var i = 0; i < _state.length; i++) {
@@ -134,6 +159,19 @@ class GoalRepository {
   /// "restore a prior goal" affordance — not directly mocked in the UI
   /// but the screen 07 agent's `goalRepositoryProvider` contract names
   /// it, so it's here.
+  ///
+  /// `@invalidates`
+  /// - `activeGoalProvider` — the promoted row supersedes the prior
+  ///   active goal.
+  /// - `goalsProvider` — the history list reflects the swapped
+  ///   `isActive` flags and `endedOn` stamps.
+  /// - `daySummaryProvider(date)` — the kcal/macro targets feeding the
+  ///   ring and macro bars changed.
+  ///
+  /// Call sites are responsible for invalidating per T-18 (minimal +
+  /// explicit); this list is the **contract** the call site reads. A
+  /// new dependent provider is added by editing this list and the call
+  /// sites in the same PR.
   Future<Goal> makeActive(String id) async {
     await mockLatency();
     Goal? target;

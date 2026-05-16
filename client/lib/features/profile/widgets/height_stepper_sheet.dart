@@ -86,6 +86,12 @@ class _HeightStepperSheetState extends ConsumerState<HeightStepperSheet> {
     });
   }
 
+  /// T-24 Case 1 — pop-to-source.
+  ///
+  /// `/me` is the source; the user expects to see the new height value
+  /// rendered on the row they tapped from. The repo write happens
+  /// before pop; `meProvider` invalidation alone suffices — every
+  /// downstream height surface re-derives from `meProvider` (T-18).
   Future<void> _save() async {
     final initialCm = widget.initial?.toBigInt().toInt();
     if (_error != null) return;

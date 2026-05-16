@@ -29,7 +29,25 @@ final meProvider = FutureProvider<User>((ref) {
 /// loading / error fallback path of [weightUnitProvider] or
 /// `onboardingWeightUnitProvider` (LU-006).
 final localeDefaultWeightUnitProvider = Provider<WeightUnit>((ref) {
+  // ignore: deprecated_member_use_from_same_package
   return defaultWeightUnitForLocale();
+});
+
+/// Locale-derived fallback height unit. Mirror of
+/// [localeDefaultWeightUnitProvider] — the test seam for
+/// [heightUnitProvider] and (later) `onboardingHeightUnitProvider`.
+///
+/// Override this in [ProviderContainer] tests to pin a known
+/// `HeightUnit` without taking a dependency on `WidgetsBinding`'s
+/// platform dispatcher.
+///
+/// QL-104 will sweep both per-axis locale providers in favour of a
+/// shared `localeDefaultsProvider` reading [defaultUnitsForLocale]
+/// directly; until then this provider keeps the per-axis test seam
+/// stable for QL-102's foundation.
+final localeDefaultHeightUnitProvider = Provider<HeightUnit>((ref) {
+  // ignore: deprecated_member_use_from_same_package
+  return defaultHeightUnitForLocale();
 });
 
 /// Active weight unit for the authenticated user.
@@ -47,5 +65,27 @@ final weightUnitProvider = Provider<WeightUnit>((ref) {
   return ref.watch(meProvider).maybeWhen(
         data: (u) => u.weightUnit,
         orElse: () => ref.watch(localeDefaultWeightUnitProvider),
+      );
+});
+
+/// Active height unit for the authenticated user.
+///
+/// Mirror of [weightUnitProvider]. **Per-axis by design** — the
+/// architect (§2.1) ruled against a unified `userPreferencesProvider`
+/// record so widget rebuilds stay granular: a height-only chooser
+/// rebuild doesn't fan out to weight readers (tenant T-18).
+///
+/// Pre-`User.heightUnit` window: `User` does not yet carry a
+/// `heightUnit` field (it lands alongside the QL-110 backend
+/// migration). Until then this provider always returns the locale
+/// default — when the data branch fires, it falls through to the
+/// `orElse` path explicitly. Once the field exists, the data branch
+/// will read `u.heightUnit` directly without any caller-site changes.
+final heightUnitProvider = Provider<HeightUnit>((ref) {
+  return ref.watch(meProvider).maybeWhen(
+        // `User.heightUnit` does not exist yet — fall through to the
+        // locale default. QL-110 (backend) + the follow-up client
+        // ticket flip this to `(u) => u.heightUnit`.
+        orElse: () => ref.watch(localeDefaultHeightUnitProvider),
       );
 });
