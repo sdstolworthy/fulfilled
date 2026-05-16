@@ -11,7 +11,9 @@ import 'package:fulfilled/domain/serving.dart';
 import 'package:fulfilled/features/log_entry/log_entry_sheet.dart';
 import 'package:fulfilled/providers/repository_providers.dart';
 import 'package:fulfilled/repositories/log_repository.dart';
+import 'package:fulfilled/routing/routes.dart';
 import 'package:fulfilled/theme/theme_data.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../repositories/_harness.dart';
 
@@ -399,6 +401,243 @@ void main() {
     // Sheet still mounted (the body is still on screen).
     expect(find.byType(LogEntrySheetBody), findsOneWidget);
   });
+
+  // QL-105 — T-24 Case 2 router assertions for edit mode. After a
+  // successful PATCH (or the no-op-PATCH branch), the sheet routes to
+  // `pathForDay(newDate)` — the **new** date, even if the user shifted
+  // it. Failure branch is unchanged (covered by the existing failure
+  // test above).
+  group('QL-105 — edit-mode save routes to pathForDay(newDate)', () {
+    late _RecordingLogRepository routerRepo;
+
+    setUp(() {
+      // Re-use the suite-level setUp to reset repos, then build a
+      // fresh recording repo for the router-aware tests below.
+      routerRepo = _RecordingLogRepository(
+        api: buildTestApiClient(),
+        foodRepository: FoodRepositoryProxy.boot(),
+        goalRepository: GoalRepositoryProxy.boot(),
+      );
+    });
+
+    testWidgets(
+      'save without date change routes to /today/<original-date>',
+      (tester) async {
+        tester.view.physicalSize = const Size(390, 1200);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        // Backdated seed so the expected path is `/today/2026-05-14`,
+        // not the bare `/today` — gives us an unambiguous assertion.
+        final existing = _existingEntry(
+          consumedOn: DateTime(2026, 5, 14),
+        );
+        routerRepo.stubReturn = existing;
+        // The repo update returns `existing` (date unchanged) — the
+        // sheet routes to `pathForDay(newDate)` where newDate == _date
+        // == existing.consumedOn.
+        final expectedPath = '/today/2026-05-14';
+
+        final router = _editRouterWithSheet(
+          food: _testFood(),
+          existing: existing,
+        );
+
+        await tester.pumpWidget(_editRouterHarness(
+          router: router,
+          repo: routerRepo,
+          existing: existing,
+        ));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('open sheet'));
+        await tester.pumpAndSettle();
+
+        // Bump quantity so the no-op-PATCH guard doesn't fire — we
+        // want to exercise the success branch here.
+        await tester.tap(find.bySemanticsLabel('Increment'));
+        await tester.pump();
+
+        await tester.tap(find.byKey(const Key('log_entry_save_button')));
+        // Explicit pumps for the `await repo.update` + the post-await
+        // `pop` + `context.go` chain. Edit-mode success has no
+        // SnackBar but we keep the pump style identical to the
+        // create-mode tests so any future SnackBar addition doesn't
+        // silently stall this test.
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 50));
+
+        expect(router.routerDelegate.currentConfiguration.uri.path,
+            equals(expectedPath));
+      },
+    );
+
+    testWidgets(
+      'save WITH date shift routes to /today/<new-date>, NOT original',
+      (tester) async {
+        tester.view.physicalSize = const Size(390, 1200);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        // Simulate the user editing a May 14 entry and shifting its
+        // date to May 15: `existing.consumedOn = May 14`, then drive
+        // the form's `_date` to May 15 via the `initialDate`
+        // `@visibleForTesting` seam (the production DATE picker lands
+        // in QL-107; until then this seam is the cleanest way to
+        // exercise the date-shift router path).
+        final existing = _existingEntry(
+          consumedOn: DateTime(2026, 5, 14),
+        );
+        routerRepo.stubReturn = existing;
+
+        final shiftedDate = DateTime(2026, 5, 15);
+
+        final router = GoRouter(
+          initialLocation: '/host',
+          routes: <RouteBase>[
+            GoRoute(
+              path: '/host',
+              builder: (_, __) => Scaffold(
+                body: Builder(
+                  builder: (ctx) => Center(
+                    child: TextButton(
+                      onPressed: () => ctx.push('/foods/f_test'),
+                      child: const Text('open sheet'),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            GoRoute(
+              path: '/foods/:foodId',
+              builder: (_, __) => Scaffold(
+                body: LogEntrySheetBody(
+                  food: _testFood(),
+                  existing: existing,
+                  initialDate: shiftedDate,
+                  onSubmit: (_) {},
+                  showGrabber: false,
+                ),
+              ),
+            ),
+            GoRoute(
+              path: Routes.todayPath,
+              routes: <RouteBase>[
+                GoRoute(
+                  path: ':date',
+                  builder: (_, state) => Scaffold(
+                    body: Center(
+                      child: Text('day ${state.pathParameters['date']}'),
+                    ),
+                  ),
+                ),
+              ],
+              builder: (_, __) =>
+                  const Scaffold(body: Center(child: Text('today'))),
+            ),
+          ],
+        );
+
+        await tester.pumpWidget(_editRouterHarness(
+          router: router,
+          repo: routerRepo,
+          existing: existing,
+        ));
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('open sheet'));
+        await tester.pumpAndSettle();
+
+        // The `initialDate` seam forced `_date == May 15` even though
+        // `existing.consumedOn == May 14`. `_buildLogPatch` therefore
+        // emits a `consumedOn: May 15` field (the only diff), so
+        // `patch.isEmpty == false` and the success branch runs.
+        await tester.tap(find.byKey(const Key('log_entry_save_button')));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 50));
+
+        // Route uses **newDate** (May 15), not `existing.consumedOn`
+        // (May 14). Architect §6.5 is explicit.
+        expect(router.routerDelegate.currentConfiguration.uri.path,
+            equals('/today/2026-05-15'));
+        expect(router.routerDelegate.currentConfiguration.uri.path,
+            isNot(equals('/today/2026-05-14')));
+      },
+    );
+  });
+}
+
+/// Build a GoRouter for the edit-mode router tests. The host route
+/// renders an "open sheet" button that pushes the sheet route; the
+/// sheet route renders `LogEntrySheetBody` in edit mode against the
+/// supplied [existing] entry. Destination routes mirror the production
+/// shape (`/today`, `/today/:date`).
+GoRouter _editRouterWithSheet({
+  required Food food,
+  required LogEntry existing,
+}) {
+  return GoRouter(
+    initialLocation: '/host',
+    routes: <RouteBase>[
+      GoRoute(
+        path: '/host',
+        builder: (_, __) => Scaffold(
+          body: Builder(
+            builder: (ctx) => Center(
+              child: TextButton(
+                onPressed: () => ctx.push('/foods/${food.id}'),
+                child: const Text('open sheet'),
+              ),
+            ),
+          ),
+        ),
+      ),
+      GoRoute(
+        path: '/foods/:foodId',
+        builder: (_, __) => Scaffold(
+          body: LogEntrySheetBody(
+            food: food,
+            existing: existing,
+            onSubmit: (_) {},
+            showGrabber: false,
+          ),
+        ),
+      ),
+      GoRoute(
+        path: Routes.todayPath,
+        routes: <RouteBase>[
+          GoRoute(
+            path: ':date',
+            builder: (_, state) => Scaffold(
+              body: Center(child: Text('day ${state.pathParameters['date']}')),
+            ),
+          ),
+        ],
+        builder: (_, __) => const Scaffold(body: Center(child: Text('today'))),
+      ),
+    ],
+  );
+}
+
+/// Wrap the edit-mode router under a `ProviderScope` that overrides
+/// `logRepositoryProvider` (so PATCHes flow through the recording repo)
+/// and re-seeds `quantityProvider` to the entry's quantity (mirrors
+/// `showLogEntrySheet`'s production wiring).
+Widget _editRouterHarness({
+  required GoRouter router,
+  required _RecordingLogRepository repo,
+  required LogEntry existing,
+}) {
+  return ProviderScope(
+    overrides: <Override>[
+      logRepositoryProvider.overrideWithValue(repo),
+      quantityProvider.overrideWith((ref) => existing.quantity),
+    ],
+    child: MaterialApp.router(
+      theme: buildLightTheme(),
+      routerConfig: router,
+    ),
+  );
 }
 
 /// Thin proxy factories that build the real (mock-backed) sibling

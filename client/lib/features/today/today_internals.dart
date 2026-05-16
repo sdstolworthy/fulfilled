@@ -44,23 +44,36 @@ Map<Meal, List<LogEntry>> entriesByMeal(List<LogEntry> entries) {
   return out;
 }
 
+/// The canonical day-view path for [date]. `/today` for the local-now
+/// day; `/today/$y-$m-$d` otherwise. Pairs with [navigateDay] and is
+/// also consumed by `LogEntrySheet`'s save handlers (T-24 Case 2 —
+/// route-to-effect) so the chevrons and the log-save flow agree on the
+/// canonical shape. Architect §6.1 / QL-105.
+///
+/// Local-calendar comparison: a `DateTime` whose Y/M/D matches the
+/// machine's local-now Y/M/D resolves to "today" regardless of the
+/// hour/minute fields. Callers therefore don't need to normalise to
+/// midnight before calling.
+String pathForDay(DateTime date) {
+  final now = DateTime.now();
+  final isToday = date.year == now.year &&
+      date.month == now.month &&
+      date.day == now.day;
+  if (isToday) return Routes.todayPath;
+  final y = date.year.toString().padLeft(4, '0');
+  final m = date.month.toString().padLeft(2, '0');
+  final d = date.day.toString().padLeft(2, '0');
+  return '${Routes.todayPath}/$y-$m-$d';
+}
+
 /// Push a relative day route. Today is always the canonical `/today` path
 /// — addressing it as `/today/2026-05-15` would work but the route table
-/// reserves the bare path for "today right now".
+/// reserves the bare path for "today right now". Thin wrapper over
+/// [pathForDay] so the chevrons and the post-save router agree on the
+/// canonical shape.
 void navigateDay(BuildContext context, DateTime current, int delta) {
   final target = DateTime(current.year, current.month, current.day + delta);
-  final now = DateTime.now();
-  final isToday = target.year == now.year &&
-      target.month == now.month &&
-      target.day == now.day;
-  if (isToday) {
-    context.go(Routes.todayPath);
-    return;
-  }
-  final y = target.year.toString().padLeft(4, '0');
-  final m = target.month.toString().padLeft(2, '0');
-  final d = target.day.toString().padLeft(2, '0');
-  context.go('${Routes.todayPath}/$y-$m-$d');
+  context.go(pathForDay(target));
 }
 
 /// Tap-to-edit handler for a logged entry row on the day view.

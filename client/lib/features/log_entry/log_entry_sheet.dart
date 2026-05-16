@@ -1,6 +1,7 @@
 import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import 'package:fulfilled/widgets/quantity_stepper.dart';
 
@@ -16,6 +17,7 @@ import '../../providers/log_providers.dart';
 import '../../providers/repository_providers.dart';
 import '../../theme/context_extensions.dart';
 import '../../widgets/motion.dart';
+import '../today/today_internals.dart' show pathForDay;
 import 'widgets/log_preview_block.dart';
 import 'widgets/meal_chip_picker.dart';
 import 'widgets/quick_multiplier_chips.dart';
@@ -200,6 +202,7 @@ class LogEntrySheetBody extends ConsumerStatefulWidget {
     this.defaultMeal,
     this.scrollController,
     this.showGrabber = true,
+    @visibleForTesting this.initialDate,
   });
 
   final Food food;
@@ -219,6 +222,18 @@ class LogEntrySheetBody extends ConsumerStatefulWidget {
   final ValueChanged<LogCreate> onSubmit;
   final ScrollController? scrollController;
   final bool showGrabber;
+
+  /// **Test-only.** Forces the date seed instead of letting it default.
+  /// In create mode this short-circuits `DateTime.now()`; in edit mode
+  /// it overrides `existing.consumedOn` so QL-105's "edit shifts the
+  /// date" router test can exercise the `pathForDay(newDate)` branch
+  /// without standing up a DATE-picker (out of scope; that lands in
+  /// QL-107). The "edit shifts" semantics live entirely in
+  /// `_LogEntrySheetBodyState._date`; this hook seeds `_date` directly
+  /// while leaving `widget.existing.consumedOn` (the seed-vs-new
+  /// comparison anchor in `_buildLogPatch`) untouched. Architect §6.2 /
+  /// QL-105 fixture.
+  final DateTime? initialDate;
 
   @override
   ConsumerState<LogEntrySheetBody> createState() => _LogEntrySheetBodyState();
@@ -249,7 +264,15 @@ class _LogEntrySheetBodyState extends ConsumerState<LogEntrySheetBody> {
       (s) => s.id == seedServingId,
       orElse: () => widget.food.servings.first,
     );
-    final seedDate = ex?.consumedOn ?? DateTime.now();
+    // Seed precedence:
+    //   1. `widget.initialDate` (test-only seam — overrides edit-mode's
+    //      `existing.consumedOn` so QL-105's date-shift router test can
+    //      simulate the user picking a different date without a real
+    //      DATE-picker UI, which is out of scope here).
+    //   2. `existing.consumedOn` (edit mode).
+    //   3. `DateTime.now()` (create-mode default).
+    final seedDate =
+        widget.initialDate ?? ex?.consumedOn ?? DateTime.now();
     _date = DateTime(seedDate.year, seedDate.month, seedDate.day);
     _noteCtrl.text = ex?.note ?? '';
     // Re-render save-button enablement as the user types in the note.
@@ -356,11 +379,15 @@ class _LogEntrySheetBodyState extends ConsumerState<LogEntrySheetBody> {
   /// T-24 Case 2 — route-to-effect.
   ///
   /// The natural home of a just-created log entry is the day view for
-  /// `consumedOn`, not the food-detail page the user tapped from.
-  /// Implementation lands in QL-105 (see ticket); this dartdoc is
-  /// forward-declaring the case for reviewer reference. Today's handler
-  /// still pops; QL-105 swaps to `context.go('/today/$consumedOn')`
-  /// with the dialog-pop-first ordering required by T-24.
+  /// `consumedOn`, not the food-detail page the user tapped from. The
+  /// compact branch's `DraggableScrollableSheet` is a route in the
+  /// navigator stack, so `context.go` replaces it implicitly; the
+  /// medium/expanded `Dialog` is **not** a route, so we pop the dialog
+  /// first then `go` — per T-24's "Dialog-on-expanded sheets that use
+  /// `context.go` must `pop()` the dialog first" clause (architect §6.3).
+  /// The `_optimisticEntry` return value is dropped — the caller's
+  /// `await showLogEntrySheet(...)` future no longer matters because
+  /// the user is now on a different route.
   Future<void> _onCreatePressed() async {
     setState(() => _submitting = true);
     final logCreate = _buildLogCreate();
@@ -372,9 +399,12 @@ class _LogEntrySheetBodyState extends ConsumerState<LogEntrySheetBody> {
     final formFactor = FormFactor.of(context);
 
     if (formFactor.isCompact) {
-      // Outbox path. Enqueue + pop with an optimistic LogEntry; the
-      // outbox notifier flushes asynchronously, day-summary updates
-      // when the server response lands.
+      // Outbox path. Enqueue, surface the syncing SnackBar, invalidate
+      // provider families, then route-to-effect. The outbox notifier
+      // flushes asynchronously; day-summary updates when the server
+      // response lands. The optimistic row is rendered on Today via
+      // the outbox provider's own optimistic merge — no extra wiring
+      // needed for it to appear post-save.
       try {
         await ref
             .read(logOutboxProvider.notifier)
@@ -383,15 +413,18 @@ class _LogEntrySheetBodyState extends ConsumerState<LogEntrySheetBody> {
           const SnackBar(content: Text('Logged — syncing')),
         );
         if (!mounted) return;
-        // Invalidate provider families so an optimistic merge (if/when
-        // the app gains one) re-runs. Safe to invalidate here; the
-        // outbox notifier owns the persisted state.
+        // Invalidate provider families so any optimistic merge re-runs.
+        // Safe to invalidate here; the outbox notifier owns the
+        // persisted state.
         ref
           ..invalidate(daySummaryProvider(_date))
           ..invalidate(logEntriesProvider(_date))
           ..invalidate(recentFoodsProvider)
           ..invalidate(frequentFoodsProvider);
-        Navigator.of(context).pop<LogEntry?>(_optimisticEntry(logCreate));
+        // T-24 Case 2: route-to-effect. `go` replaces the stack to the
+        // day-view; the sheet's own route disappears as a side effect
+        // on compact (DraggableScrollableSheet is in the same stack).
+        context.go(pathForDay(_date));
       } catch (e) {
         if (!mounted) return;
         setState(() => _submitting = false);
@@ -412,7 +445,14 @@ class _LogEntrySheetBodyState extends ConsumerState<LogEntrySheetBody> {
         ..invalidate(logEntriesProvider(_date))
         ..invalidate(recentFoodsProvider)
         ..invalidate(frequentFoodsProvider);
+      // T-24 Case 2 with dialog correction: pop the dialog first, then
+      // `go` to the day view. Order matters — without the pop the new
+      // page renders under the orphaned dialog frame (architect §6.3 /
+      // PM acceptance §2.2). The `context.mounted` check between is
+      // defence-in-depth in case the BuildContext is disposed during pop.
       Navigator.of(context).pop<LogEntry?>(entry);
+      if (!context.mounted) return;
+      context.go(pathForDay(_date));
     } catch (e) {
       if (!mounted) return;
       setState(() => _submitting = false);
@@ -426,11 +466,16 @@ class _LogEntrySheetBodyState extends ConsumerState<LogEntrySheetBody> {
   ///
   /// The natural home of a just-edited log entry is the day view for
   /// the entry's (possibly new) `consumedOn` — the user wants to see
-  /// the row land in its meal section, not stare at the source.
-  /// Implementation lands in QL-105 (see ticket); this dartdoc is
-  /// forward-declaring the case for reviewer reference. Today's handler
-  /// still pops; QL-105 swaps to `context.go('/today/$newDate')` and
-  /// keeps the cross-date invalidation already wired below.
+  /// the row land in its meal section, not stare at the source. The
+  /// route target uses `newDate` (the date the user just saved with),
+  /// not the original — if the user shifted a May 14 entry to May 15,
+  /// they land on `/today/2026-05-15`. Architect §6.5.
+  ///
+  /// Like `_onCreatePressed`'s expanded branch, this is a pop-first,
+  /// `go`-second sequence so the dialog frame doesn't orphan against
+  /// the new page when the sheet is rendered as a `showDialog` on
+  /// medium/expanded. The pop is harmless on compact (the bottom-sheet
+  /// route pops normally; the subsequent `go` then replaces the stack).
   ///
   /// Edit-mode submit. Per architect §2.5 / PM "edits don't queue":
   /// PATCH on every form factor, sheet stays open until the server
@@ -444,12 +489,18 @@ class _LogEntrySheetBodyState extends ConsumerState<LogEntrySheetBody> {
     // the constructed `LogCreate` shadow even in edit mode if needed.
     widget.onSubmit(_buildLogCreate());
 
-    // No-op guard: if nothing changed, just pop without a network call.
-    // The CTA enablement guard should have prevented this, but it's
-    // cheap to re-check at submit time.
+    // No-op guard: if nothing changed, just pop + route without a
+    // network call. The CTA enablement guard should have prevented
+    // this, but it's cheap to re-check at submit time. PM acceptance
+    // §2.2: "The edit-mode no-op-PATCH branch routes too — the user
+    // pressed save and expects to land at Today even if nothing
+    // changed."
     if (patch.isEmpty) {
       if (!mounted) return;
+      // T-24 Case 2 (dialog ordering): pop the dialog first, then `go`.
       Navigator.of(context).pop<LogEntry?>(widget.existing);
+      if (!context.mounted) return;
+      context.go(pathForDay(_date));
       return;
     }
 
@@ -471,7 +522,12 @@ class _LogEntrySheetBodyState extends ConsumerState<LogEntrySheetBody> {
           ..invalidate(daySummaryProvider(originalDate))
           ..invalidate(logEntriesProvider(originalDate));
       }
+      // T-24 Case 2 (dialog ordering): pop first, then `go(newDate)` —
+      // never `originalDate`. The `context.mounted` check between is
+      // defence in case the BuildContext is disposed during pop.
       Navigator.of(context).pop<LogEntry?>(updated);
+      if (!context.mounted) return;
+      context.go(pathForDay(newDate));
     } catch (e) {
       if (!mounted) return;
       setState(() => _submitting = false);
