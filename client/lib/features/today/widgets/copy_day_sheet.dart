@@ -7,6 +7,7 @@ import '../../../domain/log_entry.dart';
 import '../../../domain/meal.dart';
 import '../../../domain/units/energy.dart';
 import '../../../form_factor/form_factor.dart';
+import '../../../providers/food_providers.dart';
 import '../../../providers/log_providers.dart';
 import '../../../providers/repository_providers.dart';
 import '../../../theme/context_extensions.dart';
