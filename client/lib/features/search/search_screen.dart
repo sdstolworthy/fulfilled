@@ -381,6 +381,17 @@ class _ResultsSection extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // QL-109 — defense in depth against the empty-query flash. The
+    // parent `SearchScreenBody` already gates the render on
+    // `isQueryActive = _query.trim().isNotEmpty`, but if a caller ever
+    // mounts `_ResultsSection` with an empty query (or a query that
+    // becomes empty between frames), short-circuit before consulting
+    // the debounced search future. Reading `foodSearchProvider('')`
+    // returns an empty list synchronously today — but a stale cached
+    // value for a prior key could otherwise paint for a frame.
+    if (query.trim().isEmpty) {
+      return const SizedBox.shrink();
+    }
     final results = ref.watch(foodSearchProvider(query));
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,

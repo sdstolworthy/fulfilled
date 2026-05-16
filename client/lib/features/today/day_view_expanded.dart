@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import 'package:fulfilled/widgets/empty_state.dart';
 import 'package:fulfilled/widgets/meal_section.dart';
+import 'package:fulfilled/widgets/primary_button.dart';
 import 'package:fulfilled/widgets/ring_summary_card.dart';
 
 import '../../domain/day_summary.dart';
@@ -14,6 +16,7 @@ import '../../domain/weight.dart';
 import '../../providers/food_providers.dart';
 import '../../providers/log_providers.dart';
 import '../../providers/profile_providers.dart';
+import '../../providers/repository_providers.dart';
 import '../../providers/weight_providers.dart';
 import '../../routing/routes.dart';
 import '../../theme/context_extensions.dart';
@@ -88,16 +91,33 @@ class DayViewExpanded extends ConsumerWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
                   Expanded(
-                    child: _MealGrid(
-                      date: date,
-                      summaryAsync: summaryAsync,
-                      entriesAsync: entriesAsync,
-                      // LU-005: tap-to-edit. The pending-sync guard
-                      // inside `editLogEntry` is a no-op on expanded
-                      // (no outbox), but routing through the same
-                      // helper keeps both day views feature-parity.
-                      onEntryTap: (entry) =>
-                          editLogEntry(ref, context, entry),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: <Widget>[
+                        // QL-108 — empty-day pill renders between the
+                        // page header and the meal grid when the day
+                        // has no entries. Reactive on `entriesAsync`;
+                        // disappears the moment the first entry lands.
+                        _EmptyDayPill(entriesAsync: entriesAsync),
+                        _MealGrid(
+                          date: date,
+                          summaryAsync: summaryAsync,
+                          entriesAsync: entriesAsync,
+                          // LU-005: tap-to-edit. The pending-sync guard
+                          // inside `editLogEntry` is a no-op on expanded
+                          // (no outbox), but routing through the same
+                          // helper keeps both day views feature-parity.
+                          onEntryTap: (entry) =>
+                              editLogEntry(ref, context, entry),
+                          // QL-108 — pass the pending-sync predicate
+                          // through. Always returns `false` on expanded
+                          // (no outbox), but the row code is shared with
+                          // compact so the prop ships unconditionally.
+                          isPendingSync: (entry) => ref
+                              .read(logRepositoryProvider)
+                              .isPendingSync(entry.id),
+                        ),
+                      ],
                     ),
                   ),
                   SizedBox(width: context.space.x6),
@@ -294,11 +314,18 @@ class _MealGrid extends StatelessWidget {
     required this.summaryAsync,
     required this.entriesAsync,
     required this.onEntryTap,
+    required this.isPendingSync,
   });
   final DateTime date;
   final AsyncValue<DaySummary> summaryAsync;
   final AsyncValue<List<LogEntry>> entriesAsync;
   final void Function(LogEntry entry) onEntryTap;
+
+  /// Predicate threaded down to `_EntryRow` for the "Pending sync" badge
+  /// + rejected-tap pulse (QL-108). Always `false` on expanded (no
+  /// outbox) — the prop ships unconditionally to keep the leaf widget
+  /// form-factor-blind.
+  final bool Function(LogEntry entry) isPendingSync;
 
   @override
   Widget build(BuildContext context) {
@@ -327,6 +354,7 @@ class _MealGrid extends StatelessWidget {
             entries: byMeal[meal] ?? const <LogEntry>[],
             onAddTap: () => context.push(Routes.foodsSearchPath),
             onEntryTap: onEntryTap,
+            isPendingSync: isPendingSync,
             dense: true,
           ),
       ],
@@ -430,6 +458,42 @@ class _QuickAddCard extends StatelessWidget {
       recents: recents,
       frequents: frequents,
       onTapFood: (food) => showLogEntrySheet(context, food: food),
+    );
+  }
+}
+
+/// Expanded mirror of compact's empty-day pill (QL-108). Renders above
+/// the meal grid when the day has no entries. Hidden while loading and
+/// when the day has at least one entry. Uses the lifted `EmptyState`
+/// primitive so the affordance shape matches the compact day view
+/// byte-for-byte.
+class _EmptyDayPill extends StatelessWidget {
+  const _EmptyDayPill({required this.entriesAsync});
+
+  final AsyncValue<List<LogEntry>> entriesAsync;
+
+  @override
+  Widget build(BuildContext context) {
+    final entries = entriesAsync.valueOrNull;
+    if (entries == null || entries.isNotEmpty) {
+      return const SizedBox.shrink();
+    }
+    return Padding(
+      padding: EdgeInsets.only(bottom: context.space.x4),
+      child: EmptyState(
+        key: const Key('empty-day-pill'),
+        icon: Icons.eco_outlined,
+        title: 'No food logged for this day',
+        body: '',
+        action: SizedBox(
+          width: 200,
+          child: PrimaryButton(
+            dense: true,
+            label: 'Log a food',
+            onPressed: () => context.push(Routes.foodsSearchPath),
+          ),
+        ),
+      ),
     );
   }
 }

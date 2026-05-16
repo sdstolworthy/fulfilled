@@ -30,6 +30,7 @@ class OnboardingStepShell extends StatelessWidget {
     required this.onPrimary,
     this.subtitle,
     this.onBack,
+    this.onStartOver,
     this.showProgress = true,
     this.showEyebrow = true,
     super.key,
@@ -62,6 +63,13 @@ class OnboardingStepShell extends StatelessWidget {
   /// Back-tap handler. Step 1 omits this — no back from welcome.
   final VoidCallback? onBack;
 
+  /// QL-108 — top-right "Start over" affordance. Tap dispatches a
+  /// confirmation dialog; on confirm the host resets the draft and
+  /// routes to `/onboarding/1`. Renders on every step including
+  /// welcome — the affordance is a single-tap reset from any point in
+  /// the flow.
+  final VoidCallback? onStartOver;
+
   final bool showProgress;
   final bool showEyebrow;
 
@@ -70,8 +78,11 @@ class OnboardingStepShell extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
-        if (onBack != null)
-          _TopBar(onBack: onBack!)
+        // QL-108: the top bar always renders when there's a "Start over"
+        // affordance so it appears on step 1 (welcome) too — even when
+        // there's no back chevron to anchor the row.
+        if (onBack != null || onStartOver != null)
+          _TopBar(onBack: onBack, onStartOver: onStartOver)
         else
           SizedBox(height: context.space.x4),
         if (showProgress)
@@ -126,9 +137,10 @@ class OnboardingStepShell extends StatelessWidget {
 }
 
 class _TopBar extends StatelessWidget {
-  const _TopBar({required this.onBack});
+  const _TopBar({this.onBack, this.onStartOver});
 
-  final VoidCallback onBack;
+  final VoidCallback? onBack;
+  final VoidCallback? onStartOver;
 
   @override
   Widget build(BuildContext context) {
@@ -141,19 +153,39 @@ class _TopBar extends StatelessWidget {
       ),
       child: Row(
         children: <Widget>[
-          TextButton(
-            onPressed: onBack,
-            style: TextButton.styleFrom(
-              foregroundColor: context.colors.ink2,
-              padding: EdgeInsets.symmetric(
-                horizontal: context.space.x3,
-                vertical: context.space.x2,
+          if (onBack != null)
+            TextButton(
+              onPressed: onBack,
+              style: TextButton.styleFrom(
+                foregroundColor: context.colors.ink2,
+                padding: EdgeInsets.symmetric(
+                  horizontal: context.space.x3,
+                  vertical: context.space.x2,
+                ),
+                minimumSize: const Size(44, 44),
               ),
-              minimumSize: const Size(44, 44),
+              child: Text('Back', style: context.text.body),
             ),
-            child: Text('Back', style: context.text.body),
-          ),
           const Spacer(),
+          // QL-108 — top-right "Start over" affordance. Subtle (ink2)
+          // and small (`meta` typography) so it doesn't compete with
+          // the page title or the primary CTA in the footer. The
+          // 44 × 44 `minimumSize` lifts the gesture surface to T-06's
+          // hit-slop floor even though the rendered text is shorter.
+          if (onStartOver != null)
+            TextButton(
+              key: const Key('onboarding-start-over'),
+              onPressed: onStartOver,
+              style: TextButton.styleFrom(
+                foregroundColor: context.colors.ink2,
+                padding: EdgeInsets.symmetric(
+                  horizontal: context.space.x3,
+                  vertical: context.space.x2,
+                ),
+                minimumSize: const Size(44, 44),
+              ),
+              child: Text('Start over', style: context.text.meta),
+            ),
         ],
       ),
     );

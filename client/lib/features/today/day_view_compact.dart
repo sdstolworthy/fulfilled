@@ -2,14 +2,17 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import 'package:fulfilled/widgets/empty_state.dart';
 import 'package:fulfilled/widgets/icon_button_36.dart';
 import 'package:fulfilled/widgets/meal_section.dart';
+import 'package:fulfilled/widgets/primary_button.dart';
 import 'package:fulfilled/widgets/ring_summary_card.dart';
 
 import '../../domain/day_summary.dart';
 import '../../domain/log_entry.dart';
 import '../../domain/meal.dart';
 import '../../providers/log_providers.dart';
+import '../../providers/repository_providers.dart';
 import '../../routing/routes.dart';
 import '../../theme/context_extensions.dart';
 import 'today_internals.dart';
@@ -70,6 +73,15 @@ class DayViewCompact extends ConsumerWidget {
               ),
             ),
           ),
+          // QL-108 — empty-day pill. Renders between the ring summary
+          // and the meal sections when `logEntriesProvider(date)` resolves
+          // to an empty list (any day, including backdates). The pill
+          // disappears the moment the first entry lands because
+          // `entriesAsync` is reactive. Uses the lifted `EmptyState`
+          // primitive directly — `EmptyState`-style "pill" (not a card).
+          SliverToBoxAdapter(
+            child: _EmptyDayPill(entriesAsync: entriesAsync),
+          ),
           SliverPadding(
             padding: EdgeInsets.fromLTRB(
               context.space.x5,
@@ -88,6 +100,14 @@ class DayViewCompact extends ConsumerWidget {
               // and fetches the full Food before opening — see
               // `editLogEntry` for the gates.
               onEntryTap: (entry) => editLogEntry(ref, context, entry),
+              // QL-108 — thread the outbox's `isPendingSync` predicate
+              // down so `_EntryRow` can render the "Pending sync" badge
+              // and pulse it on rejected tap. The compact form factor
+              // mounts the outbox-backed `LogRepository` (see
+              // `repository_providers.dart`); the predicate returns
+              // `false` for ack'd entries.
+              isPendingSync: (entry) =>
+                  ref.read(logRepositoryProvider).isPendingSync(entry.id),
             ),
           ),
         ],
@@ -205,6 +225,7 @@ class _MealsSliver extends StatelessWidget {
     required this.entriesAsync,
     required this.onAddTap,
     required this.onEntryTap,
+    required this.isPendingSync,
   });
 
   final DateTime date;
@@ -212,6 +233,11 @@ class _MealsSliver extends StatelessWidget {
   final AsyncValue<List<LogEntry>> entriesAsync;
   final void Function(Meal meal) onAddTap;
   final void Function(LogEntry entry) onEntryTap;
+
+  /// Predicate the meal section threads to `_EntryRow` so each row
+  /// renders the "Pending sync" badge and pulses it on rejected tap
+  /// (QL-108). Read from `LogRepository.isPendingSync` upstream.
+  final bool Function(LogEntry entry) isPendingSync;
 
   @override
   Widget build(BuildContext context) {
@@ -249,10 +275,61 @@ class _MealsSliver extends StatelessWidget {
               entries: byMeal[meal] ?? const <LogEntry>[],
               onAddTap: () => onAddTap(meal),
               onEntryTap: onEntryTap,
+              isPendingSync: isPendingSync,
             ),
           );
         },
         childCount: Meal.values.length,
+      ),
+    );
+  }
+}
+
+/// Empty-day pill (QL-108). Renders between the ring summary and the
+/// meal sections when the day's `logEntriesProvider` resolves to an
+/// empty list. The pill is hidden while entries are loading (skeletons
+/// upstream cover that frame) and on the error branch (the
+/// `TodayErrorCard` already communicates "we couldn't load your day").
+/// The moment the first entry lands `entriesAsync` re-emits a non-empty
+/// list and the pill disappears on the next frame.
+///
+/// Uses the lifted `EmptyState` primitive directly so every "no items
+/// here" surface picks up the same icon size, text scale, and `ink2/ink3`
+/// token wash. Not a card — the pill is informational and does not draw
+/// a surface border. `Icons.eco_outlined` matches the day-view's
+/// "fresh-start" affordance; the action is a dense `PrimaryButton` that
+/// pushes the search route.
+class _EmptyDayPill extends StatelessWidget {
+  const _EmptyDayPill({required this.entriesAsync});
+
+  final AsyncValue<List<LogEntry>> entriesAsync;
+
+  @override
+  Widget build(BuildContext context) {
+    final entries = entriesAsync.valueOrNull;
+    if (entries == null || entries.isNotEmpty) {
+      return const SizedBox.shrink();
+    }
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        context.space.x5,
+        0,
+        context.space.x5,
+        context.space.x3,
+      ),
+      child: EmptyState(
+        key: const Key('empty-day-pill'),
+        icon: Icons.eco_outlined,
+        title: 'No food logged for this day',
+        body: '',
+        action: SizedBox(
+          width: 200,
+          child: PrimaryButton(
+            dense: true,
+            label: 'Log a food',
+            onPressed: () => context.push(Routes.foodsSearchPath),
+          ),
+        ),
       ),
     );
   }

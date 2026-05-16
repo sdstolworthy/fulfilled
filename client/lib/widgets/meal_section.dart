@@ -9,6 +9,7 @@ import '../domain/log_entry.dart';
 import '../domain/meal.dart';
 import '../domain/units/energy.dart';
 import '../theme/context_extensions.dart';
+import 'motion.dart';
 
 /// One meal section card: header (dot + name + kcal total) → list of food
 /// rows → "Add food" footer.
@@ -30,6 +31,7 @@ class MealSection extends StatelessWidget {
     required this.onAddTap,
     this.dense = false,
     this.onEntryTap,
+    this.isPendingSync,
     super.key,
   });
 
@@ -48,6 +50,14 @@ class MealSection extends StatelessWidget {
   /// Optional handler for tapping an entry row (future: edit / delete).
   /// Null = the row is read-only.
   final void Function(LogEntry entry)? onEntryTap;
+
+  /// Optional predicate the day view threads through to each `_EntryRow`
+  /// so the row can render the "Pending sync" badge and pulse it on a
+  /// rejected tap (QL-108 / T-22). Returns `true` when the entry's POST
+  /// hasn't ack'd yet (consults `LogRepository.isPendingSync` upstream).
+  /// Null = "no entries are pending" (used by tests + the expanded form
+  /// factor's no-outbox path).
+  final bool Function(LogEntry entry)? isPendingSync;
 
   /// `true` slims the vertical padding for the expanded 2×2 grid.
   final bool dense;
@@ -74,6 +84,7 @@ class MealSection extends StatelessWidget {
               entry: entry,
               onTap: onEntryTap == null ? null : () => onEntryTap!(entry),
               dense: dense,
+              isPendingSync: isPendingSync?.call(entry) ?? false,
             ),
           _AddFootRow(onTap: onAddTap, dense: dense, drawTopBorder: !isEmpty),
         ],
@@ -144,36 +155,83 @@ class _Header extends StatelessWidget {
   }
 }
 
-class _EntryRow extends StatelessWidget {
+/// A single logged-entry row inside a `MealSection`.
+///
+/// Stateful because of QL-108's "pulse the pending badge on a rejected
+/// tap": tapping the row when `isPendingSync == true` schedules a
+/// 200 ms `AnimatedScale` from 1.0 → 1.08 → 1.0 on the badge so the
+/// user sees what's blocking their edit (the row's existing SnackBar
+/// from `editLogEntry` still fires). The `motion()` helper collapses
+/// the duration to zero when `MediaQuery.disableAnimations` is on so
+/// reduce-motion users get the badge without the pulse.
+class _EntryRow extends StatefulWidget {
   const _EntryRow({
     required this.entry,
     required this.onTap,
     required this.dense,
+    required this.isPendingSync,
   });
 
   final LogEntry entry;
   final VoidCallback? onTap;
   final bool dense;
 
+  /// When `true`, render the "Pending sync" badge and pulse it on tap.
+  /// Threaded through `MealSection` from the day view's
+  /// `LogRepository.isPendingSync(entry.id)` lookup.
+  final bool isPendingSync;
+
+  @override
+  State<_EntryRow> createState() => _EntryRowState();
+}
+
+class _EntryRowState extends State<_EntryRow> {
+  /// Drives the "Pending sync" badge's `AnimatedScale`. Toggles
+  /// `false → true` on a pending-row tap, then back to `false` after
+  /// 200 ms (or the reduce-motion-collapsed equivalent). The
+  /// `AnimatedScale` interpolates between `1.0` (rest) and `_pulseScale`
+  /// during the 200 ms window, so the user sees a single soft pulse.
+  bool _pulsing = false;
+
+  /// Peak scale of the rejected-tap pulse. 1.08 reads as a deliberate
+  /// nudge without overshoot — the same magnitude as the architect's
+  /// "soft visual cue" callout.
+  static const double _pulseScale = 1.08;
+
   @override
   Widget build(BuildContext context) {
     final colors = context.colors;
+    final entry = widget.entry;
 
     // LU-005 / T-20: announce the row as a tappable "edit" target so
     // screen readers don't read the food name + serving + kcal as three
     // independent strings. `ExcludeSemantics` collapses the inner Text
     // nodes — the merged label below is the single announcement.
     final servingPart = entry.servingName ?? '';
+    final pendingSuffix =
+        widget.isPendingSync ? ', still syncing, edit unavailable' : '';
     final semanticsLabel =
         '${entry.foodName}, $servingPart, ${formatKcal(entry.kcal)} '
-        'kilocalories, edit';
+        'kilocalories, edit$pendingSuffix';
 
     return Semantics(
       button: true,
       label: semanticsLabel,
       child: ExcludeSemantics(
         child: InkWell(
-          onTap: onTap,
+          onTap: widget.onTap == null
+              ? null
+              : () {
+                  // QL-108: when the row is pending sync, schedule the
+                  // badge pulse alongside the existing handler call.
+                  // The handler short-circuits at the pending-sync gate
+                  // and fires the "Still syncing" SnackBar — the pulse
+                  // is the second half of the belt-and-braces feedback.
+                  if (widget.isPendingSync) {
+                    _triggerPulse();
+                  }
+                  widget.onTap!();
+                },
           // T-018 / §7: rows tint to `line2` on hover; never accent, never
           // elevation. Pin Material's hover paint to the token so the
           // primitive matches `Hoverable`.
@@ -184,7 +242,9 @@ class _EntryRow extends StatelessWidget {
             ),
             padding: EdgeInsets.symmetric(
               horizontal: context.space.x4,
-              vertical: dense ? context.space.x2 + 1 : context.space.x2 + 2,
+              vertical: widget.dense
+                  ? context.space.x2 + 1
+                  : context.space.x2 + 2,
             ),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.center,
@@ -201,23 +261,58 @@ class _EntryRow extends StatelessWidget {
                         style: context.text.body,
                       ),
                       SizedBox(height: context.space.x05),
-                      Text(
-                        _metaLine(entry),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: context.text.meta,
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: <Widget>[
+                          Flexible(
+                            child: Text(
+                              _metaLine(entry),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: context.text.meta,
+                            ),
+                          ),
+                          if (widget.isPendingSync) ...<Widget>[
+                            SizedBox(width: context.space.x2),
+                            _PendingSyncBadge(
+                              pulsing: _pulsing,
+                              pulseScale: _pulseScale,
+                            ),
+                          ],
+                        ],
                       ),
                     ],
                   ),
                 ),
                 SizedBox(width: context.space.x3),
-                _KcalCell(entry: entry, dense: dense),
+                _KcalCell(entry: entry, dense: widget.dense),
               ],
             ),
           ),
         ),
       ),
     );
+  }
+
+  /// Schedule a one-shot 200 ms pulse. The state mutation drives the
+  /// outer `AnimatedScale`'s `scale` prop from 1.0 → 1.08 in the first
+  /// 100 ms (the `AnimatedScale.duration` below), and the matching
+  /// `Future.delayed` flips back to 1.0 for the trailing 100 ms — net
+  /// effect: a 1.0 → 1.08 → 1.0 there-and-back pulse that resolves to
+  /// rest in 200 ms (or 0 ms with reduce-motion).
+  ///
+  /// Guarded against re-entry: if the user taps a pending row twice
+  /// quickly, the second tap is a no-op while a pulse is in flight.
+  /// Tests can therefore assert "first tap sets `_pulsing = true`,
+  /// 200 ms later it's `false`" without flake from rapid double-taps.
+  void _triggerPulse() {
+    if (_pulsing) return;
+    setState(() => _pulsing = true);
+    final halfPulse = motion(context, const Duration(milliseconds: 100));
+    Future.delayed(halfPulse, () {
+      if (!mounted) return;
+      setState(() => _pulsing = false);
+    });
   }
 
   String _metaLine(LogEntry entry) {
@@ -228,6 +323,60 @@ class _EntryRow extends StatelessWidget {
     // already denormalized. Keep the meta line to the serving label so we
     // never invent a brand string. The expanded mock matches the compact.
     return parts.join(' · ');
+  }
+}
+
+/// "Pending sync" badge next to the meta line. Rendered only when the
+/// entry's POST hasn't ack'd. The outer `AnimatedScale` is what QL-108
+/// pulses on a rejected tap: the parent flips `pulsing` `false → true →
+/// false` over a 200 ms window (100 ms up, 100 ms down), and the
+/// `AnimatedScale.duration` of 100 ms interpolates each leg. Net effect:
+/// a 1.0 → 1.08 → 1.0 there-and-back pulse. The `motion()` helper
+/// collapses the duration to zero when `MediaQuery.disableAnimations`
+/// is on so reduce-motion users still get the badge and the SnackBar,
+/// just without the scale tween.
+///
+/// Tenants honored: T-20 (the badge is hidden from semantics — the
+/// parent row's Semantics label carries the "still syncing" suffix so
+/// the screen reader announces one merged string instead of two).
+class _PendingSyncBadge extends StatelessWidget {
+  const _PendingSyncBadge({
+    required this.pulsing,
+    required this.pulseScale,
+  });
+
+  final bool pulsing;
+  final double pulseScale;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.colors;
+    return ExcludeSemantics(
+      child: AnimatedScale(
+        scale: pulsing ? pulseScale : 1.0,
+        duration: motion(context, const Duration(milliseconds: 100)),
+        curve: Curves.easeOut,
+        child: Container(
+          key: const Key('pending-sync-badge'),
+          padding: EdgeInsets.symmetric(
+            horizontal: context.space.x2,
+            vertical: context.space.x05,
+          ),
+          decoration: BoxDecoration(
+            color: colors.line2,
+            borderRadius: BorderRadius.circular(context.radius.rPill),
+          ),
+          child: Text(
+            'Pending sync',
+            style: context.text.meta.copyWith(
+              color: colors.ink2,
+              fontSize: 11,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 

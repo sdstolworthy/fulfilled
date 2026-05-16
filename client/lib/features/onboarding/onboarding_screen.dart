@@ -65,6 +65,43 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     );
   }
 
+  /// QL-108 — "Start over" handler. Pops a confirmation `AlertDialog`
+  /// so the user doesn't accidentally wipe their draft; on confirm
+  /// resets the `onboardingDraftProvider` and routes to
+  /// `/onboarding/1`. The dialog matches Material's stock shape; copy
+  /// matches the PM spec ("Discard your responses and start over?").
+  ///
+  /// We `Navigator.pop(dialogCtx, true/false)` rather than reading
+  /// state from the dialog body so the confirm/cancel handlers don't
+  /// need any wired state of their own. The outer `await` resolves to
+  /// `null` if the dialog is dismissed via the scrim (treated as a
+  /// cancel).
+  Future<void> _onStartOver() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        title: const Text('Start over?'),
+        content: const Text('Discard your responses and start over?'),
+        actions: <Widget>[
+          TextButton(
+            key: const Key('start-over-cancel'),
+            onPressed: () => Navigator.pop(dialogCtx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            key: const Key('start-over-confirm'),
+            onPressed: () => Navigator.pop(dialogCtx, true),
+            child: const Text('Yes'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    ref.read(onboardingDraftProvider.notifier).reset();
+    if (!mounted) return;
+    context.go('/onboarding/1');
+  }
+
   Future<void> _finish() async {
     if (_submitting) return;
     final draft = ref.read(onboardingDraftProvider);
@@ -204,6 +241,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
           body: const Step1Welcome(),
           primaryLabel: 'Get started',
           onPrimary: () => _go(2),
+          onStartOver: _onStartOver,
         );
       case 2:
         return OnboardingStepShell(
@@ -216,6 +254,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
           body: const Step2AboutYou(),
           primaryLabel: 'Continue',
           onPrimary: () => _go(3),
+          onStartOver: _onStartOver,
         );
       case 3:
       default:
@@ -229,6 +268,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
           body: const Step3Goal(),
           primaryLabel: _submitting ? 'Saving…' : 'Start logging',
           onPrimary: _finish,
+          onStartOver: _onStartOver,
         );
     }
   }

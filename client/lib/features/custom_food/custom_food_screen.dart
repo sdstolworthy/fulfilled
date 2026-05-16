@@ -308,8 +308,25 @@ class _CustomFoodScreenState extends ConsumerState<CustomFoodScreen> {
     } on Object catch (err) {
       if (!mounted) return;
       setState(() => _saving = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Couldn't save food: $err")),
+      // QL-109 — surface a Retry affordance instead of leaving the
+      // user to find the footer button again. The draft is already
+      // preserved (we never called `notifier.reset()` on the failure
+      // path), so the action re-invokes `_onCreateSave` against the
+      // same draft state. T-11 inline-error pattern: SnackBar is the
+      // attention surface, the Retry action is the persistence.
+      final messenger = ScaffoldMessenger.of(context);
+      messenger.hideCurrentSnackBar();
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text("Couldn't save food: $err"),
+          action: SnackBarAction(
+            label: 'Retry',
+            onPressed: () {
+              if (!mounted) return;
+              _onCreateSave();
+            },
+          ),
+        ),
       );
     }
   }
@@ -361,8 +378,22 @@ class _CustomFoodScreenState extends ConsumerState<CustomFoodScreen> {
     } on Object catch (err) {
       if (!mounted) return;
       setState(() => _saving = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Couldn't save changes: $err")),
+      // QL-109 — Retry affordance, see `_onCreateSave` for the rationale.
+      // The draft stays populated on failure, so the action re-runs the
+      // edit-save against the same (still-dirty) state.
+      final messenger = ScaffoldMessenger.of(context);
+      messenger.hideCurrentSnackBar();
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text("Couldn't save changes: $err"),
+          action: SnackBarAction(
+            label: 'Retry',
+            onPressed: () {
+              if (!mounted) return;
+              _onEditSave();
+            },
+          ),
+        ),
       );
     }
   }
