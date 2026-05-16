@@ -1,0 +1,454 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import 'package:intl/intl.dart';
+
+import '../../domain/enums.dart';
+import '../../domain/units/weight.dart';
+import '../../domain/user.dart';
+import '../../providers/food_providers.dart';
+import '../../providers/profile_providers.dart';
+import '../../routing/routes.dart';
+import '../../theme/context_extensions.dart';
+import 'widgets/activity_level_picker.dart';
+import 'widgets/birth_date_picker.dart';
+import 'widgets/current_weight_sheet.dart';
+import 'widgets/height_stepper_sheet.dart';
+import 'widgets/settings_card.dart';
+import 'widgets/settings_row.dart';
+import 'widgets/sex_picker.dart';
+
+/// Screen 08 — Profile & settings.
+///
+/// Layout (mirrors `specs/ui_mocks/screen_08_profile.html`):
+/// 1. Identity row: avatar + name + email + Edit.
+/// 2. **Body** card: sex, birth date, height (cm), current weight (kg),
+///    activity level.
+/// 3. **Preferences** card: Units (informational in v1 — PM Risk 4
+///    defers the toggle to v2). The **Appearance row is intentionally
+///    omitted** — PM Risk 5 removed it entirely from v1. Dark mode
+///    ships with v2 alongside the token sweep.
+/// 4. **Data** card: "My foods (N)" → `Routes.myFoodsPath`,
+///    "Export data" → SnackBar "Coming soon".
+/// 5. Sign-out outlined row in danger color → `AlertDialog` confirm.
+/// 6. Version footnote.
+///
+/// **Sign-out wiring TODO.** `authTokenProvider` is a plain `Provider<String?>`
+/// with no notifier surface (see `lib/data/auth_token.dart`). Confirming
+/// sign-out today is a no-op + SnackBar; once the auth surface lands the
+/// confirmation callback below picks up the real `signOut()`.
+class ProfileScreen extends ConsumerWidget {
+  const ProfileScreen({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final meAsync = ref.watch(meProvider);
+    final countAsync = ref.watch(customFoodCountProvider);
+
+    return meAsync.when(
+      loading: () => const _ProfileSkeleton(),
+      error: (err, _) => _ProfileError(message: err.toString()),
+      data: (user) => _ProfileBody(
+        user: user,
+        customFoodCount: countAsync.maybeWhen(
+          data: (n) => n,
+          orElse: () => user.customFoodCount,
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Body
+// ---------------------------------------------------------------------------
+
+class _ProfileBody extends ConsumerWidget {
+  const _ProfileBody({required this.user, required this.customFoodCount});
+
+  final User user;
+  final int customFoodCount;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final colors = context.colors;
+    final space = context.space;
+
+    return ListView(
+      padding: EdgeInsets.only(
+        top: space.x2,
+        bottom: space.x6,
+      ),
+      children: <Widget>[
+        // Page title — the architect brief renders "Me" as a top-bar h1
+        // (mock line 52). AppScaffold's `title` slot is reserved for
+        // shell-level chrome; we render the title inline so the
+        // compact/medium/expanded layout is consistent without forking
+        // an `AppScaffold(title: 'Me')` (T-15).
+        Padding(
+          padding: EdgeInsets.fromLTRB(
+            space.x5,
+            space.x2,
+            space.x5,
+            space.x3,
+          ),
+          child: Text('Me', style: context.text.pageTitle),
+        ),
+
+        // Identity row.
+        _IdentityRow(user: user),
+
+        // Body section.
+        SettingsCard(
+          title: 'Body',
+          rows: <Widget>[
+            SettingsRow(
+              icon: Icons.person_outline,
+              label: 'Sex',
+              value: _sexLabel(user.sex),
+              onTap: () => showSexPicker(context, initial: user.sex),
+            ),
+            SettingsRow(
+              icon: Icons.calendar_today_outlined,
+              label: 'Birth date',
+              value: _birthDateLabel(user.birthDate),
+              onTap: () => showBirthDatePicker(
+                context,
+                ref,
+                initial: user.birthDate,
+              ),
+            ),
+            SettingsRow(
+              key: const Key('row-height'),
+              icon: Icons.height,
+              label: 'Height',
+              value: user.heightCm == null
+                  ? 'Set'
+                  : '${user.heightCm!.toBigInt()} cm',
+              onTap: () => showHeightStepperSheet(
+                context,
+                initial: user.heightCm,
+              ),
+            ),
+            SettingsRow(
+              icon: Icons.monitor_weight_outlined,
+              label: 'Current weight',
+              value: user.currentWeightKg == null
+                  ? 'Set'
+                  : '${formatWeightKg(user.currentWeightKg!)} kg',
+              onTap: () => showCurrentWeightSheet(
+                context,
+                initial: user.currentWeightKg,
+              ),
+            ),
+            SettingsRow(
+              icon: Icons.directions_run,
+              label: 'Activity',
+              value: user.activityLevel == null
+                  ? 'Set'
+                  : activityLevelLabel(user.activityLevel!),
+              onTap: () => showActivityLevelPicker(
+                context,
+                initial: user.activityLevel,
+              ),
+            ),
+          ],
+        ),
+
+        // Preferences section. PM Risk 5: Appearance row is **NOT**
+        // rendered, not even disabled. v1 ships without the toggle.
+        SettingsCard(
+          title: 'Preferences',
+          rows: <Widget>[
+            // Units row is informational in v1 (PM Risk 4 defers the
+            // toggle). Pass `onTap: null` so the chevron drops + the
+            // row is non-interactive — see `SettingsRow` docstring.
+            const SettingsRow(
+              key: Key('row-units'),
+              icon: Icons.public,
+              label: 'Units',
+              value: 'kg, cm, kcal, g',
+              semanticsLabel:
+                  'Units: kilograms, centimeters, kilocalories, grams. '
+                  'Unit preferences arrive in a later release.',
+            ),
+          ],
+        ),
+
+        // Data section.
+        SettingsCard(
+          title: 'Data',
+          rows: <Widget>[
+            SettingsRow(
+              icon: Icons.bookmark_outline,
+              label: 'My foods',
+              value: '$customFoodCount',
+              onTap: () => context.push(Routes.myFoodsPath),
+            ),
+            SettingsRow(
+              icon: Icons.ios_share_outlined,
+              label: 'Export data',
+              onTap: () {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Coming soon')),
+                );
+              },
+            ),
+          ],
+        ),
+
+        SizedBox(height: space.x4),
+
+        // Sign-out outlined-row in danger color. Tap → AlertDialog
+        // confirm. T-04: danger, not accent. T-11: AlertDialog is the
+        // legal home for destructive confirmation.
+        Padding(
+          padding: EdgeInsets.symmetric(horizontal: space.x5),
+          child: _SignOutRow(
+            onConfirmed: () => _onSignOutConfirmed(context),
+          ),
+        ),
+
+        SizedBox(height: space.x4),
+
+        // Version footnote.
+        Center(
+          child: Text(
+            'Fulfilled · v0.1.0 (dev)',
+            style: context.text.meta.copyWith(color: colors.ink3),
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _onSignOutConfirmed(BuildContext context) {
+    // TODO(auth): wire to a real sign-out hook when `authTokenProvider`
+    // gains a notifier surface in `lib/data/auth_token.dart`. v1 runs
+    // against `DEV_AUTH_BYPASS`, so there's no session to revoke.
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Signed out (no-op in dev)')),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Identity row
+// ---------------------------------------------------------------------------
+
+class _IdentityRow extends StatelessWidget {
+  const _IdentityRow({required this.user});
+
+  final User user;
+
+  String _initials(String? displayName, String? email) {
+    final source = (displayName == null || displayName.isEmpty)
+        ? (email ?? '?')
+        : displayName;
+    final parts = source.trim().split(RegExp(r'[\s@.]+'));
+    if (parts.isEmpty) return '?';
+    if (parts.length == 1) {
+      final s = parts.first;
+      return s.isEmpty ? '?' : s.substring(0, 1).toUpperCase();
+    }
+    return (parts[0].substring(0, 1) + parts[1].substring(0, 1)).toUpperCase();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.colors;
+    final space = context.space;
+
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        space.x5,
+        space.x1,
+        space.x5,
+        space.x4,
+      ),
+      child: Row(
+        children: <Widget>[
+          Container(
+            width: 64,
+            height: 64,
+            decoration: BoxDecoration(
+              color: colors.accentSoft,
+              borderRadius: BorderRadius.circular(32),
+            ),
+            alignment: Alignment.center,
+            child: Text(
+              _initials(user.displayName, user.email),
+              style: context.text.title.copyWith(color: colors.accent),
+            ),
+          ),
+          SizedBox(width: space.x3 + 2),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(
+                  user.displayName?.isNotEmpty == true
+                      ? user.displayName!
+                      : 'Set a name',
+                  style: context.text.title,
+                ),
+                SizedBox(height: space.x05),
+                if (user.email != null)
+                  Text(user.email!, style: context.text.meta),
+              ],
+            ),
+          ),
+          TextButton(
+            onPressed: () {
+              // The Edit affordance reuses the identity-tap entry
+              // point — opens the same display-name + email editor.
+              // v1 doesn't have a dedicated identity editor; the
+              // designer didn't mock one. Surface a coming-soon hint
+              // rather than ship a half-built form.
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Coming soon')),
+              );
+            },
+            style: TextButton.styleFrom(
+              foregroundColor: colors.accent,
+              textStyle: context.text.bodyStrong,
+            ),
+            child: const Text('Edit'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Sign-out row
+// ---------------------------------------------------------------------------
+
+class _SignOutRow extends StatelessWidget {
+  const _SignOutRow({required this.onConfirmed});
+
+  final VoidCallback onConfirmed;
+
+  Future<void> _confirm(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Sign out?'),
+          content: const Text(
+            'You can sign back in from the welcome screen.',
+          ),
+          actions: <Widget>[
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              style: TextButton.styleFrom(
+                foregroundColor: context.colors.danger,
+              ),
+              child: const Text('Sign out'),
+            ),
+          ],
+        );
+      },
+    );
+    if (confirmed == true) onConfirmed();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.colors;
+    return Material(
+      color: colors.surface,
+      borderRadius: BorderRadius.circular(context.radius.r3),
+      child: InkWell(
+        key: const Key('sign-out-row'),
+        onTap: () => _confirm(context),
+        borderRadius: BorderRadius.circular(context.radius.r3),
+        child: Container(
+          padding: EdgeInsets.symmetric(
+            horizontal: context.space.x4,
+            vertical: context.space.x3 + 2,
+          ),
+          decoration: BoxDecoration(
+            color: colors.surface,
+            border: Border.all(color: colors.line),
+            borderRadius: BorderRadius.circular(context.radius.r3),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: <Widget>[
+              Icon(Icons.logout, size: 18, color: colors.danger),
+              SizedBox(width: context.space.x2),
+              Text(
+                'Sign out',
+                style: context.text.bodyStrong.copyWith(color: colors.danger),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Loading + error
+// ---------------------------------------------------------------------------
+
+class _ProfileSkeleton extends StatelessWidget {
+  const _ProfileSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    // T-08: skeleton heights mirror the final layout. Cheap stand-in —
+    // a full skeleton catalogue lives in `widgets/skeleton.dart` (not
+    // yet built); when it lands, swap this in.
+    return const Center(child: CircularProgressIndicator());
+  }
+}
+
+class _ProfileError extends StatelessWidget {
+  const _ProfileError({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.all(context.space.x6),
+      child: Center(
+        child: Text(
+          'Could not load profile.\n$message',
+          style: context.text.meta.copyWith(color: context.colors.danger),
+          textAlign: TextAlign.center,
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Formatters
+// ---------------------------------------------------------------------------
+
+String _sexLabel(Sex? sex) {
+  switch (sex) {
+    case Sex.male:
+      return 'Male';
+    case Sex.female:
+      return 'Female';
+    case Sex.other:
+      return 'Other';
+    case null:
+      return 'Set';
+  }
+}
+
+String _birthDateLabel(DateTime? date) {
+  if (date == null) return 'Set';
+  return DateFormat('MMM d, y').format(date);
+}

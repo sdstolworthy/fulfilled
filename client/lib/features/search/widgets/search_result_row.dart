@@ -1,0 +1,307 @@
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:go_router/go_router.dart';
+
+import '../../../domain/enums.dart';
+import '../../../domain/food.dart';
+import '../../../domain/serving.dart';
+import '../../../domain/units/energy.dart';
+import '../../../theme/context_extensions.dart';
+
+/// Single result row in the search list.
+///
+/// Layout per `screen_02_search.html`:
+/// - 36 px square thumb on the left (OFF / YOU / USDA badge)
+/// - name (with `<mark>` highlight) over a meta line "Brand · serving"
+/// - right column: kcal number + "per serving" label
+///
+/// **Highlight rule (architect brief gotcha).** Multi-word queries split
+/// on whitespace; each non-empty word is matched case-insensitively
+/// against the name, and each match gets a `highlight` background via a
+/// `RichText` build. Overlapping matches are merged so we never produce
+/// nested highlight spans.
+///
+/// T-21: kcal renders through `formatKcal` — no inline rounding.
+/// T-02 numeric text uses the tabular-figures variant.
+/// T-06: full row is wrapped in an `InkWell` for ≥ 44 × 44 hit slop.
+class SearchResultRow extends StatelessWidget {
+  const SearchResultRow({
+    required this.food,
+    required this.query,
+    this.onTap,
+    super.key,
+  });
+
+  final Food food;
+  final String query;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final defaultServing = _defaultServing(food);
+    final kcal = food.caloriesPerDefaultServing;
+    final per = defaultServing == null
+        ? 'per serving'
+        : 'per ${_perLabel(defaultServing.name)}';
+
+    return InkWell(
+      onTap: onTap ?? () => context.push('/foods/${food.id}'),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 56),
+        child: Padding(
+          padding: EdgeInsets.symmetric(
+            horizontal: context.space.x5,
+            vertical: context.space.x3 + 2,
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: <Widget>[
+              _Thumb(source: food.source),
+              SizedBox(width: context.space.x3),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    _HighlightedName(name: food.name, query: query),
+                    SizedBox(height: 2),
+                    Text(
+                      _metaLine(food, defaultServing),
+                      style: context.text.metaNumeric.copyWith(
+                        color: context.colors.ink2,
+                        fontSize: 12,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+              SizedBox(width: context.space.x3),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  Text(
+                    kcal == null ? '—' : formatKcal(kcal),
+                    style: context.text.bodyNumeric.copyWith(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  SizedBox(height: 2),
+                  Text(
+                    per,
+                    style: context.text.meta.copyWith(
+                      color: context.colors.ink2,
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _Thumb extends StatelessWidget {
+  const _Thumb({required this.source});
+
+  final FoodSource source;
+
+  @override
+  Widget build(BuildContext context) {
+    final isUser = source == FoodSource.user;
+    final label = switch (source) {
+      FoodSource.user => 'YOU',
+      FoodSource.off => 'OFF',
+      FoodSource.usda => 'USDA',
+    };
+    return Container(
+      width: 36,
+      height: 36,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: isUser
+            ? const Color(0xFFF5EFE6) // mock-specific tan; no token exists.
+            : context.colors.accentSoft,
+        borderRadius: BorderRadius.circular(context.radius.r1 + 2),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontFamily: 'Inter',
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0.04 * 11,
+          color: isUser
+              ? const Color(0xFF8C6B2C) // ditto — exact mock value.
+              : context.colors.accent,
+        ),
+      ),
+    );
+  }
+}
+
+class _HighlightedName extends StatelessWidget {
+  const _HighlightedName({required this.name, required this.query});
+
+  final String name;
+  final String query;
+
+  @override
+  Widget build(BuildContext context) {
+    final spans = _highlightSpans(
+      text: name,
+      query: query,
+      base: context.text.body.copyWith(fontSize: 14),
+      highlightBg: context.colors.highlight,
+    );
+    return RichText(
+      text: TextSpan(children: spans),
+      maxLines: 2,
+      overflow: TextOverflow.ellipsis,
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers — exported as top-level so the highlight algorithm is testable.
+// ---------------------------------------------------------------------------
+
+/// Build `TextSpan`s for [text] with every match of every whitespace-split
+/// word in [query] painted with [highlightBg]. Matching is
+/// case-insensitive. Overlapping ranges are merged so the highlight is
+/// never nested (which would render double-thick on some platforms).
+///
+/// Empty / whitespace-only queries → a single plain span.
+List<TextSpan> _highlightSpans({
+  required String text,
+  required String query,
+  required TextStyle base,
+  required Color highlightBg,
+}) {
+  final trimmed = query.trim();
+  if (trimmed.isEmpty) {
+    return <TextSpan>[TextSpan(text: text, style: base)];
+  }
+
+  final words = trimmed
+      .split(RegExp(r'\s+'))
+      .where((w) => w.isNotEmpty)
+      .toList(growable: false);
+  if (words.isEmpty) {
+    return <TextSpan>[TextSpan(text: text, style: base)];
+  }
+
+  // Collect every (start, end) match across every word, then merge.
+  final lower = text.toLowerCase();
+  final ranges = <_Range>[];
+  for (final w in words) {
+    final needle = w.toLowerCase();
+    if (needle.isEmpty) continue;
+    var i = 0;
+    while (true) {
+      final idx = lower.indexOf(needle, i);
+      if (idx < 0) break;
+      ranges.add(_Range(idx, idx + needle.length));
+      i = idx + needle.length;
+    }
+  }
+  if (ranges.isEmpty) {
+    return <TextSpan>[TextSpan(text: text, style: base)];
+  }
+
+  // Merge overlapping / touching ranges.
+  ranges.sort((a, b) => a.start.compareTo(b.start));
+  final merged = <_Range>[ranges.first];
+  for (var k = 1; k < ranges.length; k++) {
+    final last = merged.last;
+    final cur = ranges[k];
+    if (cur.start <= last.end) {
+      merged[merged.length - 1] =
+          _Range(last.start, cur.end > last.end ? cur.end : last.end);
+    } else {
+      merged.add(cur);
+    }
+  }
+
+  final highlightStyle = base.copyWith(backgroundColor: highlightBg);
+  final spans = <TextSpan>[];
+  var cursor = 0;
+  for (final r in merged) {
+    if (r.start > cursor) {
+      spans.add(TextSpan(text: text.substring(cursor, r.start), style: base));
+    }
+    spans.add(TextSpan(
+      text: text.substring(r.start, r.end),
+      style: highlightStyle,
+    ));
+    cursor = r.end;
+  }
+  if (cursor < text.length) {
+    spans.add(TextSpan(text: text.substring(cursor), style: base));
+  }
+  return spans;
+}
+
+/// Test-only re-export of the highlight builder. Keeps the algorithm
+/// private to the library but reachable for unit tests that don't want
+/// to pump a widget tree just to assert the span shape.
+@visibleForTesting
+List<TextSpan> highlightSpansForTest({
+  required String text,
+  required String query,
+  required TextStyle base,
+  required Color highlightBg,
+}) =>
+    _highlightSpans(
+      text: text,
+      query: query,
+      base: base,
+      highlightBg: highlightBg,
+    );
+
+class _Range {
+  const _Range(this.start, this.end);
+  final int start;
+  final int end;
+}
+
+Serving? _defaultServing(Food food) {
+  for (final s in food.servings) {
+    if (s.isDefault) return s;
+  }
+  return food.servings.isEmpty ? null : food.servings.first;
+}
+
+String _metaLine(Food food, Serving? serving) {
+  final parts = <String>[];
+  if (food.brand != null && food.brand!.trim().isNotEmpty) {
+    parts.add(food.brand!.trim());
+  } else if (food.source == FoodSource.user) {
+    parts.add('Custom');
+  }
+  if (serving != null) {
+    parts.add(serving.name);
+  }
+  return parts.join(' · ');
+}
+
+String _perLabel(String servingName) {
+  // The mock shows "per serving" / "per container" / "per bottle" / "per
+  // bowl". Strip a leading "1 " and grab the first head noun; fall back
+  // to "serving". This is a cosmetic improvement only — the underlying
+  // computation is always per-default-serving.
+  final n = servingName.toLowerCase();
+  if (n.contains('container')) return 'container';
+  if (n.contains('bottle')) return 'bottle';
+  if (n.contains('bowl')) return 'bowl';
+  if (n.contains('slice')) return 'slice';
+  if (n.contains('piece')) return 'piece';
+  if (n.contains('cup')) return 'serving';
+  return 'serving';
+}

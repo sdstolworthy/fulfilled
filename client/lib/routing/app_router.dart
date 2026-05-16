@@ -2,6 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../features/custom_food/custom_food_screen.dart';
+import '../features/food_detail/food_detail_screen.dart';
+import '../features/goals/goals_screen.dart';
+import '../features/goals/widgets/new_goal_dialog.dart';
+import '../features/onboarding/onboarding_screen.dart';
+import '../features/profile/profile_screen.dart';
+import '../features/search/search_screen.dart';
+import '../features/today/today_screen.dart';
+import '../features/weight/weight_screen.dart';
 import '../widgets/app_scaffold.dart';
 import '../widgets/placeholder_screen.dart';
 import 'routes.dart';
@@ -17,12 +26,10 @@ import 'routes.dart';
 ///   highlighting can observe the active route (T-15-adjacent: shell
 ///   decides chrome from route, not from a parallel selection state).
 ///
-/// Every leaf is a `PlaceholderScreen`. Screen agents replace the leaves
-/// one by one. **Do not** restructure the shell tree without a foundation
-/// pass — sidebar/bottom-tabs depend on the ShellRoute boundary.
+/// Each leaf binds to its real `<Name>Screen` from `lib/features/<name>/`.
+/// `/foods/mine` and `/foods/barcode/:barcode` are still `PlaceholderScreen`
+/// pending dedicated implementations.
 
-/// Routes that are accessible from the persistent shell (bottom tabs /
-/// sidebar). Adding a new shell route here is a foundation-level change.
 final appRouterProvider = Provider<GoRouter>((ref) {
   return GoRouter(
     initialLocation: Routes.todayPath,
@@ -34,37 +41,29 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           GoRoute(
             name: Routes.todayName,
             path: Routes.todayPath,
-            builder: (_, __) => const PlaceholderScreen(
-              screenName: '01 Day view',
-              routePath: Routes.todayPath,
-            ),
+            builder: (_, __) => const TodayScreen(),
             routes: <RouteBase>[
               GoRoute(
                 name: Routes.todayDateName,
                 path: ':date',
-                builder: (_, state) => PlaceholderScreen(
-                  screenName: '01 Day view',
-                  routePath: '${Routes.todayPath}/${state.pathParameters['date']}',
-                  detail: 'date = ${state.pathParameters['date']}',
-                ),
+                builder: (_, state) {
+                  final raw = state.pathParameters['date'];
+                  final parsed = raw == null ? null : DateTime.tryParse(raw);
+                  return TodayScreen(date: parsed);
+                },
               ),
             ],
           ),
           GoRoute(
             name: Routes.foodsName,
             path: Routes.foodsPath,
-            builder: (_, __) => const PlaceholderScreen(
-              screenName: '02 Search',
-              routePath: Routes.foodsPath,
-            ),
+            builder: (_, __) => const SearchScreen(),
             routes: <RouteBase>[
               GoRoute(
                 name: Routes.foodsSearchName,
                 path: 'search',
-                builder: (_, state) => PlaceholderScreen(
-                  screenName: '02 Search',
-                  routePath: Routes.foodsSearchPath,
-                  detail: 'q = ${state.uri.queryParameters['q'] ?? ''}',
+                builder: (_, state) => SearchScreen(
+                  initialQuery: state.uri.queryParameters['q'] ?? '',
                 ),
               ),
               GoRoute(
@@ -73,6 +72,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
                 builder: (_, __) => const PlaceholderScreen(
                   screenName: 'My foods',
                   routePath: Routes.myFoodsPath,
+                  detail: 'Pending dedicated implementation.',
                 ),
               ),
             ],
@@ -80,34 +80,22 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           GoRoute(
             name: Routes.weightName,
             path: Routes.weightPath,
-            builder: (_, __) => const PlaceholderScreen(
-              screenName: '06 Weight log',
-              routePath: Routes.weightPath,
-            ),
+            builder: (_, __) => const WeightScreen(),
           ),
           GoRoute(
             name: Routes.meName,
             path: Routes.mePath,
-            builder: (_, __) => const PlaceholderScreen(
-              screenName: '08 Profile & settings',
-              routePath: Routes.mePath,
-            ),
+            builder: (_, __) => const ProfileScreen(),
           ),
           GoRoute(
             name: Routes.goalsName,
             path: Routes.goalsPath,
-            builder: (_, __) => const PlaceholderScreen(
-              screenName: '07 Goals',
-              routePath: Routes.goalsPath,
-            ),
+            builder: (_, __) => const GoalsScreen(),
             routes: <RouteBase>[
               GoRoute(
                 name: Routes.goalsNewName,
                 path: 'new',
-                builder: (_, __) => const PlaceholderScreen(
-                  screenName: '07 Goals — New goal',
-                  routePath: Routes.goalsNewPath,
-                ),
+                builder: (_, __) => const NewGoalDialog(),
               ),
             ],
           ),
@@ -118,19 +106,14 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         name: Routes.foodDetailName,
         path: Routes.foodDetailPath,
-        builder: (_, state) => PlaceholderScreen(
-          screenName: '03 Food detail',
-          routePath: '/foods/${state.pathParameters['foodId']}',
-          detail: 'foodId = ${state.pathParameters['foodId']}',
+        builder: (_, state) => FoodDetailScreen(
+          foodId: state.pathParameters['foodId']!,
         ),
       ),
       GoRoute(
         name: Routes.foodNewName,
         path: Routes.foodNewPath,
-        builder: (_, __) => const PlaceholderScreen(
-          screenName: '05 Custom food',
-          routePath: Routes.foodNewPath,
-        ),
+        builder: (_, __) => const CustomFoodScreen(),
       ),
       GoRoute(
         name: Routes.foodBarcodeName,
@@ -138,17 +121,19 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         builder: (_, state) => PlaceholderScreen(
           screenName: 'Barcode resolve',
           routePath: '/foods/barcode/${state.pathParameters['barcode']}',
-          detail: 'barcode = ${state.pathParameters['barcode']}',
+          detail: 'Resolver pending. The scanner pushes here on detection; '
+              'this route should look up the food by barcode and redirect '
+              'to /foods/:foodId.',
         ),
       ),
       GoRoute(
         name: Routes.onboardingName,
         path: Routes.onboardingPath,
-        builder: (_, state) => PlaceholderScreen(
-          screenName: '09 Onboarding',
-          routePath: '/onboarding/${state.pathParameters['step']}',
-          detail: 'step = ${state.pathParameters['step']}',
-        ),
+        builder: (_, state) {
+          final raw = state.pathParameters['step'] ?? '1';
+          final step = int.tryParse(raw) ?? 1;
+          return OnboardingScreen(step: step);
+        },
       ),
     ],
     errorBuilder: (context, state) => Scaffold(
