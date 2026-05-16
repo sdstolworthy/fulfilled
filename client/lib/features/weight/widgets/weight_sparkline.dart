@@ -8,6 +8,7 @@ import 'package:intl/intl.dart' hide TextDirection;
 import '../../../domain/enums.dart';
 import '../../../domain/units/weight.dart';
 import '../../../domain/weight.dart';
+import '../../../form_factor/form_factor.dart';
 import '../../../providers/goal_providers.dart';
 import '../../../providers/profile_providers.dart';
 import '../../../providers/weight_providers.dart';
@@ -235,13 +236,18 @@ class _ChartBody extends StatelessWidget {
     final colors = context.colors;
     return Semantics(
       label: 'Weight trend, ${points.length} points',
-      child: CustomPaint(
-        size: Size.infinite,
-        painter: _SparklinePainter(
-          points: points,
-          goalKg: goalKg,
-          unit: unit,
-          colors: colors,
+      child: _ScrubGestureWrap(
+        points: points,
+        unit: unit,
+        colors: colors,
+        child: CustomPaint(
+          size: Size.infinite,
+          painter: _SparklinePainter(
+            points: points,
+            goalKg: goalKg,
+            unit: unit,
+            colors: colors,
+          ),
         ),
       ),
     );
@@ -707,4 +713,324 @@ class _EmptySparklinePainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _EmptySparklinePainter old) =>
       old.goalKg != goalKg || old.unit != unit;
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// F4 — Sparkline scrub-to-read gesture (UX-108).
+//
+// Wraps the existing chart `CustomPaint` in a gesture-aware overlay:
+//
+//   - Compact: `GestureDetector` with `onHorizontalDrag*` +
+//     `HitTestBehavior.translucent`. Horizontal-drag-only so the
+//     vertical scroll of the parent `ListView` is not hijacked
+//     (PM §2 F4 acceptance + T-12 spirit).
+//   - Expanded: `MouseRegion.onEnter/onHover/onExit` — hover only.
+//     A touch on expanded falls through to the parent scroll, per
+//     architect §5.1.
+//
+// The overlay is rendered by a `foregroundPainter` (`_ScrubOverlayPainter`)
+// so the guideline + tooltip draw *over* the existing chart strokes
+// without an extra widget layer / `Positioned` math.
+//
+// Fade in / out: 120 ms (`motion('chart.scrub.in/out')`). The token isn't
+// defined as a function helper, so the duration is inline here with a
+// `MediaQuery.disableAnimationsOf` short-circuit per the a11y AC.
+//
+// Empty-state short-circuit: when `points.isEmpty`, the wrap returns the
+// child directly without any gesture handlers (the empty-state CTA owns
+// the chart area).
+// ────────────────────────────────────────────────────────────────────────
+
+class _ScrubGestureWrap extends StatefulWidget {
+  const _ScrubGestureWrap({
+    required this.points,
+    required this.unit,
+    required this.colors,
+    required this.child,
+  });
+
+  final List<WeightSeriesPoint> points;
+  final WeightUnit unit;
+  final AppColors colors;
+  final Widget child;
+
+  @override
+  State<_ScrubGestureWrap> createState() => _ScrubGestureWrapState();
+}
+
+class _ScrubGestureWrapState extends State<_ScrubGestureWrap>
+    with SingleTickerProviderStateMixin {
+  /// Active scrub X-coordinate in widget-local pixels. Null when no
+  /// scrub is active. The overlay painter mounts only when this is
+  /// non-null.
+  double? _scrubX;
+
+  /// Fade animation for the guideline + tooltip. 120 ms in / 120 ms out
+  /// per architect §5.1's `motion('chart.scrub.in/out')`. Reduce-motion
+  /// short-circuits the controller's `value` directly so frames snap.
+  late final AnimationController _fade;
+
+  static const Duration _fadeDuration = Duration(milliseconds: 120);
+
+  @override
+  void initState() {
+    super.initState();
+    _fade = AnimationController(
+      vsync: this,
+      duration: _fadeDuration,
+      reverseDuration: _fadeDuration,
+      value: 0,
+    );
+  }
+
+  @override
+  void dispose() {
+    _fade.dispose();
+    super.dispose();
+  }
+
+  void _startAt(double x, bool disableAnims) {
+    setState(() => _scrubX = x);
+    if (disableAnims) {
+      _fade.value = 1.0;
+    } else {
+      _fade.forward();
+    }
+  }
+
+  void _updateAt(double x) {
+    setState(() => _scrubX = x);
+  }
+
+  void _endScrub(bool disableAnims) {
+    if (disableAnims) {
+      _fade.value = 0.0;
+      if (mounted) setState(() => _scrubX = null);
+      return;
+    }
+    _fade.reverse().then((_) {
+      if (mounted) setState(() => _scrubX = null);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Empty-state: no points → no scrub gesture (AC: empty-state chart
+    // is a no-op for scrub).
+    if (widget.points.isEmpty) return widget.child;
+
+    final isExpanded = FormFactor.of(context).isExpanded;
+    final disableAnims = MediaQuery.disableAnimationsOf(context);
+
+    // Mount the overlay painter only when a scrub is active *or* the
+    // fade is still running (so the reverse() tail still paints).
+    final overlay = AnimatedBuilder(
+      key: const Key('scrub-tooltip'),
+      animation: _fade,
+      builder: (_, __) {
+        if (_scrubX == null || _fade.value == 0.0) return widget.child;
+        return CustomPaint(
+          foregroundPainter: _ScrubOverlayPainter(
+            scrubX: _scrubX!,
+            opacity: _fade.value.clamp(0.0, 1.0),
+            points: widget.points,
+            unit: widget.unit,
+            colors: widget.colors,
+          ),
+          child: widget.child,
+        );
+      },
+    );
+
+    if (isExpanded) {
+      return MouseRegion(
+        onEnter: (e) => _startAt(e.localPosition.dx, disableAnims),
+        onHover: (e) => _updateAt(e.localPosition.dx),
+        onExit: (_) => _endScrub(disableAnims),
+        child: overlay,
+      );
+    }
+
+    return GestureDetector(
+      // `translucent` so vertical drags pass through to the parent
+      // `ListView`. Horizontal-drag-only so the arena resolution stays
+      // ours on horizontal motion without hijacking vertical scroll.
+      behavior: HitTestBehavior.translucent,
+      onHorizontalDragStart: (d) =>
+          _startAt(d.localPosition.dx, disableAnims),
+      onHorizontalDragUpdate: (d) => _updateAt(d.localPosition.dx),
+      onHorizontalDragEnd: (_) => _endScrub(disableAnims),
+      onHorizontalDragCancel: () => _endScrub(disableAnims),
+      child: overlay,
+    );
+  }
+}
+
+/// Foreground painter for the F4 scrub overlay: vertical guideline +
+/// dot + floating tooltip card. Snaps to the nearest data point in X.
+///
+/// The Y-axis bounds are recomputed locally so this painter doesn't have
+/// to share state with `_SparklinePainter` (the chart caps at ~30 points;
+/// the linear scan + min/max sweep is O(n) and fast). The math mirrors
+/// `_SparklinePainter` 1:1 — the chart-top / chart-bottom inset, the
+/// 15 % padding, the `xFor` / `yFor` mapping.
+class _ScrubOverlayPainter extends CustomPainter {
+  _ScrubOverlayPainter({
+    required this.scrubX,
+    required this.opacity,
+    required this.points,
+    required this.unit,
+    required this.colors,
+  });
+
+  final double scrubX;
+  final double opacity;
+  final List<WeightSeriesPoint> points;
+  final WeightUnit unit;
+  final AppColors colors;
+
+  double _displayValue(Decimal kg) {
+    switch (unit) {
+      case WeightUnit.kg:
+        return kg.toDouble();
+      case WeightUnit.lb:
+      case WeightUnit.st:
+        final lbInKg = parseWeightToKg('1', WeightUnit.lb);
+        return (kg / lbInKg).toDouble();
+    }
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (points.isEmpty || opacity <= 0) return;
+
+    // ── Recompute the Y bounds (mirrors `_SparklinePainter`) ──────────
+    double minVal = _displayValue(points.first.weightKg);
+    double maxVal = minVal;
+    for (final p in points) {
+      final v = _displayValue(p.weightKg);
+      if (v < minVal) minVal = v;
+      if (v > maxVal) maxVal = v;
+      final maKg = p.movingAvg7d;
+      if (maKg != null) {
+        final ma = _displayValue(maKg);
+        if (ma < minVal) minVal = ma;
+        if (ma > maxVal) maxVal = ma;
+      }
+    }
+    final range = maxVal - minVal;
+    final pad = range == 0 ? 1.0 : range * 0.15;
+    minVal -= pad;
+    maxVal += pad;
+
+    const chartTop = 8.0;
+    final chartBottom = size.height - 4.0;
+    final chartHeight = chartBottom - chartTop;
+
+    double xFor(int i) => points.length == 1
+        ? size.width / 2
+        : (i / (points.length - 1)) * size.width;
+    double yFor(double v) =>
+        chartBottom - ((v - minVal) / (maxVal - minVal)) * chartHeight;
+
+    // ── Snap to the nearest data point in X (linear scan, ≤30 pts) ───
+    var nearest = 0;
+    var nearestDx = (xFor(0) - scrubX).abs();
+    for (var i = 1; i < points.length; i++) {
+      final dx = (xFor(i) - scrubX).abs();
+      if (dx < nearestDx) {
+        nearestDx = dx;
+        nearest = i;
+      }
+    }
+    final point = points[nearest];
+    final snappedX = xFor(nearest);
+    final pointY = yFor(_displayValue(point.weightKg));
+
+    // ── 1-px vertical guideline at the snapped X ─────────────────────
+    final guidePaint = Paint()
+      ..color = colors.ink2.withValues(alpha: 0.4 * opacity)
+      ..strokeWidth = 1;
+    canvas.drawLine(
+      Offset(snappedX, chartTop),
+      Offset(snappedX, chartBottom),
+      guidePaint,
+    );
+
+    // ── 4-px filled dot at the snapped data point ────────────────────
+    canvas.drawCircle(
+      Offset(snappedX, pointY),
+      4,
+      Paint()..color = colors.accent.withValues(alpha: opacity),
+    );
+
+    // ── Tooltip text: two lines ──────────────────────────────────────
+    final dateLabel = DateFormat('EEE, MMM d').format(point.date);
+    final weightLabel = formatWeightWithUnit(point.weightKg, unit);
+    final tp = TextPainter(
+      text: TextSpan(
+        children: <InlineSpan>[
+          TextSpan(
+            text: dateLabel,
+            style: TextStyle(
+              fontFamily: 'Inter',
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+              color: Colors.white.withValues(alpha: opacity),
+            ),
+          ),
+          TextSpan(
+            text: '\n$weightLabel',
+            style: TextStyle(
+              fontFamily: 'Inter',
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              color: Colors.white.withValues(alpha: opacity),
+              fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
+            ),
+          ),
+        ],
+      ),
+      textDirection: TextDirection.ltr,
+      textAlign: TextAlign.center,
+    )..layout();
+
+    const padX = 8.0;
+    const padY = 6.0;
+    const gap = 8.0; // gap between dot and tooltip
+    final boxW = tp.width + padX * 2;
+    final boxH = tp.height + padY * 2;
+
+    // Position the tooltip above the dot; clamp inside chart bounds so
+    // it doesn't clip on left/right edges. Architect §5.1.
+    double left = snappedX - boxW / 2;
+    left = left.clamp(0.0, math.max(0.0, size.width - boxW));
+    double top = pointY - boxH - gap;
+    if (top < 0) {
+      // Not enough room above — flip below the dot.
+      top = pointY + gap;
+    }
+
+    final rrect = RRect.fromRectAndRadius(
+      Rect.fromLTWH(left, top, boxW, boxH),
+      const Radius.circular(6),
+    );
+    canvas.drawRRect(
+      rrect,
+      Paint()..color = colors.ink.withValues(alpha: opacity),
+    );
+    tp.paint(canvas, Offset(left + padX, top + padY));
+  }
+
+  @override
+  bool shouldRepaint(covariant _ScrubOverlayPainter old) {
+    if (old.scrubX != scrubX) return true;
+    if (old.opacity != opacity) return true;
+    if (old.unit != unit) return true;
+    if (old.points.length != points.length) return true;
+    return false;
+  }
+
+  @override
+  bool? hitTest(Offset position) => false;
 }

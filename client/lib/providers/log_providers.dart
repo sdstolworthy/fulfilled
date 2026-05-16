@@ -1,7 +1,9 @@
+import 'package:decimal/decimal.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../domain/day_summary.dart';
 import '../domain/log_entry.dart';
+import '../domain/meal.dart';
 import 'repository_providers.dart';
 
 /// Log-domain providers. The day-view (screen 01), the log-entry sheet
@@ -43,3 +45,94 @@ final logEntriesProvider =
   final repo = ref.watch(logRepositoryProvider);
   return repo.entriesForDate(date);
 });
+
+/// Cheap preview value for `CopyDaySheet` — entry count + total kcal
+/// for a given `(sourceDate, meals)` combination. Reads the same
+/// in-memory entries the day view does, so the preview updates in
+/// lock-step with any source-date scrub or meal-scope chip toggle.
+class CopyDayPreview {
+  const CopyDayPreview({required this.count, required this.totalKcal});
+
+  /// Number of source entries that match the meal filter. Equals the
+  /// `requestedCount` the sheet snapshots at submit time and compares
+  /// against `created.length` for partial-skip detection.
+  final int count;
+
+  /// Sum of `entry.kcal` (frozen snapshot) across the matched source
+  /// entries. The preview line renders this via `formatKcal`. Note: the
+  /// post-copy total on the *target* day may differ when a custom
+  /// food's `nutritionPer100g` has been edited between source and
+  /// target — the wire contract is "recompute against current food
+  /// state" and `LogRepository.copyDay` mirrors that. The preview is
+  /// a UX hint, not a guarantee, and the partial-skip path makes the
+  /// drift visible.
+  final Decimal totalKcal;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CopyDayPreview &&
+          other.count == count &&
+          other.totalKcal == totalKcal;
+
+  @override
+  int get hashCode => Object.hash(count, totalKcal);
+}
+
+/// Family key for [copyDayPreviewProvider]. `meals == null` means
+/// "every meal" (whole-day copy); a non-null list keys by content
+/// equality so the family's per-key memoisation is stable across
+/// rebuilds when the chip set is unchanged.
+class CopyDayPreviewKey {
+  const CopyDayPreviewKey({required this.sourceDate, this.meals});
+
+  final DateTime sourceDate;
+  final List<Meal>? meals;
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    if (other is! CopyDayPreviewKey) return false;
+    if (sourceDate != other.sourceDate) return false;
+    final a = meals;
+    final b = other.meals;
+    if (a == null && b == null) return true;
+    if (a == null || b == null) return false;
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
+  @override
+  int get hashCode {
+    final m = meals;
+    return Object.hash(
+      sourceDate,
+      m == null ? null : Object.hashAll(m),
+    );
+  }
+}
+
+/// Drives the live "N entries · M kcal" line in `CopyDaySheet`. The
+/// family is re-keyed on every source-date scrub or chip toggle; the
+/// preview re-runs and the sheet rebuilds. Reading existing in-memory
+/// entries is cheap (≤ ~100 rows for any user's recent days).
+final copyDayPreviewProvider =
+    FutureProvider.family<CopyDayPreview, CopyDayPreviewKey>(
+  (ref, key) async {
+    final repo = ref.watch(logRepositoryProvider);
+    final entries = await repo.entriesForDate(key.sourceDate);
+    final filtered = key.meals == null
+        ? entries
+        : entries.where((e) => key.meals!.contains(e.meal));
+    var total = Decimal.zero;
+    var count = 0;
+    for (final e in filtered) {
+      total = total + e.kcal;
+      count += 1;
+    }
+    return CopyDayPreview(count: count, totalKcal: total);
+  },
+);

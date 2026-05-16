@@ -23,10 +23,10 @@ import 'widgets/log_food_fab.dart';
 /// shell's `AppScaffold`, threading the FAB through the scaffold slot
 /// (T-12: the FAB is the only floating action).
 ///
-/// Layout per `screen_01_day_view.html`:
-/// 1. Header row — avatar + search icon. (Avatar tap is a future Profile
-///    deep-link; in v1 it's a no-op so the chrome reads "complete" without
-///    a half-wired flow.)
+/// Layout per `screen_01_day_view.html`, post-UX-102:
+/// 1. Header row — search icon only (right-aligned). The avatar
+///    placeholder and the bolt quick-add icon are gone; the quick-add
+///    affordance is now reachable via the FAB long-press menu.
 /// 2. Date bar — "Today" + sub-line "Thursday, May 14" + chevron pair.
 /// 3. Ring-summary card.
 /// 4. Scrollable column of four MealSections.
@@ -51,6 +51,9 @@ class DayViewCompact extends ConsumerWidget {
       backgroundColor: Colors.transparent,
       floatingActionButton: LogFoodFab(
         onPressed: () => context.push(Routes.foodsSearchPath),
+        // UX-102: the bolt icon's prior handler moves from
+        // `_CompactHeader` into the FAB's long-press menu.
+        onQuickAdd: () => showQuickAddSheet(context),
       ),
       body: CustomScrollView(
         slivers: <Widget>[
@@ -117,12 +120,19 @@ class DayViewCompact extends ConsumerWidget {
   }
 }
 
+/// UX-102 — the compact header collapses to a single right-aligned
+/// search `IconButton36`. The placeholder avatar (a 36×36 SS-initials
+/// circle, PM Risk 2 placeholder until auth) and the bolt
+/// "Quick add calories" icon are gone. The bolt's handler moves to the
+/// FAB's long-press menu (see `LogFoodFab.onQuickAdd`). Profile is one
+/// tap away on the bottom tab bar; carrying a placeholder avatar on the
+/// most-viewed screen was the same anti-pattern QL-006 / QL-007 cut for
+/// the bookmark and the export row. Architect §6.1 + §6.2.
 class _CompactHeader extends StatelessWidget {
   const _CompactHeader();
 
   @override
   Widget build(BuildContext context) {
-    final colors = context.colors;
     return Padding(
       padding: EdgeInsets.fromLTRB(
         context.space.x5,
@@ -131,38 +141,8 @@ class _CompactHeader extends StatelessWidget {
         context.space.x3,
       ),
       child: Row(
+        mainAxisAlignment: MainAxisAlignment.end,
         children: <Widget>[
-          Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(
-              color: colors.accentSoft,
-              shape: BoxShape.circle,
-            ),
-            alignment: Alignment.center,
-            child: Text(
-              'SS', // placeholder initials — the profile provider supplies the real ones once wired
-              style: context.text.meta.copyWith(
-                color: colors.accent,
-                fontWeight: FontWeight.w600,
-                fontSize: 13,
-              ),
-            ),
-          ),
-          const Spacer(),
-          // Discoverability per the quick-add brief: a compact icon
-          // button on the Today header that opens the synthetic-food
-          // "Quick add calories" sheet. Sits BEFORE the search icon so
-          // it's left of search on every form factor. `Icons.bolt_outlined`
-          // reads as a fast / quick action; the tooltip + Semantics label
-          // ("Quick add calories") carries the precise affordance label
-          // for screen-reader users (T-20).
-          IconButton36(
-            icon: Icons.bolt_outlined,
-            tooltip: 'Quick add calories',
-            onPressed: () => showQuickAddSheet(context),
-            color: context.colors.ink2,
-          ),
           IconButton36(
             icon: Icons.search,
             tooltip: 'Search',

@@ -150,7 +150,7 @@ The shared vocabulary. Every screen composes these. If a feature seems to want a
 | `MealSection` | One meal: header (dot + name + total), list of `FoodRow`s, "Add food" footer. | 01, 01-W | `meal`, `entries`, `onAdd`, `onEntryTap`, `dense` (web variant) |
 | `FoodRow` | A single logged entry: name, meta (serving + brand), kcal. | 01, 01-W (inside `MealSection`) | `entry` (`LogEntry` DTO), `onTap`, `onLongPress` (edit/delete) |
 | `SearchResultRow` | A catalogue food in search results: thumb (OFF/YOU), highlighted name, meta, per-serving kcal. | 02 | `hit` (`FoodSearchHit`), `query` (for highlight), `onTap` |
-| `QuickChipRow` | Horizontal scroll of Recent/Frequent chips with kcal subtitle. | 02 (mobile), 01-W (right rail) | `chips` (`List<FoodSearchHit>`), `title`, `onTap` |
+| `QuickChipRow` | Horizontal scroll of Recent/Frequent chips with kcal subtitle. | 01 compact (between ring + meals — F2), 01-W (right rail), 02 (mobile) | `chips` (`List<FoodSearchHit>`), `title`, `onTap` |
 | `FoodDetailHero` | Brand eyebrow + title + barcode pill. | 03 | `food` (`FoodDetail`) |
 | `FoodSummaryCard` | Per-default-serving kcal + 3× mini macro readouts. | 03 | `food` (uses default serving) |
 | `ServingList` | List of servings with the `Default` and `Synthetic` badges. Selectable in log-entry context. | 03 (read-only), 04 (selectable) | `servings`, `selectedId`, `onSelect`, `selectable` |

@@ -1,23 +1,25 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../../domain/food.dart';
-import '../../../domain/units/energy.dart';
-import '../../../routing/routes.dart';
-import '../../../theme/context_extensions.dart';
-import '../../../widgets/empty_state.dart';
-import '../../../widgets/primary_button.dart';
+import '../domain/food.dart';
+import '../domain/units/energy.dart';
+import '../routing/routes.dart';
+import '../theme/context_extensions.dart';
+import '../widgets/empty_state.dart';
+import '../widgets/primary_button.dart';
 
 /// The right-rail "Quick add" card on screen 01-W. Renders recents +
 /// frequents as a wrap of chips; tapping a chip launches the log-entry
 /// dialog with the food preselected.
 ///
-/// **Why this lives in the today/ folder.** The chip row is shaped like
-/// `QuickChipRow` from the component inventory, but the *card wrapper*
-/// (with the "Quick add" eyebrow and section subheaders) only appears
-/// here. When `QuickChipRow` lands in `lib/widgets/` for screen 02 it
-/// will own only the row of chips; this card composes it. Until then the
-/// chip itself lives here to keep the right rail self-contained.
+/// **Why this lives in `lib/widgets/`.** Lifted from
+/// `lib/features/today/widgets/` per T-23 (UX-101) so the F2 compact
+/// strip (UX-107) can mount the same widget without a feature-local
+/// import. The chip row is shaped like `QuickChipRow` from the
+/// component inventory; the *card wrapper* (with the "Quick add"
+/// eyebrow and section subheaders) is composed here. The rename
+/// `QuickAddChips → QuickChipRow` is deferred to a v1.1 spec-vs-code
+/// reconciliation sweep (architect §2.2).
 class QuickAddChips extends StatelessWidget {
   const QuickAddChips({
     required this.recents,

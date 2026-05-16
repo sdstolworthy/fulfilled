@@ -24,8 +24,8 @@ import '../../theme/context_extensions.dart';
 import '../log_entry/log_entry_sheet.dart';
 import '../quick_add/quick_add_sheet.dart';
 import 'today_internals.dart';
+import 'package:fulfilled/widgets/quick_add_chips.dart';
 import 'widgets/mini_weight_sparkline.dart';
-import 'widgets/quick_add_chips.dart';
 
 /// Expanded (desktop / iPad-landscape) variant of screen 01.
 ///

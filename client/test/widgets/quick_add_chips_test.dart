@@ -5,10 +5,10 @@ import 'package:fulfilled/domain/enums.dart';
 import 'package:fulfilled/domain/food.dart';
 import 'package:fulfilled/domain/nutrition.dart';
 import 'package:fulfilled/domain/serving.dart';
-import 'package:fulfilled/features/today/widgets/quick_add_chips.dart';
 import 'package:fulfilled/theme/theme_data.dart';
 import 'package:fulfilled/widgets/empty_state.dart';
 import 'package:fulfilled/widgets/primary_button.dart';
+import 'package:fulfilled/widgets/quick_add_chips.dart';
 import 'package:go_router/go_router.dart';
 
 /// T-013 (B9 absorbed) — the Quick add card on the expanded right rail:

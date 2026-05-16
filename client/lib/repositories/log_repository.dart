@@ -3,6 +3,7 @@ import '../data/outbox/log_outbox_notifier.dart';
 import '../domain/day_summary.dart';
 import '../domain/goal.dart';
 import '../domain/log_entry.dart';
+import '../domain/meal.dart';
 import 'food_repository.dart';
 import '_fixtures.dart';
 import '_mock_latency.dart';
@@ -295,6 +296,109 @@ class LogRepository {
   void adoptOptimistic(LogEntry entry) {
     _state.add(entry);
     _foodRepo.noteFoodLogged(entry.foodId);
+  }
+
+  /// Copy every entry from [sourceDate] to [targetDate], optionally
+  /// filtered by [meals]. Mirrors `POST /log/copy` from the OpenAPI doc
+  /// (`copy_log_day`, `specs/openapi.yaml` lines 668–698).
+  ///
+  /// **Server contract.** Snapshots are recomputed from the *current*
+  /// food state — the client never sends nutrition snapshots for copied
+  /// entries, and a custom food edited between [sourceDate] and
+  /// [targetDate] is reflected in the copy verbatim. Entries whose food
+  /// is no longer visible or whose serving was deleted are silently
+  /// skipped; the returned list contains only the successfully copied
+  /// entries. The UI surfaces partial-skip via
+  /// `created.length < requested.length`.
+  ///
+  /// [meals] is `null` → copy every meal (whole-day copy). A non-null
+  /// list filters source entries to those whose `meal` is contained.
+  /// The wire accepts a single `meal` field (the union of the list);
+  /// the mock implementation iterates per-meal and concatenates.
+  ///
+  /// The repository **does not** route through `_outbox` for `copyDay`.
+  /// Per PM doc §2 F1 AC: copy is online-only; the outbox is scoped to
+  /// single-entry POSTs.
+  ///
+  /// `@invalidates`
+  /// - `daySummaryProvider(targetDate)` — the ring + summary card for
+  ///   the destination day.
+  /// - `logEntriesProvider(targetDate)` — the meal section list for
+  ///   the destination day.
+  /// - `recentFoodsProvider` — the copied foods bump rank.
+  /// - `frequentFoodsProvider` — the copied foods' frequency ticks.
+  /// - `weeklyLogDaysProvider` — the target day may flip from
+  ///   zero-entries to one+, affecting the 0–7 week count. (Added when
+  ///   UX-110 lands; the provider does not yet exist. UX-105 ships the
+  ///   four other invalidations and this forward-referenced line.)
+  ///
+  /// Notably **not** invalidated: `daySummaryProvider(sourceDate)` /
+  /// `logEntriesProvider(sourceDate)` — the source day is read-only.
+  /// The wire never mutates `from_date`.
+  ///
+  /// Call sites are responsible for invalidating per T-18 (minimal +
+  /// explicit); this list is the **contract** the call site reads. A
+  /// new dependent provider is added by editing this list and the call
+  /// sites in the same PR.
+  Future<List<LogEntry>> copyDay({
+    required DateTime sourceDate,
+    required DateTime targetDate,
+    List<Meal>? meals,
+  }) async {
+    await mockLatency();
+    // Normalise to Y/M/D so caller-supplied DateTimes with non-zero
+    // hour/minute fields still match the day-keyed `consumedOn`.
+    final src =
+        DateTime(sourceDate.year, sourceDate.month, sourceDate.day);
+    final tgt =
+        DateTime(targetDate.year, targetDate.month, targetDate.day);
+    // 1. Filter `_state` by consumedOn == sourceDate (Y/M/D) AND
+    //    meals == null || meals.contains(entry.meal).
+    final filtered = _state.where((e) {
+      final on = e.consumedOn;
+      final sameDay = on.year == src.year &&
+          on.month == src.month &&
+          on.day == src.day;
+      if (!sameDay) return false;
+      if (meals != null && !meals.contains(e.meal)) return false;
+      return true;
+    }).toList();
+
+    final now = DateTime.now();
+    final created = <LogEntry>[];
+    for (final source in filtered) {
+      // 2. Look up the food. Missing → silently skip (wire contract).
+      final food = _foodRepo.lookup(source.foodId);
+      if (food == null) continue;
+      // 3. Look up the serving. Missing → silently skip.
+      final servingId = source.servingId;
+      if (servingId == null) continue;
+      final servingMatch = food.servings.where((s) => s.id == servingId);
+      if (servingMatch.isEmpty) continue;
+      final serving = servingMatch.first;
+      // 4. Recompute the snapshot against the *current* food state
+      //    (not the source entry's frozen snapshot). Same math path as
+      //    `create` — `computeLogEntry` mirrors the server.
+      final id = 'le_new_${_seq++}_${now.microsecondsSinceEpoch}';
+      final entry = computeLogEntry(
+        id: id,
+        food: food,
+        serving: serving,
+        consumedOn: tgt,
+        meal: source.meal,
+        quantity: source.quantity,
+        createdAt: now,
+        note: source.note,
+      );
+      // 5. Append + bump recents/frequents.
+      _state.add(entry);
+      _foodRepo.noteFoodLogged(food.id);
+      created.add(entry);
+    }
+    // 6. Return the survivors. Partial-skip is implicit in
+    //    `created.length < filtered.length`; the UI computes the
+    //    requested count from the source meal-filter and compares.
+    return created;
   }
 
   // Test seam — let tests reset the in-memory list to a clean seed
