@@ -7,9 +7,8 @@ import '../domain/enums.dart';
 import '../domain/units/weight.dart';
 import '../providers/profile_providers.dart';
 import '../theme/context_extensions.dart';
-import 'quantity_stepper.dart';
 
-/// `WeightUnit`-aware wrapper around the lifted [QuantityStepper] (LU-007).
+/// `WeightUnit`-aware weight picker (LU-007).
 ///
 /// The internal model is **always canonical `Decimal kg`** (`value` /
 /// `onChanged`). The widget reads [WeightUnit] from
@@ -17,14 +16,18 @@ import 'quantity_stepper.dart';
 /// to drive it from an onboarding-local provider, the architect-blessed
 /// escape hatch).
 ///
-/// **kg / lb** render a single [QuantityStepper] with a unit suffix.
-/// The displayed value is the canonical kg converted to the active
-/// unit and rounded half-to-even to one decimal place (architect §3.5);
-/// emits convert back to kg before calling [onChanged].
+/// **kg / lb** render a single display-only stepper — a centered
+/// `bodyStrongNumeric` value flanked by tap-only `-` / `+` buttons.
+/// Visually matches the height stepper on onboarding step 2 (no
+/// `TextField` chrome, no smaller field-style font). The displayed
+/// value is the canonical kg converted to the active unit and rounded
+/// half-to-even to one decimal place (architect §3.5); +/- bumps by
+/// `0.1` of the displayed unit and emits canonical kg on every commit.
 ///
-/// **st** renders two integer sub-steppers — stones (no upper clamp,
-/// integer) and pounds (0–13). The +/- buttons on the pounds field
-/// carry / borrow across the stones field: `13 lb + 1 = 1 st 0 lb` and
+/// **st** renders two integer sub-steppers side-by-side — stones (no
+/// upper clamp, integer) and pounds (0–13) — using the same
+/// display-only chrome. The +/- buttons on the pounds field carry /
+/// borrow across the stones field: `13 lb + 1 = 1 st 0 lb` and
 /// `0 lb − 1 = (stones − 1) st 13 lb`. State for the two integers
 /// lives in `_WeightStepperState`; `onChanged(parseStoneToKg(stones,
 /// pounds))` fires on every commit.
@@ -36,7 +39,8 @@ import 'quantity_stepper.dart';
 ///
 /// **Tenants honored:** T-01 (no hex — composes existing primitives),
 /// T-07 (numeric input always has a stepper), T-17 (Decimal in /
-/// formatted out), T-23 (lifted widget, package-imported).
+/// formatted out), T-21 (units customer-expected), T-23 (lifted
+/// widget, package-imported).
 class WeightStepper extends ConsumerStatefulWidget {
   const WeightStepper({
     required this.value,
@@ -67,15 +71,17 @@ class WeightStepper extends ConsumerStatefulWidget {
   /// Optional inclusive ceiling in canonical kg.
   final Decimal? maxKg;
 
-  /// Forwarded to the inner [QuantityStepper] for the kg / lb cases.
-  /// For st the flag colors both sub-fields.
+  /// Colors the border red when true. For st the flag colors both
+  /// sub-fields.
   final bool hasError;
 
-  /// Forwarded to the inner [QuantityStepper] (kg / lb only).
+  /// Retained for source-compat with callers from the form-field era;
+  /// the display-only chrome has no hint slot, so this is currently a
+  /// no-op. Kept on the constructor so existing call sites don't break.
   final String? placeholder;
 
-  /// Forwarded to the inner [QuantityStepper]'s Semantics wrapper. For
-  /// st the wrapper Semantics-labels the row.
+  /// Optional Semantics wrapper label. For st the wrapper
+  /// Semantics-labels each sub-field with this prefix.
   final String? semanticsLabel;
 
   @override
@@ -136,6 +142,20 @@ class _WeightStepperState extends ConsumerState<WeightStepper> {
     return parseWeightToKg(lb.toString(), WeightUnit.lb);
   }
 
+  /// Format a one-decimal `Decimal` as a fixed `"N.D"` label (always
+  /// one digit after the point — `79.0`, not `79`). Mirrors the height
+  /// stepper's `bodyStrongNumeric` numeric typography.
+  String _formatOneDp(Decimal v) {
+    final s = v.toString();
+    if (!s.contains('.')) return '$s.0';
+    final parts = s.split('.');
+    final frac = parts[1];
+    if (frac.isEmpty) return '${parts[0]}.0';
+    // `roundHalfToEvenScaled(_, 1)` already collapsed to one decimal,
+    // but defensively trim if we ever feed something deeper.
+    return '${parts[0]}.${frac[0]}';
+  }
+
   @override
   Widget build(BuildContext context) {
     final WeightUnit unit =
@@ -151,7 +171,7 @@ class _WeightStepperState extends ConsumerState<WeightStepper> {
           maxDisplay:
               widget.maxKg == null ? null : roundHalfToEvenScaled(widget.maxKg!, 1),
           // kg display unit IS canonical: forward straight through.
-          toCanonicalKg: (lb) => lb,
+          toCanonicalKg: (kg) => kg,
         );
       case WeightUnit.lb:
         return _buildSingle(
@@ -171,6 +191,9 @@ class _WeightStepperState extends ConsumerState<WeightStepper> {
     }
   }
 
+  /// kg / lb shape — one `_TapStepper` box, "<value> <unit>" centered,
+  /// flanked by `-` / `+`. `0.1` step in the displayed unit, half-to-even
+  /// round on the way in, canonical kg out on every change.
   Widget _buildSingle({
     required Decimal displayValue,
     required Decimal step,
@@ -179,108 +202,207 @@ class _WeightStepperState extends ConsumerState<WeightStepper> {
     required Decimal? maxDisplay,
     required Decimal Function(Decimal display) toCanonicalKg,
   }) {
-    return QuantityStepper(
-      value: displayValue,
-      step: step,
-      min: minDisplay,
-      max: maxDisplay,
-      unitSuffix: unitSuffix,
+    void bump(Decimal delta) {
+      var next = displayValue + delta;
+      if (minDisplay != null && next < minDisplay) next = minDisplay;
+      if (maxDisplay != null && next > maxDisplay) next = maxDisplay;
+      // Re-round so a `79.4 + 0.1` that lands on `79.5000000001` (it
+      // won't, but be defensive) still renders cleanly the next frame.
+      next = roundHalfToEvenScaled(next, 1);
+      if (next == displayValue) return;
+      widget.onChanged(toCanonicalKg(next));
+    }
+
+    return _TapStepper(
+      valueLabel: '${_formatOneDp(displayValue)} ${unitSuffix.toLowerCase()}',
+      onIncrement: () => bump(step),
+      onDecrement: () => bump(Decimal.zero - step),
       hasError: widget.hasError,
-      placeholder: widget.placeholder,
       semanticsLabel: widget.semanticsLabel,
-      onChanged: (next) {
-        // The wrapper's `onChanged` is non-nullable kg; the inner
-        // stepper can emit null when the user clears the field. We
-        // treat a clear as "no change" and swallow it — the
-        // surrounding form (sheet / onboarding step) owns null-state
-        // semantics, not the widget.
-        if (next == null) return;
-        widget.onChanged(toCanonicalKg(next));
-      },
     );
   }
 
+  /// Stone shape — two integer `_TapStepper`s side by side. The pounds
+  /// field has NO `min` / `max` on the inner stepper — we own
+  /// carry/borrow at the bump seam. The stone field clamps at 0 only.
   Widget _buildStone(BuildContext context) {
     final space = context.space;
-    // Two integer-mode steppers side by side. The pounds field has
-    // NO `min` / `max` on the inner stepper — we own carry/borrow at
-    // the onChanged seam. The stone field clamps at 0 only.
-    //
-    // Stone-row ergonomics on iPhone SE (390 wide) is the architect's
-    // risk 5 — the LU-007 spec named the fallback ("hide +/− on the
-    // pounds sub-field"). v1 ships with both sets of buttons; LU-010
-    // can downgrade if the screen-fit acceptance fails.
     return Row(
       children: <Widget>[
         Expanded(
-          child: QuantityStepper(
-            value: Decimal.fromInt(_stones),
-            step: Decimal.one,
-            min: Decimal.zero,
-            allowDecimal: false,
-            unitSuffix: 'st',
+          child: _TapStepper(
+            valueLabel: '$_stones st',
+            onIncrement: () {
+              setState(() => _stones += 1);
+              widget.onChanged(parseStoneToKg(_stones, _pounds));
+            },
+            onDecrement: () {
+              if (_stones <= 0) return;
+              setState(() => _stones -= 1);
+              widget.onChanged(parseStoneToKg(_stones, _pounds));
+            },
             hasError: widget.hasError,
             semanticsLabel: widget.semanticsLabel == null
                 ? 'Stones'
                 : '${widget.semanticsLabel} stones',
-            onChanged: (next) {
-              if (next == null) return;
-              final nextStones = next.toBigInt().toInt();
-              if (nextStones < 0) return;
-              setState(() => _stones = nextStones);
-              widget.onChanged(parseStoneToKg(_stones, _pounds));
-            },
           ),
         ),
         SizedBox(width: space.x3),
         Expanded(
-          child: QuantityStepper(
-            value: Decimal.fromInt(_pounds),
-            step: Decimal.one,
-            allowDecimal: false,
-            unitSuffix: 'lb',
+          child: _TapStepper(
+            valueLabel: '$_pounds lb',
+            onIncrement: _incrementPounds,
+            onDecrement: _decrementPounds,
             hasError: widget.hasError,
             semanticsLabel: widget.semanticsLabel == null
                 ? 'Pounds'
                 : '${widget.semanticsLabel} pounds',
-            onChanged: _onPoundsChanged,
           ),
         ),
       ],
     );
   }
 
-  /// Handle the inner pounds stepper's commit — apply carry / borrow
-  /// before propagating to [WeightStepper.onChanged].
-  ///
-  /// Carry: `pounds > 13` (the +/- button stepped past the top of the
-  /// 0–13 band, or the user typed a higher value) → `stones += next ~/
-  /// 14; pounds = next % 14`.
-  /// Borrow: `pounds < 0` (only reachable via the `-` button at
-  /// `pounds == 0`) → if `stones > 0`, `stones -= 1; pounds = 13`;
-  /// otherwise floor at `0 st 0 lb`.
-  void _onPoundsChanged(Decimal? next) {
-    if (next == null) return;
-    final nextPounds = next.toBigInt().toInt();
-    if (nextPounds > 13) {
-      final carry = nextPounds ~/ 14;
-      final remainder = nextPounds - carry * 14;
+  /// Pounds `+` — carry to stones when stepping past 13.
+  /// `13 + 1 = 14` → `stones += 1; pounds = 0`.
+  void _incrementPounds() {
+    final next = _pounds + 1;
+    if (next > 13) {
       setState(() {
-        _stones += carry;
-        _pounds = remainder;
+        _stones += 1;
+        _pounds = 0;
       });
-    } else if (nextPounds < 0) {
-      if (_stones > 0) {
-        setState(() {
-          _stones -= 1;
-          _pounds = 13;
-        });
-      } else {
-        setState(() => _pounds = 0);
-      }
     } else {
-      setState(() => _pounds = nextPounds);
+      setState(() => _pounds = next);
     }
     widget.onChanged(parseStoneToKg(_stones, _pounds));
+  }
+
+  /// Pounds `-` — borrow from stones when stepping past 0.
+  /// `0 − 1` with `stones > 0` → `stones -= 1; pounds = 13`. Otherwise
+  /// floor at `0 st 0 lb` (no change emitted).
+  void _decrementPounds() {
+    if (_pounds > 0) {
+      setState(() => _pounds -= 1);
+    } else if (_stones > 0) {
+      setState(() {
+        _stones -= 1;
+        _pounds = 13;
+      });
+    } else {
+      return; // already at floor — no commit.
+    }
+    widget.onChanged(parseStoneToKg(_stones, _pounds));
+  }
+}
+
+/// Display-only stepper — mirrors the look of `_NumberStepper` in
+/// `features/onboarding/widgets/step_2_about_you.dart` so the weight
+/// picker visually matches the height picker. Inlined here rather than
+/// lifted to `lib/widgets/` to keep this fix small; a future ticket can
+/// converge the two private types into one shared primitive.
+///
+/// Shape: 48-px tall `Container`, 1-px line border, `radius.r2`,
+/// `bodyStrongNumeric` centered label, `_TapStepperButton`s on either
+/// side. No `TextField`, no field-style chrome. `hasError` flips the
+/// border / background to the danger tokens — same convention as
+/// `QuantityStepper` for consistency at the call sites.
+class _TapStepper extends StatelessWidget {
+  const _TapStepper({
+    required this.valueLabel,
+    required this.onIncrement,
+    required this.onDecrement,
+    this.hasError = false,
+    this.semanticsLabel,
+  });
+
+  final String valueLabel;
+  final VoidCallback onIncrement;
+  final VoidCallback onDecrement;
+  final bool hasError;
+  final String? semanticsLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.colors;
+    final radius = context.radius;
+    final body = Container(
+      height: 48,
+      decoration: BoxDecoration(
+        color: hasError ? colors.dangerSoft : colors.surface,
+        borderRadius: BorderRadius.circular(radius.r2),
+        border: Border.all(
+          color: hasError ? colors.danger : colors.line,
+          width: 1,
+        ),
+      ),
+      child: Row(
+        children: <Widget>[
+          _TapStepperButton(
+            icon: Icons.remove_rounded,
+            onTap: onDecrement,
+            tooltip: 'Decrease',
+            semantics: 'Decrement',
+          ),
+          Expanded(
+            child: Center(
+              child: Text(
+                valueLabel,
+                style: context.text.bodyStrongNumeric,
+              ),
+            ),
+          ),
+          _TapStepperButton(
+            icon: Icons.add_rounded,
+            onTap: onIncrement,
+            tooltip: 'Increase',
+            semantics: 'Increment',
+          ),
+        ],
+      ),
+    );
+
+    if (semanticsLabel == null) return body;
+    return Semantics(label: semanticsLabel, container: true, child: body);
+  }
+}
+
+/// Sibling of `_StepperButton` in step_2_about_you. Adds an explicit
+/// `Decrement` / `Increment` Semantics label on top of the visual
+/// tooltip so the existing widget tests can target buttons by semantics
+/// label (the same convention `QuantityStepper`'s `_StepperBtn` used).
+class _TapStepperButton extends StatelessWidget {
+  const _TapStepperButton({
+    required this.icon,
+    required this.onTap,
+    required this.tooltip,
+    required this.semantics,
+  });
+
+  final IconData icon;
+  final VoidCallback onTap;
+  final String tooltip;
+  final String semantics;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.colors;
+    final radius = context.radius;
+    return Semantics(
+      button: true,
+      label: semantics,
+      child: Tooltip(
+        message: tooltip,
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(radius.r2),
+          child: SizedBox(
+            width: 44,
+            height: 44,
+            child: Icon(icon, size: 18, color: colors.ink2),
+          ),
+        ),
+      ),
+    );
   }
 }

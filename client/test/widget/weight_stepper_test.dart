@@ -6,17 +6,21 @@ import 'package:fulfilled/domain/enums.dart';
 import 'package:fulfilled/domain/units/weight.dart';
 import 'package:fulfilled/providers/profile_providers.dart';
 import 'package:fulfilled/theme/theme_data.dart';
-import 'package:fulfilled/widgets/quantity_stepper.dart';
 import 'package:fulfilled/widgets/weight_stepper.dart';
 
 /// LU-007 — `WeightStepper`.
 ///
 /// The four acceptance scenarios from the dev ticket:
 ///   (a) `kg` round-trips a Decimal change through the +/- button.
-///   (b) `lb` mode emits the right canonical kg given a 175.0-lb input.
+///   (b) `lb` mode emits the right canonical kg when the displayed
+///       pounds value is bumped via the `+` button.
 ///   (c) `st` mode renders two fields and the pounds +/- carries past
 ///       13 into the stones field.
 ///   (d) `st` mode borrows from stones when decrementing past 0 pounds.
+///
+/// Post-LU-010 the kg/lb shape is the display-only `_TapStepper` (no
+/// `TextField`), so test (b) drives the change via the `+` button
+/// rather than typed input.
 
 Widget _harness({
   required Widget child,
@@ -64,9 +68,9 @@ void main() {
         ),
       );
 
-      // Renders one stepper with the kg suffix and the 1-dp display.
-      expect(find.text('kg'), findsOneWidget);
-      expect(find.text('lb'), findsNothing);
+      // Renders one stepper with the value + kg suffix at 1-dp.
+      expect(find.text('79.4 kg'), findsOneWidget);
+      expect(find.textContaining('lb'), findsNothing);
 
       await tester.tap(find.bySemanticsLabel('Increment'));
       await tester.pump();
@@ -79,38 +83,41 @@ void main() {
   );
 
   testWidgets(
-    '(b) lb mode emits the right canonical kg for a 175.0-lb typed input',
+    '(b) lb mode emits the right canonical kg when + bumps the displayed pounds',
     (tester) async {
       Decimal? captured;
+      // Seed with the canonical kg for exactly 175.0 lb so the display
+      // sits at "175.0 lb" before we tap. One `+` press bumps the
+      // displayed lb to 175.1, which the wrapper converts back to
+      // canonical kg via `parseWeightToKg(_, WeightUnit.lb)` — i.e.
+      // `lb * _kgPerLb` with the exact avoirdupois constant.
+      final seedKg = parseWeightToKg('175.0', WeightUnit.lb);
       await tester.pumpWidget(
         _harness(
           unitOverride: WeightUnit.lb,
           child: WeightStepper(
-            value: Decimal.parse('79.4'),
+            value: seedKg,
             unitOverride: WeightUnit.lb,
             onChanged: (kg) => captured = kg,
           ),
         ),
       );
 
-      // Renders one stepper with the lb suffix.
-      expect(find.text('lb'), findsOneWidget);
-      expect(find.text('kg'), findsNothing);
+      // Renders the lb label inside the value text — "175.0 lb".
+      expect(find.text('175.0 lb'), findsOneWidget);
+      expect(find.textContaining('kg'), findsNothing);
 
-      // Type 175.0 directly into the field. The wrapper converts back
-      // to canonical kg via `parseWeightToKg(_, WeightUnit.lb)` — which
-      // is `lb * _kgPerLb` with the exact avoirdupois constant.
-      await tester.enterText(find.byType(TextField), '175.0');
+      await tester.tap(find.bySemanticsLabel('Increment'));
       await tester.pump();
 
-      final expected = parseWeightToKg('175.0', WeightUnit.lb);
+      // Step is 0.1 lb. Expected canonical kg = 175.1 lb in kg.
+      final expected = parseWeightToKg('175.1', WeightUnit.lb);
+      expect(captured, isNotNull);
       expect(captured, equals(expected));
-      // Sanity-check the numeric magnitude: 175 lb ≈ 79.378664750 kg.
-      // Compare via `Decimal` so we don't have to guess the scale the
-      // multiplication settles on (175.0 × 0.45359237 = 79.378664750).
+      // Sanity-check the numeric magnitude: 175.1 lb × 0.45359237 kg/lb.
       expect(
         captured,
-        equals(Decimal.parse('175.0') * Decimal.parse('0.45359237')),
+        equals(Decimal.parse('175.1') * Decimal.parse('0.45359237')),
       );
     },
   );
@@ -141,10 +148,11 @@ void main() {
         ),
       );
 
-      // Two QuantityStepper sub-fields side-by-side — st + lb.
-      expect(find.byType(QuantityStepper), findsNWidgets(2));
-      expect(find.text('st'), findsOneWidget);
-      expect(find.text('lb'), findsOneWidget);
+      // Two display-only sub-steppers side-by-side — st + lb. The unit
+      // is embedded in each value label ("12 st" / "13 lb"), so we
+      // assert against the composite text rather than a bare suffix.
+      expect(find.text('12 st'), findsOneWidget);
+      expect(find.text('13 lb'), findsOneWidget);
 
       // Two Increment buttons live in the row (one per sub-stepper).
       // The pounds +/- buttons drive the stone composite; carry kicks

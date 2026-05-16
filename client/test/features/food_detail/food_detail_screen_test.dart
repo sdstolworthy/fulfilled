@@ -122,6 +122,43 @@ void main() {
   });
 
   testWidgets(
+      'Edit affordance: paints for source == user, hidden for non-user',
+      (tester) async {
+    tester.view.physicalSize = const Size(390, 1200);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    // Non-user (OFF) food — no Edit button in the app bar.
+    await tester.pumpWidget(_harness(food: _yogurt()));
+    await tester.pump();
+    expect(find.text('Edit'), findsNothing,
+        reason: 'Edit button must not paint for OFF foods');
+
+    // User-source food — Edit button paints.
+    final userFood = Food(
+      id: 'f_custom_x',
+      name: "Mom's lasagna",
+      source: FoodSource.user,
+      isCustom: true,
+      nutritionPer100g: NutritionPer100g(energyKcal: Decimal.fromInt(248)),
+      servings: <Serving>[
+        Serving(
+          id: 'sv_custom_x_100g',
+          name: '100 g',
+          grams: Decimal.fromInt(100),
+          isDefault: true,
+          source: ServingSource.system,
+        ),
+      ],
+    );
+    await tester.pumpWidget(_harness(food: userFood));
+    await tester.pumpAndSettle();
+    expect(find.text('Edit'), findsOneWidget,
+        reason: 'Edit button must paint for user-source foods');
+  });
+
+  testWidgets(
       'error branch renders the lifted EmptyState (not a spinner / bare text)',
       (tester) async {
     tester.view.physicalSize = const Size(390, 1200);

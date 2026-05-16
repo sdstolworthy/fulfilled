@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../domain/drafts.dart';
 import '../domain/enums.dart';
+import '../domain/food.dart';
 import 'profile_providers.dart';
 
 /// Draft-state providers for the two multi-step forms:
@@ -55,6 +56,36 @@ class CustomFoodDraftNotifier extends StateNotifier<CustomFoodDraft> {
   /// Restore the empty draft. Call this on successful submit or explicit
   /// "Discard" — see file docstring.
   void reset() => state = const CustomFoodDraft();
+
+  /// Seed the draft from an existing [Food] — used by the edit-mode
+  /// branch of `CustomFoodScreen` to pre-populate every field from the
+  /// food on first build. Only user-defined servings flow into
+  /// `userServings`; the synthetic 100 g system row is filtered out
+  /// (the form never edits it — T-10 says it's auto-managed).
+  ///
+  /// Mirrors the create-flow shape: `name` collapses null/empty to '',
+  /// optional strings stay as-is, nutrition decimals pass through
+  /// untouched.
+  void seedFromFood(Food food) {
+    state = CustomFoodDraft(
+      name: food.name,
+      brand: food.brand,
+      barcode: food.barcode,
+      energyKcal: food.nutritionPer100g.energyKcal,
+      proteinG: food.nutritionPer100g.proteinG,
+      carbsG: food.nutritionPer100g.carbsG,
+      fatG: food.nutritionPer100g.fatG,
+      fiberG: food.nutritionPer100g.fiberG,
+      sugarG: food.nutritionPer100g.sugarG,
+      sodiumMg: food.nutritionPer100g.sodiumMg,
+      saturatedFatG: food.nutritionPer100g.saturatedFatG,
+      userServings: <DraftServing>[
+        for (final s in food.servings)
+          if (s.source != ServingSource.system)
+            DraftServing(label: s.name, grams: s.grams),
+      ],
+    );
+  }
 }
 
 final customFoodDraftProvider =

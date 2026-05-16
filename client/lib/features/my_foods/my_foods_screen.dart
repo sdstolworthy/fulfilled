@@ -294,11 +294,23 @@ class _PopulatedList extends StatelessWidget {
           color: colors.line2,
           indent: context.space.x5,
         ),
-        itemBuilder: (context, i) => SearchResultRow(
-          food: foods[i],
-          query: query,
-          onTap: () => context.push('/foods/${foods[i].id}'),
-        ),
+        // User-source rows route straight into the edit form — the
+        // architectural intent for "My foods" is that every row here is
+        // owned by the caller and is therefore editable in place. The
+        // `source == user` guard is defence-in-depth; in practice
+        // `myFoodsProvider` only returns user-source rows so the else
+        // branch never fires.
+        itemBuilder: (context, i) {
+          final food = foods[i];
+          final isUser = food.source == FoodSource.user;
+          return SearchResultRow(
+            food: food,
+            query: query,
+            onTap: () => context.push(
+              isUser ? '/foods/${food.id}/edit' : '/foods/${food.id}',
+            ),
+          );
+        },
       ),
     );
   }

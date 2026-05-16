@@ -67,6 +67,15 @@ class _FakeFoodDetailScreen extends StatelessWidget {
       Scaffold(body: Center(child: Text('DETAIL-$id')));
 }
 
+class _FakeFoodEditScreen extends StatelessWidget {
+  const _FakeFoodEditScreen({required this.id});
+  final String id;
+
+  @override
+  Widget build(BuildContext context) =>
+      Scaffold(body: Center(child: Text('EDIT-$id')));
+}
+
 Widget _harness({
   required List<Override> overrides,
 }) {
@@ -80,6 +89,13 @@ Widget _harness({
       GoRoute(
         path: Routes.foodNewPath,
         builder: (_, __) => const _FakeFoodNewScreen(),
+      ),
+      // Order matters: the more specific `/edit` route must come
+      // before the catch-all `/:foodId`.
+      GoRoute(
+        path: '/foods/:foodId/edit',
+        builder: (_, state) =>
+            _FakeFoodEditScreen(id: state.pathParameters['foodId']!),
       ),
       GoRoute(
         path: '/foods/:foodId',
@@ -183,7 +199,8 @@ void main() {
     expect(find.text('FOOD-NEW-STUB'), findsOneWidget);
   });
 
-  testWidgets('tapping a row navigates to /foods/:id', (tester) async {
+  testWidgets('tapping a user-source row navigates to /foods/:id/edit',
+      (tester) async {
     tester.view.physicalSize = const Size(390, 844);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
@@ -196,13 +213,57 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    // Tap the first row.
+    // Tap the first row — every row here is `source == user`, so the
+    // tap target is the edit route, not the read-only detail.
     final rowFinder = find.byType(SearchResultRow).first;
     await tester.tap(rowFinder);
     await tester.pumpAndSettle();
 
-    expect(find.text('DETAIL-${_customs.first.id}'), findsOneWidget);
+    expect(find.text('EDIT-${_customs.first.id}'), findsOneWidget);
+    expect(find.text('DETAIL-${_customs.first.id}'), findsNothing);
   });
+
+  testWidgets(
+    'tapping a non-user row falls back to /foods/:id (defensive guard)',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      // myFoodsProvider normally only returns user-source rows, but the
+      // screen has a defence-in-depth branch for non-user rows. Force
+      // one through the override to exercise that branch.
+      final off = Food(
+        id: 'f_off_test',
+        name: 'Public food',
+        source: FoodSource.off,
+        isCustom: false,
+        nutritionPer100g: NutritionPer100g(energyKcal: Decimal.fromInt(100)),
+        servings: <Serving>[
+          Serving(
+            id: 'sv_off_100g',
+            name: '100 g',
+            grams: Decimal.fromInt(100),
+            isDefault: true,
+            source: ServingSource.system,
+          ),
+        ],
+      );
+      await tester.pumpWidget(_harness(
+        overrides: <Override>[
+          myFoodsProvider.overrideWith((_) async => <Food>[off]),
+        ],
+      ));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byType(SearchResultRow).first);
+      await tester.pumpAndSettle();
+
+      expect(find.text('DETAIL-f_off_test'), findsOneWidget);
+      expect(find.text('EDIT-f_off_test'), findsNothing);
+    },
+  );
 
   testWidgets('tapping + in the top bar pushes /foods/new', (tester) async {
     tester.view.physicalSize = const Size(390, 844);

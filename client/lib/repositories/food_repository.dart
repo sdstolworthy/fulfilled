@@ -2,8 +2,10 @@ import 'package:decimal/decimal.dart';
 import 'package:uuid/uuid.dart';
 
 import '../data/api_client.dart';
+import '../domain/drafts.dart';
 import '../domain/enums.dart';
 import '../domain/food.dart';
+import '../domain/food_patch.dart';
 import '../domain/serving.dart';
 import '_fixtures.dart';
 import '_mock_latency.dart';
@@ -213,6 +215,116 @@ class FoodRepository {
     );
     _foods.add(food);
     return food;
+  }
+
+  /// Patch a custom food. Mirrors the planned `PATCH /foods/{id}` —
+  /// sparse-by-null shape so callers (the edit screen) can send only the
+  /// fields that actually changed. `food_id` is immutable in edit mode;
+  /// the patch class refuses to model one, and the JSON guard below
+  /// catches anyone constructing the map directly via a subclass.
+  ///
+  /// Only `source == user` foods are editable. OFF / USDA rows are
+  /// read-only — throws [StateError] when the resolved food is
+  /// non-user. The screen gates at the UI level; this is
+  /// defence-in-depth.
+  ///
+  /// Throws [FoodNotFoundError] when [foodId] is unknown.
+  Future<Food> updateCustom(String foodId, FoodPatch patch) async {
+    // Defence-in-depth against a caller smuggling in an id swap. The
+    // PM ruling is unambiguous: edit mode never re-keys the food.
+    // `FoodPatch` enforces this at the wire level by not modelling a
+    // `food_id` field, so the JSON guard below catches anyone
+    // constructing the map directly.
+    if (patch.toJson().containsKey('food_id')) {
+      throw StateError(
+        'FoodPatch must not contain food_id — id is immutable on edit.',
+      );
+    }
+    await mockLatency();
+    // TODO(food-edit-wire): replace mock with ApiClient.patch
+    // ('/foods/$foodId', patch.toJson())
+    final idx = _foods.indexWhere((f) => f.id == foodId);
+    if (idx < 0) throw FoodNotFoundError(foodId);
+    final current = _foods[idx];
+
+    // Editing a non-user food is meaningless — OFF / USDA rows are
+    // read-only. The screen gates at the UI level; this is the
+    // defence-in-depth backstop.
+    if (current.source != FoodSource.user) {
+      throw StateError(
+        "Only source == user foods can be edited; got ${current.source.wire} "
+        "for $foodId.",
+      );
+    }
+
+    final nextName = patch.name ?? current.name;
+    final String? nextBrand;
+    if (patch.brand != null) {
+      nextBrand = patch.brand;
+    } else if (patch.clearBrand) {
+      nextBrand = null;
+    } else {
+      nextBrand = current.brand;
+    }
+    final String? nextBarcode;
+    if (patch.barcode != null) {
+      nextBarcode = patch.barcode;
+    } else if (patch.clearBarcode) {
+      nextBarcode = null;
+    } else {
+      nextBarcode = current.barcode;
+    }
+    final nextNutrition = patch.nutritionPer100g ?? current.nutritionPer100g;
+
+    // Servings: replace the user-defined rows wholesale; preserve every
+    // system row (the synthetic 100 g, T-10). When `patch.servings` is
+    // null, the existing list is carried through unchanged.
+    List<Serving> nextServings;
+    if (patch.servings != null) {
+      final preserved = current.servings
+          .where((s) => s.source == ServingSource.system)
+          .toList();
+      // Assign sortOrder so the user rows sort beneath the system rows.
+      var maxSystemSort = -1;
+      for (final s in preserved) {
+        if (s.sortOrder > maxSystemSort) maxSystemSort = s.sortOrder;
+      }
+      final userRows = <Serving>[];
+      for (var i = 0; i < patch.servings!.length; i++) {
+        final draft = patch.servings![i];
+        userRows.add(Serving(
+          id: 'sv_${_uuid.v4()}',
+          name: draft.label,
+          grams: draft.grams,
+          isDefault: false,
+          source: ServingSource.user,
+          sortOrder: maxSystemSort + 1 + i,
+        ));
+      }
+      nextServings = <Serving>[...preserved, ...userRows];
+    } else {
+      nextServings = current.servings;
+    }
+
+    // Use the Food constructor directly — `Food.copyWith` can't clear a
+    // nullable field (the `?? this.brand` pattern falls through on null),
+    // and we need an explicit-clear path to honour `clearBrand` /
+    // `clearBarcode`.
+    final updated = Food(
+      id: current.id,
+      name: nextName,
+      brand: nextBrand,
+      barcode: nextBarcode,
+      source: current.source,
+      isCustom: current.isCustom,
+      qualityScore: current.qualityScore,
+      nutriscore: current.nutriscore,
+      nutritionPer100g: nextNutrition,
+      servings: nextServings,
+      categoriesTags: current.categoriesTags,
+    );
+    _foods[idx] = updated;
+    return updated;
   }
 
   /// Number of `source == user` rows owned by the caller. Drives screen

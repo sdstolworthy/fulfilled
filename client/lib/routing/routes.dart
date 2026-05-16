@@ -47,6 +47,13 @@ class Routes {
   static const String foodNewName = 'foods.new';
   static const String foodNewPath = '/foods/new';
 
+  /// Edit screen for a `source == user` food. The resolver looks the
+  /// food up via `foodDetailProvider`; for non-user foods (OFF / USDA)
+  /// it renders a "Only your custom foods can be edited" affordance.
+  /// Lives outside the shell — full-page form, no nav chrome.
+  static const String foodEditName = 'foods.edit';
+  static const String foodEditPath = '/foods/:foodId/edit';
+
   static const String foodBarcodeName = 'foods.barcode';
   static const String foodBarcodePath = '/foods/barcode/:barcode';
 

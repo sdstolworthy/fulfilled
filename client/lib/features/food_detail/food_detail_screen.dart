@@ -7,6 +7,7 @@ import 'package:fulfilled/widgets/primary_button.dart';
 import 'package:fulfilled/widgets/serving_list.dart';
 import 'package:fulfilled/widgets/skeleton.dart';
 
+import '../../domain/enums.dart';
 import '../../domain/food.dart';
 import '../../features/log_entry/log_entry_sheet.dart';
 import '../../form_factor/form_factor.dart';
@@ -113,12 +114,19 @@ class _DetailLoaded extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isCompact = FormFactor.of(context).isCompact;
+    final isEditable = food.source == FoodSource.user;
 
     return Scaffold(
       backgroundColor: context.colors.bg,
       appBar: _DetailAppBar(
         showAddToLog: !isCompact,
         onAddToLog: () => openLogEntry(context, food: food),
+        // The Edit affordance only paints for `source == user` foods —
+        // the OFF / USDA rows are read-only (their data is upstream and
+        // shared across users). The button pushes
+        // `/foods/$id/edit` which lands on `CustomFoodScreen` in edit
+        // mode via the resolver in `app_router.dart`.
+        onEdit: isEditable ? () => context.push('/foods/${food.id}/edit') : null,
       ),
       body: SafeArea(
         top: false,
@@ -218,10 +226,16 @@ class _DetailAppBar extends StatelessWidget implements PreferredSizeWidget {
   const _DetailAppBar({
     required this.showAddToLog,
     required this.onAddToLog,
+    this.onEdit,
   });
 
   final bool showAddToLog;
   final VoidCallback onAddToLog;
+
+  /// Non-null only for `source == user` foods. When set, the app bar
+  /// renders an "Edit" text button between the Save and Add-to-log
+  /// affordances. Tapping it navigates to the edit route.
+  final VoidCallback? onEdit;
 
   @override
   Size get preferredSize => const Size.fromHeight(kToolbarHeight);
@@ -246,6 +260,22 @@ class _DetailAppBar extends StatelessWidget implements PreferredSizeWidget {
             // screen owns the entry point only. No-op until that lands.
           },
         ),
+        if (onEdit != null)
+          Padding(
+            padding: EdgeInsets.only(left: context.space.x1),
+            child: TextButton(
+              onPressed: onEdit,
+              style: TextButton.styleFrom(
+                foregroundColor: context.colors.accent,
+                textStyle: context.text.bodyStrong,
+                padding: EdgeInsets.symmetric(
+                  horizontal: context.space.x3,
+                  vertical: context.space.x2,
+                ),
+              ),
+              child: const Text('Edit'),
+            ),
+          ),
         if (showAddToLog)
           Padding(
             padding: EdgeInsets.only(

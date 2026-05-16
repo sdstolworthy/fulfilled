@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../domain/enums.dart';
 import '../features/custom_food/custom_food_screen.dart';
 import '../features/food_detail/food_detail_screen.dart';
 import '../features/goals/goals_screen.dart';
@@ -13,13 +14,17 @@ import '../features/search/search_screen.dart';
 import '../features/today/today_screen.dart';
 import '../features/weight/weight_screen.dart';
 import '../form_factor/breakpoints.dart';
+import '../providers/food_providers.dart';
 import '../providers/repository_providers.dart';
 import '../repositories/food_repository.dart';
 import '../theme/context_extensions.dart';
+import '../widgets/empty_state.dart';
 import '../widgets/app_scaffold.dart';
 import '../widgets/keyboard_shortcuts.dart';
 import '../widgets/motion.dart';
 import '../widgets/placeholder_screen.dart';
+import '../widgets/primary_button.dart';
+import '../widgets/skeleton.dart';
 import 'routes.dart';
 
 /// The `go_router` configuration. Shape per architecture §4:
@@ -148,6 +153,13 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         path: Routes.foodBarcodePath,
         builder: (_, state) => _BarcodeResolveScreen(
           barcode: state.pathParameters['barcode']!,
+        ),
+      ),
+      GoRoute(
+        name: Routes.foodEditName,
+        path: Routes.foodEditPath,
+        builder: (_, state) => _FoodEditResolveScreen(
+          foodId: state.pathParameters['foodId']!,
         ),
       ),
       GoRoute(
@@ -342,5 +354,156 @@ class _BarcodeResolveError extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Food edit resolver screen — `/foods/:foodId/edit`.
+// ---------------------------------------------------------------------------
+
+/// Resolver for `/foods/:foodId/edit`. Reads the food via
+/// `foodDetailProvider`, then:
+///
+/// - **data + source == user** → renders the [CustomFoodScreen] in edit
+///   mode with `existing: food`.
+/// - **data + source != user** → renders a "Only your custom foods can
+///   be edited" `EmptyState` with a back affordance. OFF / USDA rows
+///   are not editable (PM ruling: their data is upstream and shared
+///   across users).
+/// - **loading** → the same shimmer the food detail screen shows, so
+///   the layout doesn't jump when the data lands.
+/// - **error** → an inline `EmptyState` with a Retry affordance.
+class _FoodEditResolveScreen extends ConsumerWidget {
+  const _FoodEditResolveScreen({required this.foodId});
+
+  final String foodId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final async = ref.watch(foodDetailProvider(foodId));
+    return async.when(
+      loading: () => const _FoodEditLoading(),
+      error: (err, _) => _FoodEditError(
+        error: err,
+        foodId: foodId,
+        onRetry: () => ref.invalidate(foodDetailProvider(foodId)),
+      ),
+      data: (food) {
+        if (food.source != FoodSource.user) {
+          return _FoodEditNotEditable(foodId: food.id);
+        }
+        return CustomFoodScreen(existing: food);
+      },
+    );
+  }
+}
+
+class _FoodEditLoading extends StatelessWidget {
+  const _FoodEditLoading();
+
+  @override
+  Widget build(BuildContext context) {
+    final space = context.space;
+    return Scaffold(
+      backgroundColor: context.colors.bg,
+      body: SafeArea(
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(space.x5, space.x4, space.x5, space.x6),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              const Skeleton(height: 22, width: 180),
+              SizedBox(height: space.x4),
+              const SkeletonRow(),
+              SizedBox(height: space.x1),
+              const SkeletonRow(),
+              SizedBox(height: space.x1),
+              const SkeletonRow(),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _FoodEditError extends StatelessWidget {
+  const _FoodEditError({
+    required this.error,
+    required this.foodId,
+    required this.onRetry,
+  });
+
+  final Object error;
+  final String foodId;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final isNotFound = error is FoodNotFoundError;
+    return Scaffold(
+      backgroundColor: context.colors.bg,
+      body: SafeArea(
+        child: Center(
+          child: EmptyState(
+            icon: isNotFound ? Icons.no_food_outlined : Icons.cloud_off,
+            title: isNotFound ? 'Food not found' : "Couldn't load food",
+            body: isNotFound
+                ? "We don't have a record for $foodId."
+                : 'Pull to refresh or tap retry.',
+            action: SizedBox(
+              width: 200,
+              child: isNotFound
+                  ? PrimaryButton(
+                      label: 'Go back',
+                      onPressed: () => _popOrFallback(context),
+                    )
+                  : PrimaryButton(
+                      label: 'Retry',
+                      onPressed: onRetry,
+                    ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _FoodEditNotEditable extends StatelessWidget {
+  const _FoodEditNotEditable({required this.foodId});
+
+  final String foodId;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: context.colors.bg,
+      body: SafeArea(
+        child: Center(
+          child: EmptyState(
+            icon: Icons.lock_outline,
+            title: 'Only your custom foods can be edited',
+            body: 'This food was sourced from a public database.',
+            action: SizedBox(
+              width: 200,
+              child: PrimaryButton(
+                label: 'Back',
+                onPressed: () => _popOrFallback(context, fallback: '/foods/$foodId'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+void _popOrFallback(BuildContext context, {String fallback = '/foods'}) {
+  final router = GoRouter.of(context);
+  if (router.canPop()) {
+    router.pop();
+  } else {
+    router.go(fallback);
   }
 }
