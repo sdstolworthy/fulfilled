@@ -25,6 +25,8 @@ class QuickAddChips extends StatelessWidget {
     required this.recents,
     required this.frequents,
     required this.onTapFood,
+    this.compact = false,
+    this.maxChips,
     super.key,
   });
 
@@ -32,11 +34,37 @@ class QuickAddChips extends StatelessWidget {
   final List<Food> frequents;
   final void Function(Food food) onTapFood;
 
+  /// Render shape:
+  ///   - `compact: false` (default; the existing right-rail card).
+  ///     Card-shaped, eyebrow "Quick add", "Recent" + "Frequent"
+  ///     sections, ≤ `maxChips ?? 4` chips per section, vertical
+  ///     wrap, full empty-state with CTA.
+  ///   - `compact: true` (the F2 today-compact strip — UX-107).
+  ///     No card chrome, no eyebrow, no section headers, recents-only
+  ///     (`frequents` ignored), ≤ `maxChips ?? 6` chips,
+  ///     horizontal-scroll. Renders `SizedBox.shrink()` when recents
+  ///     is empty — the empty state is the caller's responsibility
+  ///     (the day view's existing `_EmptyDayPill` covers the
+  ///     "no food yet" surface).
+  final bool compact;
+
+  /// Cap on how many chips render. Defaults to 4 in card mode (per
+  /// section), 6 in compact mode (the strip). The wrapper widget on
+  /// Today compact (`_TodayRecentChipsRow`) is the one that owns the
+  /// "≥ 4 recents" gate — the widget itself short-circuits only when
+  /// the post-`_take` list is empty.
+  final int? maxChips;
+
   @override
   Widget build(BuildContext context) {
+    if (compact) return _buildCompactStrip(context);
+    return _buildCardWithSections(context);
+  }
+
+  Widget _buildCardWithSections(BuildContext context) {
     final colors = context.colors;
-    final recentChips = _take(recents, 4);
-    final frequentChips = _take(frequents, 4);
+    final recentChips = _take(recents, maxChips ?? 4);
+    final frequentChips = _take(frequents, maxChips ?? 4);
 
     return Container(
       decoration: BoxDecoration(
@@ -85,6 +113,39 @@ class QuickAddChips extends StatelessWidget {
               ),
             ),
         ],
+      ),
+    );
+  }
+
+  /// UX-107 / architect §4.2 — the horizontal-scroll compact strip mode.
+  ///
+  /// Renders the first `maxChips ?? 6` recents as a horizontal-scrollable
+  /// row of `_QuickAddChip`s — no card chrome, no eyebrow, no section
+  /// headers, recents-only. Suitable for inline mount inside a sliver
+  /// list between the ring summary card and the meal grid.
+  ///
+  /// Defensive short-circuit: returns `SizedBox.shrink()` when the
+  /// post-`_take` list is empty. The wrapper widget on Today compact
+  /// (`_TodayRecentChipsRow`) is the one that owns the higher
+  /// "≥ 4 recents" PM floor; this widget keeps the empty short-circuit
+  /// minimal so a future caller that wants the strip on fewer chips
+  /// can pass `maxChips: 3` without the gate.
+  Widget _buildCompactStrip(BuildContext context) {
+    final shown = _take(recents, maxChips ?? 6);
+    if (shown.isEmpty) return const SizedBox.shrink();
+    return SizedBox(
+      height: 44,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: EdgeInsets.symmetric(horizontal: context.space.x5),
+        itemCount: shown.length,
+        separatorBuilder: (_, __) => SizedBox(width: context.space.x2),
+        itemBuilder: (_, i) => Center(
+          child: _QuickAddChip(
+            food: shown[i],
+            onTap: () => onTapFood(shown[i]),
+          ),
+        ),
       ),
     );
   }

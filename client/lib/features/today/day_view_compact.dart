@@ -6,15 +6,19 @@ import 'package:fulfilled/widgets/empty_state.dart';
 import 'package:fulfilled/widgets/icon_button_36.dart';
 import 'package:fulfilled/widgets/meal_section.dart';
 import 'package:fulfilled/widgets/primary_button.dart';
+import 'package:fulfilled/widgets/quick_add_chips.dart';
 import 'package:fulfilled/widgets/ring_summary_card.dart';
 
 import '../../domain/day_summary.dart';
+import '../../domain/food.dart';
 import '../../domain/log_entry.dart';
 import '../../domain/meal.dart';
+import '../../providers/food_providers.dart';
 import '../../providers/log_providers.dart';
 import '../../providers/repository_providers.dart';
 import '../../routing/routes.dart';
 import '../../theme/context_extensions.dart';
+import '../log_entry/log_entry_sheet.dart';
 import '../quick_add/quick_add_sheet.dart';
 import 'today_internals.dart';
 import 'widgets/copy_day_sheet.dart';
@@ -91,6 +95,13 @@ class DayViewCompact extends ConsumerWidget {
                 ),
               ),
             ),
+            // UX-107 F2 — Recent-foods chip strip. Sits between the
+            // ring summary card and the empty-day pill / meal grid.
+            // Today-only, ≥ 4 recents floor (per PM doc §2 F2 AC); the
+            // wrapper widget owns the gates and the
+            // `showLogEntrySheet(food, defaultMeal)` tap binding so
+            // `QuickAddChips` itself stays gate-free.
+            SliverToBoxAdapter(child: _TodayRecentChipsRow(date: date)),
             // QL-108 — empty-day pill. Renders between the ring summary
             // and the meal sections when `logEntriesProvider(date)`
             // resolves to an empty list (any day, including backdates).
@@ -340,6 +351,63 @@ class _EmptyDayPill extends StatelessWidget {
               _EmptyDayCopyFromButton(date: date),
             ],
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// UX-107 F2 — Today-compact recent-foods chip strip wrapper.
+///
+/// Hosts the lifted `QuickAddChips` in its `compact: true` mode between
+/// the `RingSummaryCard` and the `_EmptyDayPill`. Owns the two gates so
+/// `QuickAddChips` itself stays gate-free:
+///
+/// 1. **Today-only.** The strip only renders when the day view is
+///    showing the local-now day (`isLocalNowDay(date)`). Backdated days
+///    hide the strip entirely; the per-meal copy affordance (UX-106) is
+///    the right scope for re-logging onto past days. Per PM doc §2 F2.
+/// 2. **≥ 4 recents.** When the user has fewer than four recent foods
+///    the strip is hidden — the long-tail signal isn't worth the
+///    surface area at three or fewer chips. Empty / loading recents
+///    also hide; no skeleton, no placeholder. Architect §4.5 / PM doc
+///    §2 F2 AC.
+///
+/// Tap behavior: `showLogEntrySheet(context, food: f, defaultMeal:
+/// mealForLocalTime(now))`. Create-mode, pre-seeded with the chosen
+/// food and the time-of-day meal default — explicitly **not** one-tap
+/// commit. The sheet handles the rest. Architect §4.4.
+class _TodayRecentChipsRow extends ConsumerWidget {
+  const _TodayRecentChipsRow({required this.date});
+
+  final DateTime date;
+
+  /// PM doc §2 F2 AC floor — fewer than four recents hides the strip.
+  /// The wrapper owns this gate (not `QuickAddChips`) so the widget
+  /// stays reusable for surfaces that want chips on smaller counts.
+  static const int _minRecents = 4;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    if (!isLocalNowDay(date)) return const SizedBox.shrink();
+
+    final recentsAsync = ref.watch(recentFoodsProvider);
+    final recents = recentsAsync.valueOrNull ?? const <Food>[];
+    if (recents.length < _minRecents) return const SizedBox.shrink();
+
+    return Padding(
+      padding: EdgeInsets.only(bottom: context.space.x3),
+      child: QuickAddChips(
+        key: const Key('today-recent-chips-row'),
+        compact: true,
+        recents: recents,
+        frequents: const <Food>[],
+        onTapFood: (food) => showLogEntrySheet(
+          context,
+          food: food,
+          // Time-of-day meal default. The sheet ignores this in edit
+          // mode but we're always in create here.
+          defaultMeal: mealForLocalTime(DateTime.now()),
         ),
       ),
     );
