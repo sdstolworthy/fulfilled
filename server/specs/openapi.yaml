@@ -1,0 +1,1058 @@
+openapi: 3.1.0
+info:
+  title: LoseIt API
+  version: "0.1.0"
+  description: |
+    HTTP API for the LoseIt server. All routes (except `/health`) require a
+    bearer token in the `Authorization` header. Token validation is delegated
+    to a pluggable authenticator; the first identity seen for a given
+    `(issuer, external_id)` pair is auto-provisioned into a local user row.
+
+    All paths are served under the `/api/v1` prefix.
+
+    Decimal-valued fields (weights, nutrition, quantities) are transported as
+    JSON numbers but produced/consumed by the server as arbitrary-precision
+    decimals — clients should avoid binary float round-trips for fields like
+    `weight_kg`, `grams`, and `quantity`.
+
+servers:
+  - url: http://localhost:8080/api/v1
+    description: Local development
+  - url: https://{host}/api/v1
+    description: Deployed
+    variables:
+      host:
+        default: api.example.com
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Health
+  - name: Profile
+  - name: Weights
+  - name: Goals
+  - name: Foods
+  - name: Servings
+  - name: Log
+  - name: Days
+
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Liveness probe
+      security: []
+      responses:
+        "200":
+          description: Service is up.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    type: string
+                    enum: [ok]
+
+  /me:
+    get:
+      tags: [Profile]
+      summary: Get the authenticated user's profile
+      responses:
+        "200":
+          description: Current user.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    patch:
+      tags: [Profile]
+      summary: Update profile fields
+      description: |
+        Partial update. Any omitted field is left unchanged. `sex` and
+        `activity_level` must be one of the documented enum values or the
+        server returns `400 bad_request`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ProfilePatch" }
+      responses:
+        "200":
+          description: Updated user.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /weights:
+    post:
+      tags: [Weights]
+      summary: Record a weight entry
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/WeightCreate" }
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Weight" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/Conflict" }
+    get:
+      tags: [Weights]
+      summary: List weight entries
+      parameters:
+        - in: query
+          name: from
+          schema: { type: string, format: date }
+          description: Inclusive lower bound on `recorded_on`.
+        - in: query
+          name: to
+          schema: { type: string, format: date }
+          description: Inclusive upper bound on `recorded_on`.
+      responses:
+        "200":
+          description: Matching weight entries.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Weight" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /weights/{id}:
+    delete:
+      tags: [Weights]
+      summary: Delete a weight entry
+      parameters:
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /goals:
+    post:
+      tags: [Goals]
+      summary: Create a goal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/GoalCreate" }
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Goal" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/Conflict" }
+    get:
+      tags: [Goals]
+      summary: List the caller's goals
+      responses:
+        "200":
+          description: All goals belonging to the caller.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Goal" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /goals/active:
+    get:
+      tags: [Goals]
+      summary: Get the goal active on a given date
+      parameters:
+        - in: query
+          name: on
+          schema: { type: string, format: date }
+          description: Date to evaluate. Defaults to today (UTC).
+      responses:
+        "200":
+          description: Active goal.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Goal" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /goals/{id}:
+    patch:
+      tags: [Goals]
+      summary: Update a goal
+      parameters:
+        - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/GoalPatch" }
+      responses:
+        "200":
+          description: Updated goal.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Goal" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+    delete:
+      tags: [Goals]
+      summary: Delete a goal
+      parameters:
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /foods/search:
+    get:
+      tags: [Foods]
+      summary: Search foods
+      description: |
+        Full-text search across the foods catalogue (OFF, USDA, and the
+        caller's custom foods). A blank `q` returns `400 bad_request`.
+      parameters:
+        - in: query
+          name: q
+          required: true
+          schema: { type: string, minLength: 1 }
+        - in: query
+          name: limit
+          schema: { type: integer, format: int64, minimum: 1 }
+          description: Page size. Server applies a cap if exceeded.
+        - in: query
+          name: offset
+          schema: { type: integer, format: int64, minimum: 0 }
+      responses:
+        "200":
+          description: Search page.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FoodSearchPage" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /foods/recent:
+    get:
+      tags: [Foods]
+      summary: Foods the caller has logged most recently
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, format: int64, minimum: 1 }
+      responses:
+        "200":
+          description: Recent foods.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/FoodSearchHit" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /foods/frequent:
+    get:
+      tags: [Foods]
+      summary: Foods the caller logs most frequently
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, format: int64, minimum: 1 }
+      responses:
+        "200":
+          description: Frequent foods.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/FoodSearchHit" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /foods/barcode/{barcode}:
+    get:
+      tags: [Foods]
+      summary: Look up a food by barcode
+      parameters:
+        - in: path
+          name: barcode
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Food detail.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FoodDetail" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /foods:
+    post:
+      tags: [Foods]
+      summary: Create a custom food
+      description: |
+        Creates a `user`-source food owned by the caller. A default
+        100 g system serving is auto-seeded.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FoodCreate" }
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FoodDetail" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /foods/{id}:
+    get:
+      tags: [Foods]
+      summary: Get a food by id, including its servings
+      parameters:
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "200":
+          description: Food detail.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FoodDetail" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    patch:
+      tags: [Foods]
+      summary: Update a custom food
+      description: Only the owner of a `user`-source food may patch it.
+      parameters:
+        - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/FoodPatch" }
+      responses:
+        "200":
+          description: Updated food.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FoodDetail" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [Foods]
+      summary: Delete a custom food
+      description: |
+        Returns `403` if the food isn't owned by the caller and `409` if
+        the food is referenced by existing log entries.
+      parameters:
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /foods/{food_id}/servings:
+    post:
+      tags: [Servings]
+      summary: Create a serving on a food
+      parameters:
+        - in: path
+          name: food_id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ServingCreate" }
+      responses:
+        "201":
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Serving" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /servings/{id}:
+    patch:
+      tags: [Servings]
+      summary: Update a serving
+      parameters:
+        - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ServingPatch" }
+      responses:
+        "200":
+          description: Updated serving.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Serving" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [Servings]
+      summary: Delete a serving
+      parameters:
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+
+  /servings/{id}/default:
+    post:
+      tags: [Servings]
+      summary: Make this serving the default for its food
+      description: |
+        Atomically flips the `is_default` flag: the named serving becomes
+        the food's default and any previous default is unset.
+      parameters:
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "200":
+          description: The serving in its post-flip state.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Serving" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /log:
+    post:
+      tags: [Log]
+      summary: Record a food log entry
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LogCreate" }
+      responses:
+        "201":
+          description: Created. The response includes a frozen nutrition snapshot.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LogEntry" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    get:
+      tags: [Log]
+      summary: List log entries in a date range
+      description: |
+        Both `from` and `to` are required and must satisfy `from <= to`.
+        Entries are returned newest consumed-day first, then newest
+        created-at within the same day.
+      parameters:
+        - in: query
+          name: from
+          required: true
+          schema: { type: string, format: date }
+        - in: query
+          name: to
+          required: true
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          description: Matching log entries.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/LogEntry" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /log/{id}:
+    patch:
+      tags: [Log]
+      summary: Update a log entry
+      description: |
+        `food_id` is immutable — sending one is a `400`. A `null` `note`
+        clears the existing value; omitting the field leaves it unchanged.
+      parameters:
+        - $ref: "#/components/parameters/PathId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LogPatch" }
+      responses:
+        "200":
+          description: Updated entry.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LogEntry" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [Log]
+      summary: Delete a log entry
+      parameters:
+        - $ref: "#/components/parameters/PathId"
+      responses:
+        "204": { description: Deleted. }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /days/{date}/summary:
+    get:
+      tags: [Days]
+      summary: Per-day rollup of logged nutrition
+      parameters:
+        - in: path
+          name: date
+          required: true
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          description: Day summary.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DaySummary" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        Bearer token validated by the configured authenticator. In
+        development a static `DEV_AUTH_BYPASS` token may be used; in
+        production tokens are expected to be JWTs validated against a JWKS
+        endpoint.
+
+  parameters:
+    PathId:
+      in: path
+      name: id
+      required: true
+      schema: { type: string, format: uuid }
+
+  responses:
+    BadRequest:
+      description: Request was malformed or failed domain validation.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unauthorized:
+      description: Missing or invalid credentials.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Forbidden:
+      description: Authenticated but not allowed to perform this action.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: Resource does not exist or is not visible to the caller.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Conflict:
+      description: Domain invariant prevents the operation.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: Stable, machine-readable error identifier.
+          examples:
+            - bad_request
+            - unauthorized
+            - forbidden
+            - not_found
+            - conflict
+            - upstream_error
+            - internal_error
+        message:
+          type: string
+
+    Decimal:
+      description: Arbitrary-precision decimal serialized as a JSON number.
+      type: number
+
+    Sex:
+      type: string
+      enum: [male, female, other]
+
+    ActivityLevel:
+      type: string
+      enum: [sedentary, light, moderate, active, very_active]
+
+    Meal:
+      type: string
+      enum: [breakfast, lunch, dinner, snack]
+
+    FoodSource:
+      type: string
+      enum: [off, user, usda]
+
+    ServingSource:
+      type: string
+      enum: [off, user, system]
+
+    NutriscoreGrade:
+      type: string
+      enum: [a, b, c, d, e]
+
+    User:
+      type: object
+      required: [id, issuer, external_id, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        issuer: { type: string }
+        external_id: { type: string }
+        email: { type: string, nullable: true, format: email }
+        display_name: { type: string, nullable: true }
+        sex:
+          oneOf:
+            - $ref: "#/components/schemas/Sex"
+            - type: "null"
+        birth_date: { type: string, format: date, nullable: true }
+        height_cm:
+          oneOf:
+            - $ref: "#/components/schemas/Decimal"
+            - type: "null"
+        activity_level:
+          oneOf:
+            - $ref: "#/components/schemas/ActivityLevel"
+            - type: "null"
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    ProfilePatch:
+      type: object
+      description: Any omitted field is left unchanged.
+      properties:
+        email: { type: string, format: email }
+        display_name: { type: string }
+        sex: { $ref: "#/components/schemas/Sex" }
+        birth_date: { type: string, format: date }
+        height_cm: { $ref: "#/components/schemas/Decimal" }
+        activity_level: { $ref: "#/components/schemas/ActivityLevel" }
+
+    Weight:
+      type: object
+      required: [id, recorded_on, weight_kg, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        recorded_on: { type: string, format: date }
+        recorded_at_local:
+          type: string
+          nullable: true
+          description: Local time-of-day component (HH:MM:SS), if known.
+        weight_kg: { $ref: "#/components/schemas/Decimal" }
+        note: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+
+    WeightCreate:
+      type: object
+      required: [recorded_on, weight_kg]
+      properties:
+        recorded_on: { type: string, format: date }
+        recorded_at_local:
+          type: string
+          description: Local time-of-day component (HH:MM:SS).
+        weight_kg: { $ref: "#/components/schemas/Decimal" }
+        note: { type: string }
+
+    Goal:
+      type: object
+      required: [id, starts_on, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        starts_on: { type: string, format: date }
+        ends_on: { type: string, format: date, nullable: true }
+        start_weight_kg:
+          oneOf:
+            - $ref: "#/components/schemas/Decimal"
+            - type: "null"
+        target_weight_kg:
+          oneOf:
+            - $ref: "#/components/schemas/Decimal"
+            - type: "null"
+        weekly_rate_kg:
+          oneOf:
+            - $ref: "#/components/schemas/Decimal"
+            - type: "null"
+        daily_calorie_target: { type: integer, format: int32, nullable: true }
+        protein_g_target:
+          oneOf:
+            - $ref: "#/components/schemas/Decimal"
+            - type: "null"
+        carbs_g_target:
+          oneOf:
+            - $ref: "#/components/schemas/Decimal"
+            - type: "null"
+        fat_g_target:
+          oneOf:
+            - $ref: "#/components/schemas/Decimal"
+            - type: "null"
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    GoalCreate:
+      type: object
+      required: [starts_on]
+      properties:
+        starts_on: { type: string, format: date }
+        ends_on: { type: string, format: date }
+        start_weight_kg: { $ref: "#/components/schemas/Decimal" }
+        target_weight_kg: { $ref: "#/components/schemas/Decimal" }
+        weekly_rate_kg: { $ref: "#/components/schemas/Decimal" }
+        daily_calorie_target: { type: integer, format: int32 }
+        protein_g_target: { $ref: "#/components/schemas/Decimal" }
+        carbs_g_target: { $ref: "#/components/schemas/Decimal" }
+        fat_g_target: { $ref: "#/components/schemas/Decimal" }
+
+    GoalPatch:
+      type: object
+      description: Any omitted field is left unchanged.
+      properties:
+        starts_on: { type: string, format: date }
+        ends_on: { type: string, format: date }
+        start_weight_kg: { $ref: "#/components/schemas/Decimal" }
+        target_weight_kg: { $ref: "#/components/schemas/Decimal" }
+        weekly_rate_kg: { $ref: "#/components/schemas/Decimal" }
+        daily_calorie_target: { type: integer, format: int32 }
+        protein_g_target: { $ref: "#/components/schemas/Decimal" }
+        carbs_g_target: { $ref: "#/components/schemas/Decimal" }
+        fat_g_target: { $ref: "#/components/schemas/Decimal" }
+
+    NutritionPer100g:
+      type: object
+      description: Per-100g nutrition. All fields are optional/nullable.
+      properties:
+        energy_kcal: { $ref: "#/components/schemas/Decimal" }
+        protein_g: { $ref: "#/components/schemas/Decimal" }
+        carbs_g: { $ref: "#/components/schemas/Decimal" }
+        fat_g: { $ref: "#/components/schemas/Decimal" }
+        fiber_g: { $ref: "#/components/schemas/Decimal" }
+        sugar_g: { $ref: "#/components/schemas/Decimal" }
+        sodium_g:
+          allOf:
+            - $ref: "#/components/schemas/Decimal"
+          description: Sodium in grams per 100 g (OFF convention).
+        saturated_fat_g: { $ref: "#/components/schemas/Decimal" }
+
+    Serving:
+      type: object
+      required: [id, label, grams, is_default, source, sort_order]
+      properties:
+        id: { type: string, format: uuid }
+        label: { type: string }
+        grams: { $ref: "#/components/schemas/Decimal" }
+        is_default: { type: boolean }
+        source: { $ref: "#/components/schemas/ServingSource" }
+        sort_order: { type: integer, format: int32 }
+
+    ServingCreate:
+      type: object
+      required: [label, grams]
+      properties:
+        label: { type: string }
+        grams: { $ref: "#/components/schemas/Decimal" }
+        is_default: { type: boolean, default: false }
+        source:
+          allOf:
+            - $ref: "#/components/schemas/ServingSource"
+          description: Defaults to `user` if omitted.
+        sort_order: { type: integer, format: int32, default: 0 }
+
+    ServingPatch:
+      type: object
+      description: |
+        Partial update of a serving. Toggling `is_default` is done via the
+        dedicated `POST /servings/{id}/default` endpoint, not this one.
+      properties:
+        label: { type: string }
+        grams: { $ref: "#/components/schemas/Decimal" }
+        sort_order: { type: integer, format: int32 }
+
+    ServingPreview:
+      type: object
+      required: [id, label, grams]
+      properties:
+        id: { type: string, format: uuid }
+        label: { type: string }
+        grams: { $ref: "#/components/schemas/Decimal" }
+
+    FoodDetail:
+      type: object
+      required:
+        - id
+        - source
+        - name
+        - categories_tags
+        - nutrition
+        - quality_score
+        - servings
+      properties:
+        id: { type: string, format: uuid }
+        source: { $ref: "#/components/schemas/FoodSource" }
+        owner_user_id: { type: string, format: uuid, nullable: true }
+        barcode: { type: string, nullable: true }
+        fdc_id:
+          type: integer
+          format: int64
+          description: USDA FoodData Central id, present for `usda`-sourced foods only.
+        name: { type: string }
+        brands: { type: string, nullable: true }
+        categories_tags:
+          type: array
+          items: { type: string }
+        nutrition: { $ref: "#/components/schemas/NutritionPer100g" }
+        nutriscore:
+          oneOf:
+            - $ref: "#/components/schemas/NutriscoreGrade"
+            - type: "null"
+        quality_score: { type: integer, format: int32 }
+        extra_nutrients:
+          description: Free-form JSON of additional nutrients, if any.
+          nullable: true
+        servings:
+          type: array
+          items: { $ref: "#/components/schemas/Serving" }
+
+    FoodCreate:
+      type: object
+      required: [name, nutrition]
+      properties:
+        name: { type: string }
+        brands: { type: string }
+        barcode: { type: string }
+        categories_tags:
+          type: array
+          items: { type: string }
+          default: []
+        nutrition: { $ref: "#/components/schemas/NutritionPer100g" }
+        nutriscore_grade: { $ref: "#/components/schemas/NutriscoreGrade" }
+
+    FoodPatch:
+      type: object
+      description: Any omitted field is left unchanged.
+      properties:
+        name: { type: string }
+        brands: { type: string }
+        barcode: { type: string }
+        categories_tags:
+          type: array
+          items: { type: string }
+        nutrition: { $ref: "#/components/schemas/NutritionPer100g" }
+        nutriscore_grade: { $ref: "#/components/schemas/NutriscoreGrade" }
+
+    FoodSearchHit:
+      type: object
+      required: [id, source, name]
+      properties:
+        id: { type: string, format: uuid }
+        source: { $ref: "#/components/schemas/FoodSource" }
+        name: { type: string }
+        brand: { type: string, nullable: true }
+        barcode: { type: string, nullable: true }
+        default_serving:
+          oneOf:
+            - $ref: "#/components/schemas/ServingPreview"
+            - type: "null"
+        calories_per_serving:
+          oneOf:
+            - $ref: "#/components/schemas/Decimal"
+            - type: "null"
+
+    FoodSearchPage:
+      type: object
+      required: [results, total, limit, offset]
+      properties:
+        results:
+          type: array
+          items: { $ref: "#/components/schemas/FoodSearchHit" }
+        total: { type: integer, format: int64 }
+        limit: { type: integer, format: int64 }
+        offset: { type: integer, format: int64 }
+
+    LogEntry:
+      type: object
+      description: |
+        A logged consumption event with a frozen nutrition snapshot. The
+        nutrition fields are flattened onto the entry rather than nested.
+      required:
+        - id
+        - food_id
+        - consumed_on
+        - meal
+        - quantity
+        - grams_total
+        - calories_kcal
+        - created_at
+        - updated_at
+      properties:
+        id: { type: string, format: uuid }
+        food_id: { type: string, format: uuid }
+        serving_id: { type: string, format: uuid, nullable: true }
+        consumed_on: { type: string, format: date }
+        meal: { $ref: "#/components/schemas/Meal" }
+        quantity: { $ref: "#/components/schemas/Decimal" }
+        grams_total: { $ref: "#/components/schemas/Decimal" }
+        calories_kcal: { $ref: "#/components/schemas/Decimal" }
+        protein_g:
+          oneOf:
+            - $ref: "#/components/schemas/Decimal"
+            - type: "null"
+        carbs_g:
+          oneOf:
+            - $ref: "#/components/schemas/Decimal"
+            - type: "null"
+        fat_g:
+          oneOf:
+            - $ref: "#/components/schemas/Decimal"
+            - type: "null"
+        fiber_g:
+          oneOf:
+            - $ref: "#/components/schemas/Decimal"
+            - type: "null"
+        sugar_g:
+          oneOf:
+            - $ref: "#/components/schemas/Decimal"
+            - type: "null"
+        sodium_mg:
+          oneOf:
+            - $ref: "#/components/schemas/Decimal"
+            - type: "null"
+        saturated_fat_g:
+          oneOf:
+            - $ref: "#/components/schemas/Decimal"
+            - type: "null"
+        note: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    LogCreate:
+      type: object
+      required: [food_id, serving_id, consumed_on, meal, quantity]
+      properties:
+        food_id: { type: string, format: uuid }
+        serving_id: { type: string, format: uuid }
+        consumed_on: { type: string, format: date }
+        meal: { $ref: "#/components/schemas/Meal" }
+        quantity: { $ref: "#/components/schemas/Decimal" }
+        note: { type: string }
+
+    LogPatch:
+      type: object
+      description: |
+        Partial update. Sending `food_id` returns `400`. Sending `"note":
+        null` clears the value; omitting the key leaves it untouched.
+      properties:
+        serving_id: { type: string, format: uuid }
+        consumed_on: { type: string, format: date }
+        meal: { $ref: "#/components/schemas/Meal" }
+        quantity: { $ref: "#/components/schemas/Decimal" }
+        note: { type: string, nullable: true }
+
+    NutritionTotal:
+      type: object
+      required: [calories_kcal]
+      properties:
+        calories_kcal: { $ref: "#/components/schemas/Decimal" }
+        protein_g:
+          oneOf:
+            - $ref: "#/components/schemas/Decimal"
+            - type: "null"
+        carbs_g:
+          oneOf:
+            - $ref: "#/components/schemas/Decimal"
+            - type: "null"
+        fat_g:
+          oneOf:
+            - $ref: "#/components/schemas/Decimal"
+            - type: "null"
+        fiber_g:
+          oneOf:
+            - $ref: "#/components/schemas/Decimal"
+            - type: "null"
+        sugar_g:
+          oneOf:
+            - $ref: "#/components/schemas/Decimal"
+            - type: "null"
+        sodium_mg:
+          oneOf:
+            - $ref: "#/components/schemas/Decimal"
+            - type: "null"
+        saturated_fat_g:
+          oneOf:
+            - $ref: "#/components/schemas/Decimal"
+            - type: "null"
+
+    MealSubtotal:
+      type: object
+      required: [meal, calories_kcal, protein_g, carbs_g, fat_g, entry_count]
+      properties:
+        meal: { $ref: "#/components/schemas/Meal" }
+        calories_kcal: { $ref: "#/components/schemas/Decimal" }
+        protein_g: { $ref: "#/components/schemas/Decimal" }
+        carbs_g: { $ref: "#/components/schemas/Decimal" }
+        fat_g: { $ref: "#/components/schemas/Decimal" }
+        entry_count: { type: integer, format: int32, minimum: 0 }
+
+    DaySummary:
+      type: object
+      required: [date, total, by_meal]
+      properties:
+        date: { type: string, format: date }
+        total: { $ref: "#/components/schemas/NutritionTotal" }
+        by_meal:
+          type: array
+          description: One subtotal per meal in canonical order; empty meals included.
+          items: { $ref: "#/components/schemas/MealSubtotal" }
+        active_goal:
+          oneOf:
+            - $ref: "#/components/schemas/Goal"
+            - type: "null"
