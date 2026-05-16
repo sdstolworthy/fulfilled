@@ -138,7 +138,7 @@ class _WeightStepperState extends ConsumerState<WeightStepper> {
 
   @override
   Widget build(BuildContext context) {
-    final unit =
+    final WeightUnit unit =
         widget.unitOverride ?? ref.watch(weightUnitProvider);
     switch (unit) {
       case WeightUnit.kg:
