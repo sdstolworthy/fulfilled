@@ -170,9 +170,19 @@ impl JwksAuthenticator {
             )));
         }
 
-        let doc: JwkSet = resp
-            .json()
+        const JWKS_MAX_BODY_BYTES: usize = 64 * 1024; // 64 KiB — ample for any real JWKS doc
+
+        let body = resp
+            .bytes()
             .await
+            .map_err(|e| AuthError::Upstream(format!("jwks read: {e}")))?;
+        if body.len() > JWKS_MAX_BODY_BYTES {
+            return Err(AuthError::Upstream(format!(
+                "jwks response too large ({} bytes)",
+                body.len()
+            )));
+        }
+        let doc: JwkSet = serde_json::from_slice(&body)
             .map_err(|e| AuthError::Upstream(format!("jwks parse: {e}")))?;
 
         let mut new_keys: HashMap<String, DecodingKey> = HashMap::new();
@@ -209,7 +219,7 @@ impl JwksAuthenticator {
 /// infers from `kty`, and the per-request `Validation` whitelist will
 /// still gate which `alg` claim the *token* may use.
 fn is_usable(jwk: &Jwk) -> bool {
-    use jsonwebtoken::jwk::PublicKeyUse;
+    use jsonwebtoken::jwk::{KeyAlgorithm, PublicKeyUse};
 
     if let Some(use_) = &jwk.common.public_key_use {
         if !matches!(use_, PublicKeyUse::Signature) {
@@ -217,9 +227,14 @@ fn is_usable(jwk: &Jwk) -> bool {
         }
     }
     if let Some(alg) = jwk.common.key_algorithm {
-        let alg_str = format!("{alg:?}");
-        let allowed = ALLOWED_ALGS.iter().any(|a| format!("{a:?}") == alg_str);
-        if !allowed {
+        if !matches!(
+            alg,
+            KeyAlgorithm::RS256
+                | KeyAlgorithm::RS384
+                | KeyAlgorithm::RS512
+                | KeyAlgorithm::ES256
+                | KeyAlgorithm::ES384
+        ) {
             return false;
         }
     }
