@@ -1,0 +1,73 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: loseit-postgres
+    environment:
+      POSTGRES_USER: loseit
+      POSTGRES_PASSWORD: loseit
+      POSTGRES_DB: loseit
+    ports:
+      - "5432:5432"
+    volumes:
+      - loseit-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U loseit -d loseit"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: loseit-api
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://loseit:loseit@postgres:5432/loseit
+      LOSEIT_BIND: 0.0.0.0:8080
+      LOSEIT_RUN_MIGRATIONS: "true"
+      RUST_ENV: development
+      RUST_LOG: info,tower_http=info,sqlx=warn
+      # Dev-bypass auth — only safe with RUST_ENV != production.
+      DEV_AUTH_BYPASS: "true"
+      DEV_AUTH_TOKEN: dev-token
+      DEV_AUTH_ISSUER: dev
+      DEV_AUTH_USER_ID: dev-user
+      DEV_AUTH_EMAIL: dev@example.com
+      DEV_AUTH_DISPLAY_NAME: Dev User
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/api/v1/health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+
+  # One-shot ingest runner. `docker compose run --rm ingest` pulls the
+  # OFF parquet dump (must already exist on the host at ./data/) and
+  # streams it into Postgres. Not started by default.
+  ingest:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: loseit-ingest
+    profiles: ["tools"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://loseit:loseit@postgres:5432/loseit
+      RUST_LOG: info,sqlx=warn
+    volumes:
+      - ./data:/data:ro
+    entrypoint: ["/usr/local/bin/loseit-ingest"]
+    command:
+      - "--source"
+      - "parquet"
+      - "--input"
+      - "/data/openfoodfacts-products.parquet"
+
+volumes:
+  loseit-pgdata:

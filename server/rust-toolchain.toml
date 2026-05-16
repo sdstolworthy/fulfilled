@@ -1,0 +1,13 @@
+# Pin the workspace to a known-good stable toolchain.
+#
+# Bump the channel deliberately, not opportunistically — the value here
+# becomes the implicit floor for every developer machine and CI job.
+# When you bump it, also bump `rust-version` in the workspace Cargo.toml
+# so a `cargo publish` (or a future MSRV check) stays in sync.
+#
+# `llvm-tools-preview` is required by `cargo-llvm-cov` (coverage.sh).
+# `rust-analyzer` is convenient for editor tooling; cheap to include.
+[toolchain]
+channel = "1.95.0"
+components = ["clippy", "rustfmt", "llvm-tools-preview", "rust-analyzer"]
+profile = "minimal"

@@ -1,0 +1,526 @@
+//! Food + serving handlers.
+//!
+//! Read endpoints (T10/T11):
+//!
+//! * `GET /foods/:id` — full food + servings.
+//! * `GET /foods/barcode/:barcode` — same shape, looked up by barcode.
+//! * `GET /foods/search` — paginated `FoodSearchHit` projection.
+//!
+//! Custom-food writes (T12):
+//!
+//! * `POST /foods` — create a user-owned custom food (auto-seeds a default
+//!   100 g system serving).
+//! * `PATCH /foods/:id` — partial update; only the owner of a `user`-source
+//!   food may patch.
+//! * `DELETE /foods/:id` — soft 404 / 403 / 409 by visibility, source, and
+//!   log references respectively.
+//!
+//! Serving CRUD (T13) — kept in this module since servings are scoped under
+//! `/foods/:food_id/servings` and the existing DTOs/helpers already live
+//! here:
+//!
+//! * `POST /foods/:food_id/servings`
+//! * `PATCH /servings/:id`
+//! * `DELETE /servings/:id`
+//! * `POST /servings/:id/default` — atomic default flip. (Spec deviation:
+//!   the original API surface only mentioned `is_default` on create/patch;
+//!   PM sign-off pending on the explicit endpoint.)
+
+use axum::extract::{Path, Query, State};
+use axum::http::StatusCode;
+use axum::routing::{get, patch, post};
+use axum::{Json, Router};
+use loseit_core::domain::{
+    Food, FoodDraft, FoodPatch, FoodSearchHit, FoodSource, NutriscoreGrade, NutritionPer100g,
+    Serving, ServingDraft, ServingPatch, ServingPreview, ServingSource,
+};
+use loseit_core::service::SearchPage;
+use rust_decimal::Decimal;
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+use crate::auth::AuthenticatedUser;
+use crate::error::ApiError;
+use crate::server::AppState;
+
+pub fn router() -> Router<AppState> {
+    // Order note: axum (matchit) rejects ambiguous routes at construction
+    // time, so `/foods/search` and `/foods/barcode/:barcode` must be
+    // declared as distinct nodes from `/foods/:id`. We list the static
+    // children first defensively even though matchit doesn't require it.
+    // `POST /servings/:id/default` is registered *separately* from
+    // `PATCH /servings/:id` because the trailing `/default` static segment
+    // is what disambiguates them.
+    // Order note: static segments (/search, /recent, /frequent,
+    // /barcode/:barcode) MUST be declared before the catch-all /:id so
+    // axum/matchit's matcher disambiguates them. Production routes:
+    //   /foods/search, /foods/recent, /foods/frequent, /foods/barcode/:bc
+    // all collide with /foods/:id otherwise.
+    Router::new()
+        .route("/foods/search", get(search))
+        .route("/foods/recent", get(recent_foods))
+        .route("/foods/frequent", get(frequent_foods))
+        .route("/foods/barcode/:barcode", get(get_by_barcode))
+        .route("/foods", post(create_food))
+        .route(
+            "/foods/:id",
+            get(get_by_id).patch(patch_food).delete(delete_food),
+        )
+        .route("/foods/:food_id/servings", post(create_serving))
+        .route("/servings/:id", patch(patch_serving).delete(delete_serving))
+        .route("/servings/:id/default", post(set_default_serving))
+}
+
+// -- Response DTOs -----------------------------------------------------------
+
+#[derive(Serialize)]
+struct NutritionResponse {
+    energy_kcal: Option<Decimal>,
+    protein_g: Option<Decimal>,
+    carbs_g: Option<Decimal>,
+    fat_g: Option<Decimal>,
+    fiber_g: Option<Decimal>,
+    sugar_g: Option<Decimal>,
+    sodium_g: Option<Decimal>,
+    saturated_fat_g: Option<Decimal>,
+}
+
+impl From<NutritionPer100g> for NutritionResponse {
+    fn from(n: NutritionPer100g) -> Self {
+        Self {
+            energy_kcal: n.energy_kcal,
+            protein_g: n.protein_g,
+            carbs_g: n.carbs_g,
+            fat_g: n.fat_g,
+            fiber_g: n.fiber_g,
+            sugar_g: n.sugar_g,
+            sodium_g: n.sodium_g,
+            saturated_fat_g: n.saturated_fat_g,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct ServingResponse {
+    id: Uuid,
+    label: String,
+    grams: Decimal,
+    is_default: bool,
+    source: &'static str,
+    sort_order: i32,
+}
+
+impl From<Serving> for ServingResponse {
+    fn from(s: Serving) -> Self {
+        Self {
+            id: s.id,
+            label: s.label,
+            grams: s.grams,
+            is_default: s.is_default,
+            source: serving_source_str(s.source),
+            sort_order: s.sort_order,
+        }
+    }
+}
+
+fn serving_source_str(src: ServingSource) -> &'static str {
+    src.as_str()
+}
+
+fn food_source_str(src: FoodSource) -> &'static str {
+    src.as_str()
+}
+
+fn nutriscore_str(g: NutriscoreGrade) -> &'static str {
+    g.as_str()
+}
+
+#[derive(Serialize)]
+struct FoodDetailResponse {
+    id: Uuid,
+    source: &'static str,
+    owner_user_id: Option<Uuid>,
+    barcode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fdc_id: Option<i64>,
+    name: String,
+    brands: Option<String>,
+    categories_tags: Vec<String>,
+    nutrition: NutritionResponse,
+    nutriscore: Option<&'static str>,
+    quality_score: i16,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    extra_nutrients: Option<serde_json::Value>,
+    servings: Vec<ServingResponse>,
+}
+
+impl FoodDetailResponse {
+    fn from_pair(food: Food, servings: Vec<Serving>) -> Self {
+        Self {
+            id: food.id,
+            source: food_source_str(food.source),
+            owner_user_id: food.owner_user_id,
+            barcode: food.barcode,
+            fdc_id: food.fdc_id,
+            name: food.name,
+            brands: food.brands,
+            categories_tags: food.categories_tags,
+            nutrition: food.nutrition.into(),
+            nutriscore: food.nutriscore_grade.map(nutriscore_str),
+            quality_score: food.quality_score,
+            extra_nutrients: food.extra_nutrients,
+            servings: servings.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct ServingPreviewResponse {
+    id: Uuid,
+    label: String,
+    grams: Decimal,
+}
+
+impl From<ServingPreview> for ServingPreviewResponse {
+    fn from(p: ServingPreview) -> Self {
+        Self {
+            id: p.id,
+            label: p.label,
+            grams: p.grams,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct FoodSearchHitResponse {
+    id: Uuid,
+    source: &'static str,
+    name: String,
+    brand: Option<String>,
+    barcode: Option<String>,
+    default_serving: Option<ServingPreviewResponse>,
+    calories_per_serving: Option<Decimal>,
+}
+
+impl From<FoodSearchHit> for FoodSearchHitResponse {
+    fn from(h: FoodSearchHit) -> Self {
+        Self {
+            id: h.id,
+            source: food_source_str(h.source),
+            name: h.name,
+            brand: h.brand,
+            barcode: h.barcode,
+            default_serving: h.default_serving.map(Into::into),
+            calories_per_serving: h.calories_per_serving,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct SearchResponse {
+    results: Vec<FoodSearchHitResponse>,
+    total: i64,
+    limit: i64,
+    offset: i64,
+}
+
+impl From<SearchPage> for SearchResponse {
+    fn from(p: SearchPage) -> Self {
+        Self {
+            results: p.results.into_iter().map(Into::into).collect(),
+            total: p.total,
+            limit: p.limit,
+            offset: p.offset,
+        }
+    }
+}
+
+// -- Query params ------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct SearchQuery {
+    q: String,
+    limit: Option<i64>,
+    offset: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct LimitOnlyQuery {
+    /// Cap/default applied service-side in `LogService::recent_foods` /
+    /// `frequent_foods`. The handler just forwards.
+    limit: Option<i64>,
+}
+
+// -- Request DTOs (T12 + T13) ------------------------------------------------
+
+#[derive(Debug, Deserialize, Default)]
+struct NutritionBody {
+    energy_kcal: Option<Decimal>,
+    protein_g: Option<Decimal>,
+    carbs_g: Option<Decimal>,
+    fat_g: Option<Decimal>,
+    fiber_g: Option<Decimal>,
+    sugar_g: Option<Decimal>,
+    sodium_g: Option<Decimal>,
+    saturated_fat_g: Option<Decimal>,
+}
+
+impl From<NutritionBody> for NutritionPer100g {
+    fn from(n: NutritionBody) -> Self {
+        Self {
+            energy_kcal: n.energy_kcal,
+            protein_g: n.protein_g,
+            carbs_g: n.carbs_g,
+            fat_g: n.fat_g,
+            fiber_g: n.fiber_g,
+            sugar_g: n.sugar_g,
+            sodium_g: n.sodium_g,
+            saturated_fat_g: n.saturated_fat_g,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateFoodBody {
+    name: String,
+    brands: Option<String>,
+    barcode: Option<String>,
+    #[serde(default)]
+    categories_tags: Vec<String>,
+    nutrition: NutritionBody,
+    nutriscore_grade: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct PatchFoodBody {
+    name: Option<String>,
+    brands: Option<String>,
+    barcode: Option<String>,
+    categories_tags: Option<Vec<String>>,
+    nutrition: Option<NutritionBody>,
+    nutriscore_grade: Option<String>,
+}
+
+fn parse_nutriscore(raw: &str) -> Result<NutriscoreGrade, ApiError> {
+    NutriscoreGrade::parse(&raw.to_lowercase()).ok_or_else(|| {
+        ApiError::bad_request(format!(
+            "unknown nutriscore_grade '{raw}' (expected one of a, b, c, d, e)"
+        ))
+    })
+}
+
+fn parse_serving_source(raw: &str) -> Result<ServingSource, ApiError> {
+    ServingSource::parse(&raw.to_lowercase()).ok_or_else(|| {
+        ApiError::bad_request(format!(
+            "unknown serving source '{raw}' (expected one of off, user, system)"
+        ))
+    })
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateServingBody {
+    label: String,
+    grams: Decimal,
+    #[serde(default)]
+    is_default: bool,
+    source: Option<String>,
+    sort_order: Option<i32>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct PatchServingBody {
+    label: Option<String>,
+    grams: Option<Decimal>,
+    sort_order: Option<i32>,
+}
+
+// -- Handlers ----------------------------------------------------------------
+
+async fn get_by_id(
+    State(state): State<AppState>,
+    AuthenticatedUser(user): AuthenticatedUser,
+    Path(id): Path<Uuid>,
+) -> Result<Json<FoodDetailResponse>, ApiError> {
+    let (food, servings) = state.foods.detail(user.id, id).await?;
+    Ok(Json(FoodDetailResponse::from_pair(food, servings)))
+}
+
+async fn get_by_barcode(
+    State(state): State<AppState>,
+    AuthenticatedUser(user): AuthenticatedUser,
+    Path(barcode): Path<String>,
+) -> Result<Json<FoodDetailResponse>, ApiError> {
+    let (food, servings) = state.foods.by_barcode(user.id, &barcode).await?;
+    Ok(Json(FoodDetailResponse::from_pair(food, servings)))
+}
+
+async fn search(
+    State(state): State<AppState>,
+    AuthenticatedUser(user): AuthenticatedUser,
+    Query(q): Query<SearchQuery>,
+) -> Result<Json<SearchResponse>, ApiError> {
+    // Service is the source of truth for validation rules: blank query →
+    // `Validation`, limit cap, default offset. The handler just translates
+    // the result.
+    let page = state.foods.search(user.id, &q.q, q.limit, q.offset).await?;
+    Ok(Json(page.into()))
+}
+
+// -- /foods/recent + /foods/frequent (T17) -----------------------------------
+
+async fn recent_foods(
+    State(state): State<AppState>,
+    AuthenticatedUser(user): AuthenticatedUser,
+    Query(q): Query<LimitOnlyQuery>,
+) -> Result<Json<Vec<FoodSearchHitResponse>>, ApiError> {
+    let limit = q.limit.unwrap_or(0);
+    let hits = state.logs.recent_foods(user.id, limit).await?;
+    Ok(Json(hits.into_iter().map(Into::into).collect()))
+}
+
+async fn frequent_foods(
+    State(state): State<AppState>,
+    AuthenticatedUser(user): AuthenticatedUser,
+    Query(q): Query<LimitOnlyQuery>,
+) -> Result<Json<Vec<FoodSearchHitResponse>>, ApiError> {
+    let limit = q.limit.unwrap_or(0);
+    let hits = state.logs.frequent_foods(user.id, limit).await?;
+    Ok(Json(hits.into_iter().map(Into::into).collect()))
+}
+
+// -- Custom food write handlers (T12) ----------------------------------------
+
+async fn create_food(
+    State(state): State<AppState>,
+    AuthenticatedUser(user): AuthenticatedUser,
+    Json(body): Json<CreateFoodBody>,
+) -> Result<(StatusCode, Json<FoodDetailResponse>), ApiError> {
+    let nutriscore_grade = body
+        .nutriscore_grade
+        .as_deref()
+        .map(parse_nutriscore)
+        .transpose()?;
+    let draft = FoodDraft {
+        name: body.name,
+        brands: body.brands,
+        barcode: body.barcode,
+        categories_tags: body.categories_tags,
+        nutrition: body.nutrition.into(),
+        nutriscore_grade,
+    };
+    let food = state.foods.create_custom(user.id, draft).await?;
+    // Re-hydrate via the service so the response reflects the synthesized
+    // default serving without duplicating that logic here.
+    let (food, servings) = state.foods.detail(user.id, food.id).await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(FoodDetailResponse::from_pair(food, servings)),
+    ))
+}
+
+async fn patch_food(
+    State(state): State<AppState>,
+    AuthenticatedUser(user): AuthenticatedUser,
+    Path(id): Path<Uuid>,
+    Json(body): Json<PatchFoodBody>,
+) -> Result<Json<FoodDetailResponse>, ApiError> {
+    let nutriscore_grade = body
+        .nutriscore_grade
+        .as_deref()
+        .map(parse_nutriscore)
+        .transpose()?;
+    let patch = FoodPatch {
+        name: body.name,
+        brands: body.brands,
+        barcode: body.barcode,
+        categories_tags: body.categories_tags,
+        nutrition: body.nutrition.map(Into::into),
+        nutriscore_grade,
+    };
+    state.foods.update_custom(user.id, id, patch).await?;
+    let (food, servings) = state.foods.detail(user.id, id).await?;
+    Ok(Json(FoodDetailResponse::from_pair(food, servings)))
+}
+
+async fn delete_food(
+    State(state): State<AppState>,
+    AuthenticatedUser(user): AuthenticatedUser,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode, ApiError> {
+    state.foods.delete_custom(user.id, id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// -- Serving write handlers (T13) --------------------------------------------
+
+async fn create_serving(
+    State(state): State<AppState>,
+    AuthenticatedUser(user): AuthenticatedUser,
+    Path(food_id): Path<Uuid>,
+    Json(body): Json<CreateServingBody>,
+) -> Result<(StatusCode, Json<ServingResponse>), ApiError> {
+    let source = match body.source.as_deref() {
+        Some(s) => parse_serving_source(s)?,
+        None => ServingSource::User,
+    };
+    let draft = ServingDraft {
+        label: body.label,
+        grams: body.grams,
+        is_default: body.is_default,
+        source,
+        sort_order: body.sort_order.unwrap_or(0),
+    };
+    let serving = state.servings.create(user.id, food_id, draft).await?;
+    Ok((StatusCode::CREATED, Json(serving.into())))
+}
+
+async fn patch_serving(
+    State(state): State<AppState>,
+    AuthenticatedUser(user): AuthenticatedUser,
+    Path(id): Path<Uuid>,
+    Json(body): Json<PatchServingBody>,
+) -> Result<Json<ServingResponse>, ApiError> {
+    let patch = ServingPatch {
+        label: body.label,
+        grams: body.grams,
+        sort_order: body.sort_order,
+    };
+    let serving = state.servings.update(user.id, id, patch).await?;
+    Ok(Json(serving.into()))
+}
+
+async fn delete_serving(
+    State(state): State<AppState>,
+    AuthenticatedUser(user): AuthenticatedUser,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode, ApiError> {
+    state.servings.delete(user.id, id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn set_default_serving(
+    State(state): State<AppState>,
+    AuthenticatedUser(user): AuthenticatedUser,
+    Path(id): Path<Uuid>,
+) -> Result<Json<ServingResponse>, ApiError> {
+    // `set_default` needs the food id; resolve it from the serving so the
+    // route stays single-id (clients don't have to pass food_id again).
+    let serving = state
+        .servings
+        .servings()
+        .find_by_id(id)
+        .await?
+        .ok_or_else(ApiError::not_found)?;
+    state
+        .servings
+        .set_default(user.id, serving.food_id, id)
+        .await?;
+    // Re-read so the response reflects the post-flip state.
+    let updated = state
+        .servings
+        .servings()
+        .find_by_id(id)
+        .await?
+        .ok_or_else(ApiError::not_found)?;
+    Ok(Json(updated.into()))
+}

@@ -1,0 +1,202 @@
+use std::sync::Arc;
+
+use rust_decimal::Decimal;
+use uuid::Uuid;
+
+use crate::domain::{
+    Food, FoodDraft, FoodPatch, FoodSearchHit, FoodSource, NutritionPer100g, Serving, ServingDraft,
+    ServingSource,
+};
+use crate::repo::{FoodRepository, ServingRepository};
+use crate::{CoreError, CoreResult};
+
+/// Maximum page size the search endpoint will honor. Anything larger is
+/// silently capped so callers can pass `limit=50` without explicit clamps.
+pub const SEARCH_MAX_LIMIT: i64 = 50;
+/// Default page size when the caller omits `limit`.
+pub const SEARCH_DEFAULT_LIMIT: i64 = 20;
+
+/// Business logic for foods and food search. Holds a `FoodRepository` and
+/// a `ServingRepository` because both detail lookup and custom-food
+/// creation need to compose the two.
+pub struct FoodService {
+    foods: Arc<dyn FoodRepository>,
+    servings: Arc<dyn ServingRepository>,
+}
+
+impl FoodService {
+    pub fn new(foods: Arc<dyn FoodRepository>, servings: Arc<dyn ServingRepository>) -> Self {
+        Self { foods, servings }
+    }
+
+    pub fn foods(&self) -> &Arc<dyn FoodRepository> {
+        &self.foods
+    }
+
+    pub fn servings(&self) -> &Arc<dyn ServingRepository> {
+        &self.servings
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub async fn detail(&self, viewer: Uuid, id: Uuid) -> CoreResult<(Food, Vec<Serving>)> {
+        let food = self
+            .foods
+            .find_by_id(viewer, id)
+            .await?
+            .ok_or(crate::CoreError::NotFound)?;
+        let servings = self.servings.list_for_food(food.id).await?;
+        Ok((food, servings))
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub async fn by_barcode(
+        &self,
+        viewer: Uuid,
+        barcode: &str,
+    ) -> CoreResult<(Food, Vec<Serving>)> {
+        let food = self
+            .foods
+            .find_by_barcode(viewer, barcode)
+            .await?
+            .ok_or(crate::CoreError::NotFound)?;
+        let servings = self.servings.list_for_food(food.id).await?;
+        Ok((food, servings))
+    }
+
+    /// Search foods visible to `viewer`. Validation:
+    ///
+    /// * `q` is trimmed and must be non-empty; otherwise `Validation`.
+    /// * `limit` is clamped into `[1, SEARCH_MAX_LIMIT]`. `None` becomes
+    ///   [`SEARCH_DEFAULT_LIMIT`].
+    /// * `offset` defaults to 0 and is clamped to non-negative.
+    ///
+    /// The repo performs the actual lookup (`search`) plus a separate
+    /// `count(*)` query (`search_count`) so `total` reflects the full match
+    /// set independent of pagination.
+    #[tracing::instrument(skip(self))]
+    pub async fn search(
+        &self,
+        viewer: Uuid,
+        q: &str,
+        limit: Option<i64>,
+        offset: Option<i64>,
+    ) -> CoreResult<SearchPage> {
+        let trimmed = q.trim();
+        if trimmed.is_empty() {
+            return Err(CoreError::Validation("query is required".into()));
+        }
+
+        let limit = limit
+            .unwrap_or(SEARCH_DEFAULT_LIMIT)
+            .clamp(1, SEARCH_MAX_LIMIT);
+        let offset = offset.unwrap_or(0).max(0);
+
+        let results = self.foods.search(viewer, trimmed, limit, offset).await?;
+        let total = self.foods.search_count(viewer, trimmed).await?;
+
+        Ok(SearchPage {
+            results,
+            total,
+            limit,
+            offset,
+        })
+    }
+
+    /// Create a custom food owned by `owner`. Validates the draft, persists
+    /// the food, then synthesizes a default `100 g` system serving so logs
+    /// can be recorded immediately without a separate request.
+    #[tracing::instrument(skip(self, draft), fields(name = %draft.name))]
+    pub async fn create_custom(&self, owner: Uuid, draft: FoodDraft) -> CoreResult<Food> {
+        if draft.name.trim().is_empty() {
+            return Err(CoreError::Validation("name is required".into()));
+        }
+        validate_nutrition(&draft.nutrition)?;
+
+        let food = self.foods.create_custom(owner, &draft).await?;
+
+        // Synthesize the default 100 g serving. We deliberately do this in
+        // the service rather than the repo so the repo trait stays a thin
+        // CRUD surface.
+        let serving_draft = ServingDraft {
+            label: "100 g".into(),
+            grams: Decimal::from(100),
+            is_default: true,
+            source: ServingSource::System,
+            sort_order: 0,
+        };
+        self.servings.create(food.id, &serving_draft).await?;
+        Ok(food)
+    }
+
+    #[tracing::instrument(skip(self, patch))]
+    pub async fn update_custom(&self, owner: Uuid, id: Uuid, patch: FoodPatch) -> CoreResult<Food> {
+        // Visibility check first: `find_by_id` returns None when the food is
+        // an OFF row (visible but not owned) or someone else's custom (not
+        // visible). To distinguish "not visible at all" (404) from "visible
+        // but read-only OFF" (403), we have to look both ways. We use the
+        // owner as the viewer so OFF rows still resolve.
+        let food = self
+            .foods
+            .find_by_id(owner, id)
+            .await?
+            .ok_or(CoreError::NotFound)?;
+        if food.source == FoodSource::Off {
+            return Err(CoreError::Forbidden);
+        }
+        // `find_by_id` with viewer=owner already filters out other users'
+        // customs (returns None → NotFound above), so we know owner_user_id
+        // matches here. The repo's `update_custom` re-enforces this via
+        // `WHERE owner_user_id = $owner`.
+        if let Some(n) = &patch.nutrition {
+            validate_nutrition(n)?;
+        }
+        self.foods.update_custom(owner, id, &patch).await
+    }
+
+    #[tracing::instrument(skip(self))]
+    pub async fn delete_custom(&self, owner: Uuid, id: Uuid) -> CoreResult<()> {
+        let food = self
+            .foods
+            .find_by_id(owner, id)
+            .await?
+            .ok_or(CoreError::NotFound)?;
+        if food.source == FoodSource::Off {
+            return Err(CoreError::Forbidden);
+        }
+        // Repo refuses with `Conflict` if any log entry still references this
+        // food — bubble that straight up so the handler emits a 409.
+        self.foods.delete_custom(owner, id).await
+    }
+}
+
+fn validate_nutrition(n: &NutritionPer100g) -> CoreResult<()> {
+    let zero = Decimal::ZERO;
+    let fields: [(Option<Decimal>, &str); 8] = [
+        (n.energy_kcal, "energy_kcal"),
+        (n.protein_g, "protein_g"),
+        (n.carbs_g, "carbs_g"),
+        (n.fat_g, "fat_g"),
+        (n.fiber_g, "fiber_g"),
+        (n.sugar_g, "sugar_g"),
+        (n.sodium_g, "sodium_g"),
+        (n.saturated_fat_g, "saturated_fat_g"),
+    ];
+    for (val, label) in fields {
+        if let Some(v) = val {
+            if v < zero {
+                return Err(CoreError::Validation(format!(
+                    "{label} must be non-negative"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone)]
+pub struct SearchPage {
+    pub results: Vec<FoodSearchHit>,
+    pub total: i64,
+    pub limit: i64,
+    pub offset: i64,
+}

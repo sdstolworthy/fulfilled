@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>07 · Goals</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#FAFAF8; --surface:#FFFFFF; --ink:#1A1D1A; --ink-2:#5C625C; --ink-3:#9AA09A;
+    --line:#E6E5E0; --line-2:#EFEEE9; --accent:#1F5F5B; --accent-soft:#E4EEEC;
+    --p:#C77B3A; --c:#6E8B3D; --f:#B6883F;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{background:#ECECE6;font-family:'Inter',-apple-system,sans-serif;color:var(--ink);min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:32px 16px 64px}
+  .caption{font-size:13px;color:#5C625C;margin-bottom:12px}
+  .device{width:390px;height:844px;background:var(--bg);border-radius:36px;box-shadow:0 20px 60px rgba(20,30,25,.18);overflow:hidden;position:relative;border:1px solid #1a1a1a}
+  .screen{width:100%;height:100%;display:flex;flex-direction:column}
+  .statusbar{height:44px;display:flex;align-items:flex-end;justify-content:space-between;padding:0 24px 6px;font-size:13px;font-weight:600}
+  .topbar{padding:6px 20px 14px;display:flex;align-items:center;justify-content:space-between}
+  .topbar h1{margin:0;font-size:24px;font-weight:600;letter-spacing:-.01em}
+  .iconbtn{width:36px;height:36px;border-radius:18px;display:flex;align-items:center;justify-content:center;color:var(--ink-2)}
+  .body{flex:1;overflow-y:auto;padding:0 0 30px}
+  .activecard{margin:0 20px 16px;background:linear-gradient(180deg,#1F5F5B 0%,#1A504D 100%);border-radius:18px;padding:18px;color:#E8F0EF}
+  .activecard .tag{font-size:10px;letter-spacing:.12em;text-transform:uppercase;font-weight:700;color:#A9CBC8}
+  .activecard h2{margin:6px 0 14px;font-size:20px;font-weight:600;color:#fff;letter-spacing:-.01em}
+  .calcal{display:flex;align-items:baseline;gap:8px}
+  .calcal .big{font-size:42px;font-weight:600;color:#fff;letter-spacing:-.02em;line-height:1}
+  .calcal .lbl{font-size:13px;color:#A9CBC8}
+  .ratepill{display:inline-flex;align-items:center;gap:6px;background:rgba(255,255,255,.12);padding:6px 10px;border-radius:999px;font-size:12px;font-weight:600;margin-top:12px}
+  .gridmacro{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:14px}
+  .gm{background:rgba(255,255,255,.08);border-radius:12px;padding:10px 12px}
+  .gm .l{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:#A9CBC8;font-weight:600}
+  .gm .v{font-size:18px;font-weight:600;color:#fff;margin-top:3px;font-variant-numeric:tabular-nums}
+  .gm .v small{font-size:11px;color:#A9CBC8;font-weight:500;margin-left:2px}
+  .gm .pct{font-size:11px;color:#A9CBC8;margin-top:2px}
+  .editrow{display:flex;gap:10px;margin-top:16px}
+  .editrow button{flex:1;height:42px;border-radius:10px;font-size:13px;font-weight:600;border:0}
+  .editrow .edit{background:rgba(255,255,255,.16);color:#fff}
+  .editrow .newg{background:#fff;color:var(--accent)}
+  .section{padding:8px 20px}
+  .section h2{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);margin:14px 0 10px;font-weight:600}
+  .glist{background:#fff;border:1px solid var(--line);border-radius:14px;overflow:hidden}
+  .gitem{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--line-2)}
+  .gitem:last-child{border-bottom:0}
+  .gitem .when{font-size:12px;color:var(--ink-2);font-weight:500}
+  .gitem .what{font-size:14px;font-weight:600;margin-top:3px}
+  .gitem .meta{font-size:12px;color:var(--ink-2);margin-top:2px}
+  .gitem .stat{text-align:right}
+  .gitem .stat .v{font-size:13px;font-weight:600;font-variant-numeric:tabular-nums}
+  .gitem .stat .l{font-size:10px;color:var(--ink-2);text-transform:uppercase;letter-spacing:.06em;margin-top:2px}
+  .gitem .end{background:#EFEEE9;color:var(--ink-2);font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:2px 6px;border-radius:4px;margin-left:6px}
+  .splitbar{height:6px;border-radius:3px;display:flex;overflow:hidden;margin-top:16px;background:rgba(255,255,255,.12)}
+  .splitbar .pp{background:#E8AE7C}
+  .splitbar .cc{background:#B7CC8A}
+  .splitbar .ff{background:#DDB985}
+  .legend{display:flex;justify-content:space-between;font-size:11px;color:#A9CBC8;margin-top:6px}
+</style>
+</head>
+<body>
+  <div class="caption">07 · Goals (mobile)</div>
+  <div class="device">
+    <div class="screen">
+      <div class="statusbar"><span>9:41</span><span></span></div>
+      <div class="topbar">
+        <h1>Goals</h1>
+        <div class="iconbtn">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><circle cx="5" cy="12" r="1.4" fill="currentColor"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/><circle cx="19" cy="12" r="1.4" fill="currentColor"/></svg>
+        </div>
+      </div>
+
+      <div class="body">
+        <div class="activecard">
+          <div class="tag">Active · since Apr 14</div>
+          <h2>Lose weight, slowly</h2>
+          <div class="calcal">
+            <div class="big">2,100</div>
+            <div class="lbl">kcal / day</div>
+          </div>
+          <div class="ratepill">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M7 14l5-5 5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" transform="rotate(180 12 11.5)"/></svg>
+            −0.5 kg / week
+          </div>
+
+          <div class="splitbar">
+            <div class="pp" style="width:25%"></div>
+            <div class="cc" style="width:50%"></div>
+            <div class="ff" style="width:25%"></div>
+          </div>
+          <div class="legend">
+            <span>Protein 25%</span><span>Carbs 50%</span><span>Fat 25%</span>
+          </div>
+
+          <div class="gridmacro">
+            <div class="gm"><div class="l">Protein</div><div class="v">130<small>g</small></div><div class="pct">520 kcal</div></div>
+            <div class="gm"><div class="l">Carbs</div><div class="v">263<small>g</small></div><div class="pct">1,050 kcal</div></div>
+            <div class="gm"><div class="l">Fat</div><div class="v">58<small>g</small></div><div class="pct">525 kcal</div></div>
+          </div>
+
+          <div class="editrow">
+            <button class="edit">Edit current</button>
+            <button class="newg">+ New goal</button>
+          </div>
+        </div>
+
+        <div class="section">
+          <h2>History</h2>
+          <div class="glist">
+            <div class="gitem">
+              <div>
+                <div class="when">Feb 1 — Apr 13</div>
+                <div class="what">Maintain<span class="end">Ended</span></div>
+                <div class="meta">2,450 kcal · 0 kg/week</div>
+              </div>
+              <div class="stat"><div class="v">71 days</div><div class="l">Duration</div></div>
+            </div>
+            <div class="gitem">
+              <div>
+                <div class="when">Nov 12 — Jan 31</div>
+                <div class="what">Bulk slowly<span class="end">Ended</span></div>
+                <div class="meta">2,700 kcal · +0.25 kg/week</div>
+              </div>
+              <div class="stat"><div class="v">81 days</div><div class="l">Duration</div></div>
+            </div>
+            <div class="gitem">
+              <div>
+                <div class="when">Jul 4 — Nov 11</div>
+                <div class="what">Cut for summer<span class="end">Ended</span></div>
+                <div class="meta">1,950 kcal · −0.75 kg/week</div>
+              </div>
+              <div class="stat"><div class="v">131 days</div><div class="l">Duration</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

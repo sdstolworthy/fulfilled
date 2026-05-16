@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Fulfilled — UI mocks</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#FAFAF8; --surface:#FFFFFF; --ink:#1A1D1A; --ink-2:#5C625C; --ink-3:#9AA09A;
+    --line:#E6E5E0; --line-2:#EFEEE9; --accent:#1F5F5B; --accent-soft:#E4EEEC;
+    --p:#C77B3A; --c:#6E8B3D; --f:#B6883F;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:var(--bg);font-family:'Inter',-apple-system,sans-serif;color:var(--ink);line-height:1.55}
+  .wrap{max-width:1120px;margin:0 auto;padding:48px 32px 96px}
+  header.hdr{margin-bottom:32px;padding-bottom:24px;border-bottom:1px solid var(--line)}
+  .eyebrow{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--accent);font-weight:700;margin-bottom:8px}
+  h1{font-size:36px;font-weight:600;letter-spacing:-.02em;margin:0 0 8px;line-height:1.15}
+  .lede{font-size:16px;color:var(--ink-2);max-width:680px;margin:0}
+  h2{font-size:13px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);margin:48px 0 16px;font-weight:600}
+  .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start}
+  .palette{display:flex;gap:0;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:#fff}
+  .swatch{flex:1;padding:14px;display:flex;flex-direction:column;gap:4px;min-height:120px;justify-content:flex-end}
+  .swatch .nm{font-size:11px;font-weight:600;letter-spacing:.04em}
+  .swatch .hx{font-size:10px;font-family:ui-monospace,Menlo,monospace;opacity:.7}
+  .style-card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:22px}
+  .style-card h3{margin:0 0 8px;font-size:18px;font-weight:600;letter-spacing:-.005em}
+  .style-card p{margin:0 0 0;color:var(--ink-2);font-size:14px}
+
+  .thumbs{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
+  .thumb{background:#fff;border:1px solid var(--line);border-radius:14px;overflow:hidden;text-decoration:none;color:inherit;display:flex;flex-direction:column;transition:transform .12s,box-shadow .12s}
+  .thumb:hover{transform:translateY(-2px);box-shadow:0 12px 30px rgba(20,30,25,.10)}
+  .thumb .frame{height:280px;background:#ECECE6;overflow:hidden;position:relative}
+  .thumb iframe{position:absolute;top:50%;left:50%;width:390px;height:844px;transform:translate(-50%,-50%) scale(.36);transform-origin:center center;border:0;pointer-events:none}
+  .thumb.wide .frame{height:280px}
+  .thumb.wide iframe{width:1280px;height:800px;transform:translate(-50%,-50%) scale(.30)}
+  .thumb .label{padding:14px 18px;border-top:1px solid var(--line-2)}
+  .thumb .num{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3);font-weight:700}
+  .thumb .nm{font-size:14px;font-weight:600;margin-top:2px}
+  .thumb .ds{font-size:12px;color:var(--ink-2);margin-top:4px}
+
+  .notes{background:#fff;border:1px solid var(--line);border-radius:14px;padding:8px 22px}
+  .notes ol{padding-left:18px}
+  .notes li{padding:14px 0;border-bottom:1px solid var(--line-2);font-size:14px;color:var(--ink)}
+  .notes li:last-child{border-bottom:0}
+  .notes li b{display:block;margin-bottom:3px;font-weight:600}
+  .notes li span{color:var(--ink-2)}
+
+  .pill{display:inline-block;background:var(--accent-soft);color:var(--accent);font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:3px 8px;border-radius:4px;margin-right:8px}
+  .links{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+  .links a{font-size:13px;color:var(--accent);text-decoration:none;font-weight:600;padding:6px 12px;border:1px solid #B6D2CF;border-radius:8px;background:var(--accent-soft)}
+  footer.ft{margin-top:64px;padding-top:24px;border-top:1px solid var(--line);font-size:12px;color:var(--ink-3)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="hdr">
+    <div class="eyebrow">UI mocks · v1 portfolio</div>
+    <h1>Fulfilled — calorie tracking, calmer.</h1>
+    <p class="lede">Mockups for the v1 client of the Rust food/weight tracker backend. Static HTML, no JS, designed at 390×844 for mobile (Flutter renders the same at constrained web widths) with one 1280×800 desktop adaptation of the home view.</p>
+    <div class="links">
+      <a href="screens.html">All screens (gallery)</a>
+      <a href="screen_01_day_view.html">01 Day view</a>
+      <a href="screen_02_search.html">02 Search</a>
+      <a href="screen_03_food_detail.html">03 Detail</a>
+      <a href="screen_04_log_entry.html">04 Log entry</a>
+      <a href="screen_05_custom_food.html">05 Custom food</a>
+      <a href="screen_06_weight_log.html">06 Weight</a>
+      <a href="screen_07_goals.html">07 Goals</a>
+      <a href="screen_08_profile.html">08 Profile</a>
+      <a href="screen_09_onboarding.html">09 Onboarding</a>
+      <a href="screen_01_day_view_web.html">Day view · web</a>
+    </div>
+  </header>
+
+  <h2>Style direction</h2>
+  <div class="grid-2">
+    <div class="style-card">
+      <h3><span class="pill">Picked</span>A — Quiet & Trustworthy</h3>
+      <p style="margin-top:10px">A calorie tracker is a utility you open three to six times a day for years. Friendly/vibrant gets exhausting; the bold serif look reads editorial, not utilitarian. Direction A — muted neutrals, one deep-teal accent, soft 1px borders, no shadows except on the FAB and weight chart — respects the data density (numbers, lists, tables, sparklines), keeps the visual budget for what matters (the calories-remaining ring, the meal totals, the goal vs eaten delta), and ages well as the product layers in trends and history. The accent is reserved for primary actions and the "you are on track" signal — never decorative.</p>
+      <div class="palette" style="margin-top:16px">
+        <div class="swatch" style="background:#FAFAF8;color:#1A1D1A"><div class="nm">Background</div><div class="hx">#FAFAF8</div></div>
+        <div class="swatch" style="background:#FFFFFF;color:#1A1D1A;border-right:1px solid #E6E5E0;border-left:1px solid #E6E5E0"><div class="nm">Surface</div><div class="hx">#FFFFFF</div></div>
+        <div class="swatch" style="background:#1F5F5B;color:#fff"><div class="nm">Accent</div><div class="hx">#1F5F5B</div></div>
+        <div class="swatch" style="background:#E4EEEC;color:#1F5F5B"><div class="nm">Accent soft</div><div class="hx">#E4EEEC</div></div>
+        <div class="swatch" style="background:#C77B3A;color:#fff"><div class="nm">Protein</div><div class="hx">#C77B3A</div></div>
+        <div class="swatch" style="background:#6E8B3D;color:#fff"><div class="nm">Carbs</div><div class="hx">#6E8B3D</div></div>
+        <div class="swatch" style="background:#B6883F;color:#fff"><div class="nm">Fat</div><div class="hx">#B6883F</div></div>
+      </div>
+    </div>
+    <div class="style-card">
+      <h3>System</h3>
+      <p style="margin-top:6px"><b style="color:var(--ink)">Type</b> — Inter via Google Fonts. Scale: 11 (eyebrow), 13 (meta), 14–15 (body), 17 (section header), 22 (page title), 32+ (hero number). Tabular-nums on every number.</p>
+      <p style="margin-top:10px"><b style="color:var(--ink)">Grid</b> — 4 px base; spacing units 4 / 8 / 12 / 16 / 20 / 24 / 32. Corner radii 8 / 12 / 14 / 18 / 28 (pill).</p>
+      <p style="margin-top:10px"><b style="color:var(--ink)">Borders</b> — 1 px #E6E5E0 on cards. Shadows only on the FAB and the weight chart area gradient. Everything else is flat.</p>
+      <p style="margin-top:10px"><b style="color:var(--ink)">Touch</b> — every actionable row is ≥ 44 px tall. Stepper buttons are 32 × 32 in a 48 px container (still ≥ 44 hit slop). Bottom-tab tap targets are 84 px tall.</p>
+      <p style="margin-top:10px"><b style="color:var(--ink)">Iconography</b> — 1.6 stroke, round caps, inline SVG only. No filled glyphs.</p>
+    </div>
+  </div>
+
+  <h2>Screens</h2>
+  <div class="thumbs">
+    <a href="screen_01_day_view.html" class="thumb">
+      <div class="frame"><iframe src="screen_01_day_view.html" loading="lazy" scrolling="no"></iframe></div>
+      <div class="label"><div class="num">01 · Mobile</div><div class="nm">Day view (home)</div><div class="ds">Calories-remaining ring, four meals, partially filled day.</div></div>
+    </a>
+    <a href="screen_02_search.html" class="thumb">
+      <div class="frame"><iframe src="screen_02_search.html" loading="lazy" scrolling="no"></iframe></div>
+      <div class="label"><div class="num">02 · Mobile</div><div class="nm">Food search</div><div class="ds">Recent + Frequent chips above query results; barcode scan.</div></div>
+    </a>
+    <a href="screen_03_food_detail.html" class="thumb">
+      <div class="frame"><iframe src="screen_03_food_detail.html" loading="lazy" scrolling="no"></iframe></div>
+      <div class="label"><div class="num">03 · Mobile</div><div class="nm">Food detail</div><div class="ds">Hero, serving list with synthetic 100 g, per-100 g panel.</div></div>
+    </a>
+    <a href="screen_04_log_entry.html" class="thumb">
+      <div class="frame"><iframe src="screen_04_log_entry.html" loading="lazy" scrolling="no"></iframe></div>
+      <div class="label"><div class="num">04 · Mobile</div><div class="nm">Log entry (sheet)</div><div class="ds">Serving, quantity stepper, meal chips, live nutrition preview.</div></div>
+    </a>
+    <a href="screen_05_custom_food.html" class="thumb">
+      <div class="frame"><iframe src="screen_05_custom_food.html" loading="lazy" scrolling="no"></iframe></div>
+      <div class="label"><div class="num">05 · Mobile</div><div class="nm">Create custom food</div><div class="ds">Basics, per-100 g nutrition (one error state), servings.</div></div>
+    </a>
+    <a href="screen_06_weight_log.html" class="thumb">
+      <div class="frame"><iframe src="screen_06_weight_log.html" loading="lazy" scrolling="no"></iframe></div>
+      <div class="label"><div class="num">06 · Mobile</div><div class="nm">Weight log + trend</div><div class="ds">Headline number, range selector, sparkline + 7-day moving avg.</div></div>
+    </a>
+    <a href="screen_07_goals.html" class="thumb">
+      <div class="frame"><iframe src="screen_07_goals.html" loading="lazy" scrolling="no"></iframe></div>
+      <div class="label"><div class="num">07 · Mobile</div><div class="nm">Goals</div><div class="ds">Active goal card with macro split, history below.</div></div>
+    </a>
+    <a href="screen_08_profile.html" class="thumb">
+      <div class="frame"><iframe src="screen_08_profile.html" loading="lazy" scrolling="no"></iframe></div>
+      <div class="label"><div class="num">08 · Mobile</div><div class="nm">Profile & settings</div><div class="ds">Body, preferences, data export, sign out.</div></div>
+    </a>
+    <a href="screen_09_onboarding.html" class="thumb">
+      <div class="frame"><iframe src="screen_09_onboarding.html" loading="lazy" scrolling="no"></iframe></div>
+      <div class="label"><div class="num">09 · Mobile (3-up)</div><div class="nm">Onboarding</div><div class="ds">Welcome → about you → set a goal. Linear flow.</div></div>
+    </a>
+    <a href="screen_01_day_view_web.html" class="thumb wide">
+      <div class="frame"><iframe src="screen_01_day_view_web.html" loading="lazy" scrolling="no"></iframe></div>
+      <div class="label"><div class="num">01-W · Web 1280×800</div><div class="nm">Day view — desktop</div><div class="ds">Sidebar nav, 2×2 meal grid, persistent right rail with recents.</div></div>
+    </a>
+  </div>
+
+  <h2>Design notes (decisions for sign-off)</h2>
+  <div class="notes">
+    <ol>
+      <li>
+        <b>Recents + Frequents live as chips above the results list, not on a separate tab.</b>
+        <span>The PM brief flagged this as the single feature that makes daily logging tolerable. Putting them on a tab buries them. Chips are tappable from rest position and the results query results render below uninterrupted. On desktop they live in the right rail of the home view too — Quick add without leaving the day.</span>
+      </li>
+      <li>
+        <b>The synthetic 100 g serving is shown explicitly, labeled "Synthetic".</b>
+        <span>Per the spec, every food gets a 100 g serving at ingest so raw-grams logging stays in the single API shape. Power users will look for it; the label avoids surprising them when they see two yogurt servings of similar weight. Open question: do we hide it when an OFF-derived default exists? Recommend keeping it visible.</span>
+      </li>
+      <li>
+        <b>FAB is placed bottom-right, not bottom-center.</b>
+        <span>Bottom-center on a 390 wide phone collides with the iOS home-indicator gesture region and obscures the snack meal totals. Right-handed reachability is fine on this height. If usability testing shows lefties suffering, we move to bottom-center and shift meal totals up 16 px.</span>
+      </li>
+      <li>
+        <b>The "calories remaining" ring is the only place we use color saturation on the home view.</b>
+        <span>Macro bars use muted earth tones (protein/carbs/fat) so they read as data, not as alarms. The accent teal is reserved for "active state" and primary actions. When a macro is over budget we'll switch its bar to the danger color (#B5552E) — not shown in this mock; flag this for the engineering handoff.</span>
+      </li>
+      <li>
+        <b>The log-entry sheet shows the predicted nutrition <i>before</i> save, in an accented preview block.</b>
+        <span>This is the "will log" state. Users overcount when they can't see what their quantity choice translates to. Calculating it client-side from the food's per-100 g values × serving grams × quantity is trivial; the snapshot the server stores still wins on save. Worth committing to the API shape: detail response must return per-100 g nutrition (it already does).</span>
+      </li>
+    </ol>
+  </div>
+
+  <footer class="ft">Designed for the Fulfilled v1 Flutter client · 2026-05-15 · No JavaScript, no external assets beyond Google Fonts (Inter).</footer>
+</div>
+</body>
+</html>

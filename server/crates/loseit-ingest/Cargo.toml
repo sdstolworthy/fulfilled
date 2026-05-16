@@ -1,0 +1,53 @@
+[package]
+name = "loseit-ingest"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "loseit_ingest"
+path = "src/lib.rs"
+
+[[bin]]
+name = "loseit-ingest"
+path = "src/main.rs"
+
+[features]
+# Parquet support is heavy (arrow + parquet bring in ~50 transitive
+# crates). Default is on for parity with the architect's plan; disable
+# with `--no-default-features` for a leaner JSONL-only build.
+default = ["parquet"]
+parquet = ["dep:parquet", "dep:arrow", "dep:arrow-array", "dep:arrow-schema", "dep:futures"]
+
+[dependencies]
+loseit-core.workspace = true
+loseit-db.workspace = true
+anyhow.workspace = true
+async-trait.workspace = true
+clap = { version = "4", features = ["derive", "env"] }
+serde.workspace = true
+serde_json.workspace = true
+rust_decimal.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+
+parquet = { version = "53", default-features = false, features = [
+    "arrow",
+    "async",
+    "snap",
+    "lz4",
+    "zstd",
+    "brotli",
+    "flate2",
+], optional = true }
+arrow = { version = "53", default-features = false, optional = true }
+arrow-array = { version = "53", optional = true }
+arrow-schema = { version = "53", optional = true }
+futures = { version = "0.3", optional = true }
+
+[dev-dependencies]
+loseit-testing.workspace = true
+tempfile = "3"

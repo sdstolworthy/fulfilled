@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>01 · Day view — Web</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#FAFAF8; --surface:#FFFFFF; --ink:#1A1D1A; --ink-2:#5C625C; --ink-3:#9AA09A;
+    --line:#E6E5E0; --line-2:#EFEEE9; --accent:#1F5F5B; --accent-soft:#E4EEEC;
+    --p:#C77B3A; --c:#6E8B3D; --f:#B6883F;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{background:#ECECE6;font-family:'Inter',-apple-system,sans-serif;color:var(--ink);min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:32px 16px 64px}
+  .caption{font-size:13px;color:#5C625C;margin-bottom:12px}
+  .frame{width:1280px;height:800px;background:var(--bg);border-radius:16px;box-shadow:0 20px 60px rgba(20,30,25,.18);overflow:hidden;display:flex;border:1px solid var(--line)}
+  /* sidebar */
+  .side{width:240px;background:#fff;border-right:1px solid var(--line);display:flex;flex-direction:column;padding:18px 14px}
+  .brand{display:flex;align-items:center;gap:10px;padding:6px 8px 18px}
+  .brand .lg{width:30px;height:30px;border-radius:8px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center}
+  .brand .nm{font-size:15px;font-weight:600;letter-spacing:-.005em}
+  .nav{display:flex;flex-direction:column;gap:2px;margin-top:6px}
+  .nav a{display:flex;align-items:center;gap:12px;padding:9px 10px;border-radius:8px;font-size:14px;color:var(--ink-2);font-weight:500;text-decoration:none;cursor:default}
+  .nav a.on{background:var(--accent-soft);color:var(--accent);font-weight:600}
+  .nav a svg{width:18px;height:18px}
+  .side .spacer{flex:1}
+  .user{display:flex;align-items:center;gap:10px;padding:10px 8px;border-top:1px solid var(--line);margin-top:8px}
+  .user .av{width:32px;height:32px;border-radius:16px;background:var(--accent-soft);color:var(--accent);display:flex;align-items:center;justify-content:center;font-weight:600;font-size:12px}
+  .user .nm{font-size:13px;font-weight:600}
+  .user .em{font-size:11px;color:var(--ink-2)}
+
+  /* main */
+  .main{flex:1;display:flex;flex-direction:column;overflow:hidden}
+  .topbar{display:flex;align-items:center;justify-content:space-between;padding:18px 32px;border-bottom:1px solid var(--line);background:#fff}
+  .topbar .left{display:flex;align-items:center;gap:18px}
+  .topbar h1{margin:0;font-size:22px;font-weight:600;letter-spacing:-.01em}
+  .topbar .sub{font-size:13px;color:var(--ink-2)}
+  .topbar .dates{display:flex;align-items:center;gap:8px}
+  .topbar .dates .arrow{width:30px;height:30px;border-radius:8px;border:1px solid var(--line);display:flex;align-items:center;justify-content:center;color:var(--ink-2)}
+  .topbar .today{padding:6px 12px;background:#fff;border:1px solid var(--line);border-radius:8px;font-size:13px;font-weight:600}
+  .searchcol{display:flex;gap:10px;align-items:center}
+  .searchcol .sb{width:280px;height:36px;background:var(--bg);border:1px solid var(--line);border-radius:8px;display:flex;align-items:center;gap:8px;padding:0 12px;font-size:13px;color:var(--ink-3)}
+  .logbtn{height:36px;padding:0 14px;background:var(--accent);color:#fff;border-radius:8px;font-weight:600;font-size:13px;display:flex;align-items:center;gap:6px;border:0}
+
+  .content{flex:1;display:grid;grid-template-columns:1fr 360px;gap:24px;padding:24px 32px;overflow:auto}
+  .left{display:flex;flex-direction:column;gap:16px}
+
+  .meals-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .meal{background:#fff;border:1px solid var(--line);border-radius:14px;display:flex;flex-direction:column;min-height:170px}
+  .meal header{display:flex;justify-content:space-between;align-items:center;padding:14px 18px 8px}
+  .meal h3{margin:0;font-size:14px;font-weight:600;letter-spacing:-.005em;display:flex;align-items:center;gap:8px}
+  .meal h3 .dot{width:8px;height:8px;border-radius:50%;background:var(--accent)}
+  .meal .total{font-size:13px;color:var(--ink-2);font-variant-numeric:tabular-nums}
+  .meal .total b{color:var(--ink);font-weight:600}
+  .entry{display:flex;align-items:center;justify-content:space-between;padding:9px 18px;border-top:1px solid var(--line-2)}
+  .entry .name{font-size:13px;font-weight:500;line-height:1.3}
+  .entry .meta{font-size:11px;color:var(--ink-2);margin-top:1px}
+  .entry .cal{font-size:13px;font-weight:600;font-variant-numeric:tabular-nums}
+  .meal .add{display:flex;align-items:center;gap:6px;padding:11px 18px;border-top:1px solid var(--line-2);color:var(--accent);font-size:13px;font-weight:500;margin-top:auto;cursor:pointer;background:transparent;border-bottom:0;border-left:0;border-right:0;width:100%}
+
+  /* right rail */
+  .right{display:flex;flex-direction:column;gap:16px}
+  .card{background:#fff;border:1px solid var(--line);border-radius:14px;padding:18px}
+  .card h2{margin:0 0 14px;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);font-weight:600}
+  .summary-top{display:flex;gap:16px;align-items:center}
+  .ring{width:108px;height:108px;flex:0 0 108px;position:relative}
+  .ring svg{transform:rotate(-90deg);width:100%;height:100%}
+  .ring .lbl{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center}
+  .ring .num{font-size:24px;font-weight:600;letter-spacing:-.02em}
+  .ring .unit{font-size:10px;color:var(--ink-2);text-transform:uppercase;letter-spacing:.06em;margin-top:-2px}
+  .sumkv{display:flex;flex-direction:column;gap:6px;flex:1}
+  .kv{display:flex;justify-content:space-between;font-size:13px;color:var(--ink-2)}
+  .kv b{color:var(--ink);font-weight:600;font-variant-numeric:tabular-nums}
+  .macros{margin-top:14px;display:flex;flex-direction:column;gap:12px}
+  .macro .top{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px}
+  .macro .nm{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink-2);font-weight:600}
+  .macro .vl{font-size:13px;font-weight:600;font-variant-numeric:tabular-nums}
+  .macro .vl small{color:var(--ink-2);font-weight:500;margin-left:3px}
+  .bar{height:6px;background:var(--line-2);border-radius:3px;overflow:hidden}
+  .bar span{display:block;height:100%;border-radius:3px}
+  .macro.p .bar span{background:var(--p)}
+  .macro.c .bar span{background:var(--c)}
+  .macro.f .bar span{background:var(--f)}
+
+  .recents .chips{display:flex;flex-wrap:wrap;gap:6px}
+  .recents .chip{padding:6px 10px;background:var(--bg);border:1px solid var(--line);border-radius:999px;font-size:12px;font-weight:500;color:var(--ink);display:inline-flex;align-items:center;gap:6px}
+  .recents .chip .k{color:var(--ink-2);font-weight:400}
+  .recents h3{font-size:12px;font-weight:600;color:var(--ink-2);margin:14px 0 8px;letter-spacing:.04em}
+  .recents h3:first-child{margin-top:0}
+</style>
+</head>
+<body>
+  <div class="caption">01 · Day view — Web / desktop (1280×800)</div>
+  <div class="frame">
+    <aside class="side">
+      <div class="brand">
+        <div class="lg">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 21c-3.5-2-7-6-7-11a5 5 0 0 1 7-4.6A5 5 0 0 1 19 10c0 5-3.5 9-7 11z" stroke="#fff" stroke-width="1.7" stroke-linejoin="round"/></svg>
+        </div>
+        <div class="nm">Fulfilled</div>
+      </div>
+      <div class="nav">
+        <a class="on"><svg viewBox="0 0 24 24" fill="none"><path d="M4 11 12 4l8 7v8a1 1 0 0 1-1 1h-4v-6h-6v6H5a1 1 0 0 1-1-1z" stroke="currentColor" stroke-width="1.6"/></svg>Today</a>
+        <a><svg viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="1.6"/><path d="m20 20-3.5-3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>Foods</a>
+        <a><svg viewBox="0 0 24 24" fill="none"><path d="M4 18V10m6 8V6m6 12v-5m4 5h-16" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>Trends</a>
+        <a><svg viewBox="0 0 24 24" fill="none"><path d="M5 12a7 7 0 1 1 14 0v3l1 3H4l1-3z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>Weight</a>
+        <a><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.6"/><path d="M12 7v5l3 3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>Goals</a>
+        <a><svg viewBox="0 0 24 24" fill="none"><rect x="4" y="4" width="16" height="16" rx="3" stroke="currentColor" stroke-width="1.6"/><path d="M8 9h8M8 13h5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>My foods</a>
+      </div>
+      <div class="spacer"></div>
+      <div class="user">
+        <div class="av">SS</div>
+        <div>
+          <div class="nm">Spencer S.</div>
+          <div class="em">sdstolworthy@gmail.com</div>
+        </div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <div class="topbar">
+        <div class="left">
+          <div>
+            <h1>Today</h1>
+            <div class="sub">Thursday, May 14 2026</div>
+          </div>
+          <div class="dates">
+            <div class="arrow"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M15 6l-6 6 6 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+            <div class="today">Today</div>
+            <div class="arrow"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M9 6l6 6-6 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+          </div>
+        </div>
+        <div class="searchcol">
+          <div class="sb">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="1.6"/><path d="m20 20-3.5-3.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+            Search foods or scan barcode…
+            <span style="margin-left:auto;font-size:11px;background:#fff;border:1px solid var(--line);padding:2px 6px;border-radius:4px;color:var(--ink-2);font-weight:600">⌘K</span>
+          </div>
+          <button class="logbtn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+            Log food
+          </button>
+        </div>
+      </div>
+
+      <div class="content">
+        <div class="left">
+          <div class="meals-grid">
+            <section class="meal">
+              <header><h3><span class="dot"></span>Breakfast</h3><div class="total"><b>412</b> kcal</div></header>
+              <div class="entry"><div><div class="name">Greek yogurt, plain</div><div class="meta">1 cup · Fage</div></div><div class="cal">130</div></div>
+              <div class="entry"><div><div class="name">Blueberries</div><div class="meta">1 cup · 148 g</div></div><div class="cal">84</div></div>
+              <div class="entry"><div><div class="name">Granola, honey almond</div><div class="meta">½ serving · 30 g</div></div><div class="cal">198</div></div>
+              <button class="add"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Add food</button>
+            </section>
+
+            <section class="meal">
+              <header><h3><span class="dot"></span>Lunch</h3><div class="total"><b>586</b> kcal</div></header>
+              <div class="entry"><div><div class="name">Chicken Caesar salad</div><div class="meta">1 bowl · Sweetgreen</div></div><div class="cal">486</div></div>
+              <div class="entry"><div><div class="name">Sparkling water, lime</div><div class="meta">1 can · LaCroix</div></div><div class="cal">0</div></div>
+              <div class="entry"><div><div class="name">Dark chocolate, 70%</div><div class="meta">2 squares · 20 g</div></div><div class="cal">100</div></div>
+              <button class="add"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Add food</button>
+            </section>
+
+            <section class="meal">
+              <header><h3><span class="dot" style="background:#D9D6CD"></span>Dinner</h3><div class="total"><b>0</b> kcal</div></header>
+              <button class="add" style="border-top:0"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Add food</button>
+            </section>
+
+            <section class="meal">
+              <header><h3><span class="dot"></span>Snack</h3><div class="total"><b>290</b> kcal</div></header>
+              <div class="entry"><div><div class="name">Almonds, raw</div><div class="meta">1 oz · 28 g</div></div><div class="cal">164</div></div>
+              <div class="entry"><div><div class="name">Apple, gala</div><div class="meta">1 medium · 182 g</div></div><div class="cal">126</div></div>
+              <button class="add"><svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>Add food</button>
+            </section>
+          </div>
+        </div>
+
+        <aside class="right">
+          <div class="card">
+            <h2>Today vs goal</h2>
+            <div class="summary-top">
+              <div class="ring">
+                <svg viewBox="0 0 100 100">
+                  <circle cx="50" cy="50" r="42" stroke="#EFEEE9" stroke-width="8" fill="none"/>
+                  <circle cx="50" cy="50" r="42" stroke="#1F5F5B" stroke-width="8" fill="none" stroke-dasharray="263.9" stroke-dashoffset="91" stroke-linecap="round"/>
+                </svg>
+                <div class="lbl"><div class="num">812</div><div class="unit">left</div></div>
+              </div>
+              <div class="sumkv">
+                <div class="kv"><span>Eaten</span><b>1,288 kcal</b></div>
+                <div class="kv"><span>Goal</span><b>2,100 kcal</b></div>
+                <div class="kv"><span>Burned</span><b>—</b></div>
+              </div>
+            </div>
+            <div class="macros">
+              <div class="macro p">
+                <div class="top"><span class="nm">Protein</span><span class="vl">82 g <small>/ 130</small></span></div>
+                <div class="bar"><span style="width:62%"></span></div>
+              </div>
+              <div class="macro c">
+                <div class="top"><span class="nm">Carbs</span><span class="vl">142 g <small>/ 263</small></span></div>
+                <div class="bar"><span style="width:54%"></span></div>
+              </div>
+              <div class="macro f">
+                <div class="top"><span class="nm">Fat</span><span class="vl">50 g <small>/ 58</small></span></div>
+                <div class="bar"><span style="width:86%"></span></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card recents">
+            <h2>Quick add</h2>
+            <h3>Recent</h3>
+            <div class="chips">
+              <span class="chip">Greek yogurt <span class="k">· 130</span></span>
+              <span class="chip">Oatmeal <span class="k">· 150</span></span>
+              <span class="chip">Banana <span class="k">· 105</span></span>
+              <span class="chip">Cold brew <span class="k">· 5</span></span>
+            </div>
+            <h3>Frequent</h3>
+            <div class="chips">
+              <span class="chip">Eggs, large <span class="k">· 72</span></span>
+              <span class="chip">Chicken breast <span class="k">· 165</span></span>
+              <span class="chip">Almonds <span class="k">· 164</span></span>
+              <span class="chip">Rice, jasmine <span class="k">· 205</span></span>
+            </div>
+          </div>
+
+          <div class="card">
+            <h2>Weight · last 30 days</h2>
+            <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px">
+              <div style="font-size:22px;font-weight:600;letter-spacing:-.01em">78.4 <span style="font-size:13px;font-weight:500;color:var(--ink-2)">kg</span></div>
+              <div style="font-size:12px;color:var(--accent);font-weight:600">−1.8 kg</div>
+            </div>
+            <svg viewBox="0 0 320 80" width="100%" height="64">
+              <defs>
+                <linearGradient id="g2" x1="0" x2="0" y1="0" y2="1">
+                  <stop offset="0%" stop-color="#1F5F5B" stop-opacity="0.18"/>
+                  <stop offset="100%" stop-color="#1F5F5B" stop-opacity="0"/>
+                </linearGradient>
+              </defs>
+              <path d="M0,18 C30,24 50,16 75,22 C100,28 120,32 150,30 C180,28 200,40 230,44 C260,48 290,50 320,48 L320,80 L0,80 Z" fill="url(#g2)"/>
+              <path d="M0,18 C30,24 50,16 75,22 C100,28 120,32 150,30 C180,28 200,40 230,44 C260,48 290,50 320,48" fill="none" stroke="#1F5F5B" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+          </div>
+        </aside>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

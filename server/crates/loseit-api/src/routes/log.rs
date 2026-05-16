@@ -1,0 +1,306 @@
+//! Food-log + day-summary handlers (T15 + T16).
+//!
+//! Routes:
+//!
+//! * `POST   /log`               — create a log entry.
+//! * `GET    /log?from=&to=`     — list entries in a date range.
+//! * `PATCH  /log/:id`           — partial update; `food_id` is immutable.
+//! * `DELETE /log/:id`           — remove an entry.
+//! * `GET    /days/:date/summary` — per-day rollup with active goal.
+//!
+//! The day-summary handler lives here (rather than in a sibling
+//! `routes/days.rs`) because it is wired entirely through `LogService` and
+//! shares this module's nutrition-snapshot DTO — a separate file would
+//! duplicate that flatten boilerplate.
+//!
+//! Wire shape: every endpoint that returns nutrition flattens
+//! `NutritionSnapshot` into top-level fields whose names match the
+//! `food_log_entries` columns in `migrations/0001_initial.sql`. This
+//! preserves the "snapshot of nutrition for this exact entry" semantics on
+//! the wire without forcing clients to nest into `snapshot.*`.
+
+use axum::extract::{Path, Query, State};
+use axum::http::StatusCode;
+use axum::routing::{get, post};
+use axum::{Json, Router};
+use chrono::{DateTime, NaiveDate, Utc};
+use loseit_core::domain::{
+    DaySummary, FoodLogEntry, LogDraft, LogPatch, Meal, MealSubtotal, NutritionSnapshot,
+};
+use rust_decimal::Decimal;
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+use crate::auth::AuthenticatedUser;
+use crate::error::ApiError;
+use crate::routes::goals::GoalResponse;
+use crate::server::AppState;
+
+pub fn router() -> Router<AppState> {
+    Router::new()
+        .route("/log", post(create).get(list))
+        .route("/log/:id", axum::routing::patch(patch).delete(remove))
+        .route("/days/:date/summary", get(day_summary))
+}
+
+// -- Wire shapes -------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+struct CreateLogBody {
+    food_id: Uuid,
+    serving_id: Uuid,
+    consumed_on: NaiveDate,
+    meal: String,
+    quantity: Decimal,
+    #[serde(default)]
+    note: Option<String>,
+}
+
+/// PATCH body. `food_id` is intentionally accepted-and-rejected: clients
+/// occasionally send the full original entry back; we surface a clear 400
+/// rather than silently ignoring the field.
+#[derive(Debug, Deserialize, Default)]
+struct PatchLogBody {
+    #[serde(default)]
+    food_id: Option<Uuid>,
+    #[serde(default)]
+    serving_id: Option<Uuid>,
+    #[serde(default)]
+    consumed_on: Option<NaiveDate>,
+    #[serde(default)]
+    meal: Option<String>,
+    #[serde(default)]
+    quantity: Option<Decimal>,
+    // Double-Option so the wire `"note": null` can clear, but a missing key
+    // leaves the existing value untouched.
+    #[serde(default, deserialize_with = "deserialize_optional_optional_string")]
+    note: Option<Option<String>>,
+}
+
+fn deserialize_optional_optional_string<'de, D>(
+    deserializer: D,
+) -> Result<Option<Option<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    // `null` deserializes to `Some(None)`; an actual string deserializes to
+    // `Some(Some(...))`. A missing key never reaches this fn (serde uses the
+    // `default` attribute).
+    let v: Option<String> = Option::deserialize(deserializer)?;
+    Ok(Some(v))
+}
+
+#[derive(Debug, Deserialize)]
+struct RangeQuery {
+    from: NaiveDate,
+    to: NaiveDate,
+}
+
+#[derive(Serialize)]
+struct LogEntryResponse {
+    id: Uuid,
+    food_id: Uuid,
+    serving_id: Option<Uuid>,
+    consumed_on: NaiveDate,
+    meal: &'static str,
+    quantity: Decimal,
+    grams_total: Decimal,
+    // Flattened nutrition snapshot. Field names match the SQL column names
+    // in `food_log_entries`.
+    calories_kcal: Decimal,
+    protein_g: Option<Decimal>,
+    carbs_g: Option<Decimal>,
+    fat_g: Option<Decimal>,
+    fiber_g: Option<Decimal>,
+    sugar_g: Option<Decimal>,
+    sodium_mg: Option<Decimal>,
+    saturated_fat_g: Option<Decimal>,
+    note: Option<String>,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+}
+
+impl From<FoodLogEntry> for LogEntryResponse {
+    fn from(e: FoodLogEntry) -> Self {
+        Self {
+            id: e.id,
+            food_id: e.food_id,
+            serving_id: e.serving_id,
+            consumed_on: e.consumed_on,
+            meal: e.meal.as_str(),
+            quantity: e.quantity,
+            grams_total: e.grams_total,
+            calories_kcal: e.snapshot.calories_kcal,
+            protein_g: e.snapshot.protein_g,
+            carbs_g: e.snapshot.carbs_g,
+            fat_g: e.snapshot.fat_g,
+            fiber_g: e.snapshot.fiber_g,
+            sugar_g: e.snapshot.sugar_g,
+            sodium_mg: e.snapshot.sodium_mg,
+            saturated_fat_g: e.snapshot.saturated_fat_g,
+            note: e.note,
+            created_at: e.created_at,
+            updated_at: e.updated_at,
+        }
+    }
+}
+
+// -- Day summary DTOs --------------------------------------------------------
+
+#[derive(Serialize)]
+struct NutritionTotalResponse {
+    calories_kcal: Decimal,
+    protein_g: Option<Decimal>,
+    carbs_g: Option<Decimal>,
+    fat_g: Option<Decimal>,
+    fiber_g: Option<Decimal>,
+    sugar_g: Option<Decimal>,
+    sodium_mg: Option<Decimal>,
+    saturated_fat_g: Option<Decimal>,
+}
+
+impl From<NutritionSnapshot> for NutritionTotalResponse {
+    fn from(n: NutritionSnapshot) -> Self {
+        Self {
+            calories_kcal: n.calories_kcal,
+            protein_g: n.protein_g,
+            carbs_g: n.carbs_g,
+            fat_g: n.fat_g,
+            fiber_g: n.fiber_g,
+            sugar_g: n.sugar_g,
+            sodium_mg: n.sodium_mg,
+            saturated_fat_g: n.saturated_fat_g,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct MealSubtotalResponse {
+    meal: &'static str,
+    calories_kcal: Decimal,
+    protein_g: Decimal,
+    carbs_g: Decimal,
+    fat_g: Decimal,
+    entry_count: u32,
+}
+
+impl From<MealSubtotal> for MealSubtotalResponse {
+    fn from(m: MealSubtotal) -> Self {
+        Self {
+            meal: m.meal.as_str(),
+            calories_kcal: m.calories_kcal,
+            protein_g: m.protein_g,
+            carbs_g: m.carbs_g,
+            fat_g: m.fat_g,
+            entry_count: m.entry_count,
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct DaySummaryResponse {
+    date: NaiveDate,
+    total: NutritionTotalResponse,
+    by_meal: Vec<MealSubtotalResponse>,
+    active_goal: Option<GoalResponse>,
+}
+
+impl From<DaySummary> for DaySummaryResponse {
+    fn from(s: DaySummary) -> Self {
+        Self {
+            date: s.date,
+            total: s.total.into(),
+            by_meal: s.by_meal.into_iter().map(Into::into).collect(),
+            active_goal: s.active_goal.map(Into::into),
+        }
+    }
+}
+
+// -- Helpers -----------------------------------------------------------------
+
+fn parse_meal(raw: &str) -> Result<Meal, ApiError> {
+    raw.parse::<Meal>().map_err(|_| {
+        ApiError::bad_request(format!(
+            "unknown meal '{raw}' (expected one of breakfast, lunch, dinner, snack)"
+        ))
+    })
+}
+
+// -- Handlers ----------------------------------------------------------------
+
+async fn create(
+    State(state): State<AppState>,
+    AuthenticatedUser(user): AuthenticatedUser,
+    Json(body): Json<CreateLogBody>,
+) -> Result<(StatusCode, Json<LogEntryResponse>), ApiError> {
+    let meal = parse_meal(&body.meal)?;
+    let draft = LogDraft {
+        food_id: body.food_id,
+        serving_id: body.serving_id,
+        consumed_on: body.consumed_on,
+        meal,
+        quantity: body.quantity,
+        note: body.note,
+    };
+    let entry = state.logs.create(user.id, draft).await?;
+    Ok((StatusCode::CREATED, Json(entry.into())))
+}
+
+async fn list(
+    State(state): State<AppState>,
+    AuthenticatedUser(user): AuthenticatedUser,
+    Query(q): Query<RangeQuery>,
+) -> Result<Json<Vec<LogEntryResponse>>, ApiError> {
+    if q.from > q.to {
+        return Err(ApiError::bad_request("`from` must be <= `to`"));
+    }
+    let mut entries = state.logs.list_in_range(user.id, q.from, q.to).await?;
+    // Newest consumed first, then newest created within a day.
+    entries.sort_by(|a, b| {
+        b.consumed_on
+            .cmp(&a.consumed_on)
+            .then(b.created_at.cmp(&a.created_at))
+    });
+    Ok(Json(entries.into_iter().map(Into::into).collect()))
+}
+
+async fn patch(
+    State(state): State<AppState>,
+    AuthenticatedUser(user): AuthenticatedUser,
+    Path(id): Path<Uuid>,
+    Json(body): Json<PatchLogBody>,
+) -> Result<Json<LogEntryResponse>, ApiError> {
+    if body.food_id.is_some() {
+        return Err(ApiError::bad_request(
+            "food_id is immutable; create a new entry to log a different food",
+        ));
+    }
+    let meal = body.meal.as_deref().map(parse_meal).transpose()?;
+    let patch = LogPatch {
+        serving_id: body.serving_id,
+        consumed_on: body.consumed_on,
+        meal,
+        quantity: body.quantity,
+        note: body.note,
+    };
+    let entry = state.logs.update(user.id, id, patch).await?;
+    Ok(Json(entry.into()))
+}
+
+async fn remove(
+    State(state): State<AppState>,
+    AuthenticatedUser(user): AuthenticatedUser,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode, ApiError> {
+    state.logs.delete(user.id, id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn day_summary(
+    State(state): State<AppState>,
+    AuthenticatedUser(user): AuthenticatedUser,
+    Path(date): Path<NaiveDate>,
+) -> Result<Json<DaySummaryResponse>, ApiError> {
+    let summary = state.logs.day_summary(user.id, date).await?;
+    Ok(Json(summary.into()))
+}

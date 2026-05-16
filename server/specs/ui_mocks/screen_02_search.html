@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>02 · Food search</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#FAFAF8; --surface:#FFFFFF; --ink:#1A1D1A; --ink-2:#5C625C; --ink-3:#9AA09A;
+    --line:#E6E5E0; --line-2:#EFEEE9; --accent:#1F5F5B; --accent-soft:#E4EEEC;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{background:#ECECE6;font-family:'Inter',-apple-system,sans-serif;color:var(--ink);min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:32px 16px 64px}
+  .caption{font-size:13px;color:#5C625C;margin-bottom:12px}
+  .device{width:390px;height:844px;background:var(--bg);border-radius:36px;box-shadow:0 20px 60px rgba(20,30,25,.18);overflow:hidden;position:relative;border:1px solid #1a1a1a}
+  .screen{width:100%;height:100%;display:flex;flex-direction:column}
+  .statusbar{height:44px;display:flex;align-items:flex-end;justify-content:space-between;padding:0 24px 6px;font-size:13px;font-weight:600}
+  .topbar{padding:6px 16px 12px;display:flex;align-items:center;gap:10px}
+  .back{width:36px;height:36px;display:flex;align-items:center;justify-content:center}
+  .searchbox{flex:1;height:44px;background:#fff;border:1px solid var(--line);border-radius:14px;display:flex;align-items:center;padding:0 12px;gap:10px}
+  .searchbox input{flex:1;border:0;outline:0;background:transparent;font-family:inherit;font-size:15px;color:var(--ink);font-weight:500}
+  .searchbox .clear{width:20px;height:20px;border-radius:10px;background:#E6E5E0;display:flex;align-items:center;justify-content:center;color:var(--ink-2)}
+  .scancol{width:44px;height:44px;border-radius:14px;background:#fff;border:1px solid var(--line);display:flex;align-items:center;justify-content:center;color:var(--accent)}
+  .body{flex:1;overflow-y:auto;padding:4px 0 100px}
+  .section{padding:12px 20px 4px}
+  .section h3{margin:0 0 10px;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);font-weight:600}
+  .chips{display:flex;gap:8px;flex-wrap:wrap;padding:0 20px 6px}
+  .chip{display:inline-flex;align-items:center;gap:6px;padding:8px 12px;background:#fff;border:1px solid var(--line);border-radius:999px;font-size:13px;color:var(--ink);font-weight:500;line-height:1}
+  .chip .kcal{color:var(--ink-2);font-weight:400}
+  .chip .dot{width:6px;height:6px;border-radius:50%;background:var(--accent)}
+  .frequent .chip .dot{background:#C77B3A}
+  .results{margin-top:10px;background:#fff;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+  .res{display:flex;align-items:center;padding:14px 20px;border-bottom:1px solid var(--line-2);gap:12px}
+  .res:last-child{border-bottom:0}
+  .res .thumb{width:36px;height:36px;border-radius:10px;background:var(--accent-soft);color:var(--accent);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex:0 0 36px;letter-spacing:.04em}
+  .res .thumb.user{background:#F5EFE6;color:#8C6B2C}
+  .res .main{flex:1;min-width:0}
+  .res .name{font-size:14px;font-weight:500;line-height:1.3}
+  .res .meta{font-size:12px;color:var(--ink-2);margin-top:2px}
+  .res .right{text-align:right;font-variant-numeric:tabular-nums}
+  .res .kcal{font-size:14px;font-weight:600}
+  .res .per{font-size:11px;color:var(--ink-2);margin-top:2px}
+  .listhdr{padding:14px 20px 8px;display:flex;justify-content:space-between;align-items:baseline}
+  .listhdr h3{margin:0;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);font-weight:600}
+  .listhdr .count{font-size:12px;color:var(--ink-3)}
+  .tabbar{position:absolute;left:0;right:0;bottom:0;height:84px;background:rgba(250,250,248,.92);border-top:1px solid var(--line);display:flex;padding-top:10px;justify-content:space-around}
+  .tab{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;color:var(--ink-3);font-size:10px;font-weight:500}
+  .tab.active{color:var(--accent)}
+  .tab svg{width:22px;height:22px}
+  mark{background:#FFF1B8;color:var(--ink);padding:0 1px;border-radius:2px}
+</style>
+</head>
+<body>
+  <div class="caption">02 · Food search (mobile)</div>
+  <div class="device">
+    <div class="screen">
+      <div class="statusbar"><span>9:41</span><span></span></div>
+      <div class="topbar">
+        <div class="back"><svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M15 6l-6 6 6 6" stroke="#1A1D1A" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+        <div class="searchbox">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="#5C625C" stroke-width="1.6"/><path d="m20 20-3.5-3.5" stroke="#5C625C" stroke-width="1.6" stroke-linecap="round"/></svg>
+          <input value="greek yogurt" />
+          <div class="clear"><svg width="10" height="10" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></div>
+        </div>
+        <div class="scancol" title="Scan barcode">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M4 7V5a1 1 0 0 1 1-1h2M4 17v2a1 1 0 0 0 1 1h2M20 7V5a1 1 0 0 0-1-1h-2M20 17v2a1 1 0 0 1-1 1h-2M7 8v8M10 8v8M13 8v8M16 8v8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        </div>
+      </div>
+
+      <div class="body">
+        <div class="section">
+          <h3>Recent</h3>
+        </div>
+        <div class="chips">
+          <div class="chip"><span class="dot"></span>Greek yogurt, plain <span class="kcal">· 130</span></div>
+          <div class="chip"><span class="dot"></span>Oatmeal, rolled <span class="kcal">· 150</span></div>
+          <div class="chip"><span class="dot"></span>Banana <span class="kcal">· 105</span></div>
+          <div class="chip"><span class="dot"></span>Cold brew <span class="kcal">· 5</span></div>
+        </div>
+
+        <div class="section frequent">
+          <h3>Frequent</h3>
+        </div>
+        <div class="chips frequent">
+          <div class="chip"><span class="dot"></span>Eggs, large <span class="kcal">· 72</span></div>
+          <div class="chip"><span class="dot"></span>Chicken breast <span class="kcal">· 165</span></div>
+          <div class="chip"><span class="dot"></span>Almonds <span class="kcal">· 164</span></div>
+          <div class="chip"><span class="dot"></span>Rice, jasmine <span class="kcal">· 205</span></div>
+        </div>
+
+        <div class="listhdr">
+          <h3>Results</h3>
+          <div class="count">28 foods</div>
+        </div>
+        <div class="results">
+          <div class="res">
+            <div class="thumb">OFF</div>
+            <div class="main">
+              <div class="name"><mark>Greek yogurt</mark>, plain, nonfat</div>
+              <div class="meta">Fage · 1 cup (227 g)</div>
+            </div>
+            <div class="right"><div class="kcal">130</div><div class="per">per serving</div></div>
+          </div>
+          <div class="res">
+            <div class="thumb">OFF</div>
+            <div class="main">
+              <div class="name"><mark>Greek yogurt</mark>, 2% milkfat</div>
+              <div class="meta">Chobani · 5.3 oz (150 g)</div>
+            </div>
+            <div class="right"><div class="kcal">140</div><div class="per">per container</div></div>
+          </div>
+          <div class="res">
+            <div class="thumb">OFF</div>
+            <div class="main">
+              <div class="name"><mark>Greek yogurt</mark>, vanilla</div>
+              <div class="meta">Oikos · 5.3 oz (150 g)</div>
+            </div>
+            <div class="right"><div class="kcal">120</div><div class="per">per container</div></div>
+          </div>
+          <div class="res">
+            <div class="thumb user">YOU</div>
+            <div class="main">
+              <div class="name"><mark>Greek yogurt</mark> + honey (homemade)</div>
+              <div class="meta">Custom · 1 bowl (250 g)</div>
+            </div>
+            <div class="right"><div class="kcal">215</div><div class="per">per bowl</div></div>
+          </div>
+          <div class="res">
+            <div class="thumb">OFF</div>
+            <div class="main">
+              <div class="name"><mark>Greek yogurt</mark>, strawberry, low-fat</div>
+              <div class="meta">Two Good · 5.3 oz (150 g)</div>
+            </div>
+            <div class="right"><div class="kcal">80</div><div class="per">per container</div></div>
+          </div>
+          <div class="res">
+            <div class="thumb">OFF</div>
+            <div class="main">
+              <div class="name"><mark>Greek yogurt</mark> drink, peach</div>
+              <div class="meta">Chobani · 7 fl oz (207 mL)</div>
+            </div>
+            <div class="right"><div class="kcal">140</div><div class="per">per bottle</div></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tabbar">
+        <div class="tab"><svg viewBox="0 0 24 24" fill="none"><path d="M4 11 12 4l8 7v8a1 1 0 0 1-1 1h-4v-6h-6v6H5a1 1 0 0 1-1-1z" stroke="currentColor" stroke-width="1.6"/></svg>Today</div>
+        <div class="tab active"><svg viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="1.8"/><path d="m20 20-3.5-3.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>Foods</div>
+        <div class="tab"><svg viewBox="0 0 24 24" fill="none"><path d="M4 18V10m6 8V6m6 12v-5m4 5h-16" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>Trends</div>
+        <div class="tab"><svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="9" r="3.5" stroke="currentColor" stroke-width="1.6"/><path d="M5 20c1.2-3.5 4-5 7-5s5.8 1.5 7 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>Me</div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

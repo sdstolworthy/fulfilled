@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>04 · Log entry</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#FAFAF8; --surface:#FFFFFF; --ink:#1A1D1A; --ink-2:#5C625C; --ink-3:#9AA09A;
+    --line:#E6E5E0; --line-2:#EFEEE9; --accent:#1F5F5B; --accent-soft:#E4EEEC;
+    --p:#C77B3A; --c:#6E8B3D; --f:#B6883F;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{background:#ECECE6;font-family:'Inter',-apple-system,sans-serif;color:var(--ink);min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:32px 16px 64px}
+  .caption{font-size:13px;color:#5C625C;margin-bottom:12px}
+  .device{width:390px;height:844px;background:#000;border-radius:36px;box-shadow:0 20px 60px rgba(20,30,25,.18);overflow:hidden;position:relative;border:1px solid #1a1a1a}
+  .screen{width:100%;height:100%;display:flex;flex-direction:column;position:relative}
+  .backdrop{position:absolute;inset:0;background:rgba(15,20,18,.45)}
+  .behind{position:absolute;inset:0;padding:50px 20px;color:#8A8E89;font-size:13px}
+  .behind .hint{opacity:.4}
+  .sheet{position:absolute;left:0;right:0;bottom:0;background:var(--bg);border-radius:24px 24px 0 0;padding:8px 0 0;display:flex;flex-direction:column;max-height:88%;}
+  .grabber{width:40px;height:4px;background:#D9D6CD;border-radius:2px;margin:8px auto 8px}
+  .sheet header{padding:6px 20px 12px;display:flex;align-items:flex-start;justify-content:space-between;border-bottom:1px solid var(--line)}
+  .sheet header .brand{font-size:12px;color:var(--ink-2);text-transform:uppercase;letter-spacing:.08em;font-weight:600}
+  .sheet header h2{margin:4px 0 0;font-size:20px;font-weight:600;letter-spacing:-.01em;line-height:1.2}
+  .close{width:30px;height:30px;border-radius:15px;background:#EFEEE9;display:flex;align-items:center;justify-content:center;color:var(--ink-2)}
+  .formscroll{flex:1;overflow-y:auto;padding:6px 20px 20px}
+  .fld{margin-top:18px}
+  .fld label{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);font-weight:600;display:block;margin-bottom:8px}
+  .select, .stepper, .dateinput{height:48px;background:#fff;border:1px solid var(--line);border-radius:12px;display:flex;align-items:center;padding:0 14px;justify-content:space-between;font-size:15px;font-weight:500}
+  .select .v small{display:block;color:var(--ink-2);font-size:11px;font-weight:400;margin-top:2px}
+  .stepperwrap{display:flex;gap:10px}
+  .stepperwrap .stepper{flex:1;justify-content:center;gap:18px}
+  .stepperwrap .stepper button{width:32px;height:32px;border-radius:16px;background:var(--accent-soft);color:var(--accent);border:0;font-size:18px;line-height:1;font-weight:600;display:flex;align-items:center;justify-content:center}
+  .stepperwrap .stepper .val{font-size:18px;font-weight:600;font-variant-numeric:tabular-nums;min-width:42px;text-align:center}
+  .quickqty{display:flex;gap:6px}
+  .quickqty span{padding:6px 10px;border:1px solid var(--line);background:#fff;border-radius:8px;font-size:12px;color:var(--ink-2);font-weight:500}
+  .quickqty span.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .meals{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+  .mealchip{height:62px;border-radius:12px;background:#fff;border:1px solid var(--line);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;color:var(--ink-2);font-size:12px;font-weight:500}
+  .mealchip svg{width:18px;height:18px}
+  .mealchip.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .mealchip.on svg{stroke:#fff}
+  .note{height:60px;background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px 14px;font-size:14px;color:var(--ink-2);line-height:1.4;font-weight:400}
+  .preview{margin-top:18px;background:var(--accent-soft);border:1px solid #C8DEDB;border-radius:12px;padding:12px 14px;display:flex;justify-content:space-between;align-items:center}
+  .preview .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--accent);font-weight:700}
+  .preview .calo{font-size:24px;font-weight:600;color:var(--accent);font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+  .preview .calo small{font-size:12px;font-weight:500;margin-left:4px}
+  .preview .mm{display:flex;gap:10px;margin-top:4px;font-size:11px;color:var(--accent)}
+  .preview .mm b{color:#1A1D1A}
+  .sheet footer{padding:14px 20px 30px;border-top:1px solid var(--line);background:#fff}
+  .save{height:54px;width:100%;border:0;border-radius:14px;background:var(--accent);color:#fff;font-weight:600;font-size:16px}
+  .chev{color:var(--ink-3)}
+  /* faded background context */
+  .ctxhdr{padding:14px 20px 6px;color:var(--ink-2)}
+  .ctxhdr h1{margin:0;font-size:22px;color:#1A1D1A;font-weight:600}
+  .ctxhdr .s{font-size:13px}
+  .ctxcard{margin:10px 20px;background:#fff;border:1px solid var(--line);border-radius:14px;height:120px}
+</style>
+</head>
+<body>
+  <div class="caption">04 · Log entry (mobile, bottom sheet)</div>
+  <div class="device">
+    <div class="screen" style="background:var(--bg)">
+      <!-- behind context -->
+      <div style="height:44px"></div>
+      <div class="ctxhdr"><h1>Today</h1><div class="s">Thursday, May 14</div></div>
+      <div class="ctxcard"></div>
+      <div class="ctxcard"></div>
+
+      <div class="backdrop"></div>
+
+      <div class="sheet">
+        <div class="grabber"></div>
+        <header>
+          <div>
+            <div class="brand">Fage · OpenFoodFacts</div>
+            <h2>Greek yogurt, plain, nonfat</h2>
+          </div>
+          <button class="close" aria-label="close">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          </button>
+        </header>
+        <div class="formscroll">
+          <div class="fld">
+            <label>Serving</label>
+            <div class="select">
+              <div class="v">1 cup<small>227 g · 130 kcal</small></div>
+              <svg class="chev" width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+          </div>
+
+          <div class="fld">
+            <label>Quantity</label>
+            <div class="stepperwrap">
+              <div class="stepper">
+                <button>−</button>
+                <div class="val">1.5</div>
+                <button>+</button>
+              </div>
+            </div>
+            <div class="quickqty" style="margin-top:8px">
+              <span>0.5×</span><span>1×</span><span class="on">1.5×</span><span>2×</span><span>3×</span>
+            </div>
+          </div>
+
+          <div class="fld">
+            <label>Meal</label>
+            <div class="meals">
+              <div class="mealchip">
+                <svg viewBox="0 0 24 24" fill="none"><path d="M5 13a7 7 0 0 1 14 0M3 14h18M6 18h12" stroke="#5C625C" stroke-width="1.6" stroke-linecap="round"/></svg>
+                Breakfast
+              </div>
+              <div class="mealchip on">
+                <svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="8" stroke="currentColor" stroke-width="1.6"/><path d="M9 11h6M9 14h4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+                Lunch
+              </div>
+              <div class="mealchip">
+                <svg viewBox="0 0 24 24" fill="none"><path d="M4 10c0-2 3-3 8-3s8 1 8 3-3 4-8 4-8-2-8-4zM5 14c1.5 3 5 5 7 5s5.5-2 7-5" stroke="#5C625C" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                Dinner
+              </div>
+              <div class="mealchip">
+                <svg viewBox="0 0 24 24" fill="none"><path d="M8 4v6a4 4 0 0 0 8 0V4" stroke="#5C625C" stroke-width="1.6" stroke-linecap="round"/><path d="M12 14v6" stroke="#5C625C" stroke-width="1.6" stroke-linecap="round"/></svg>
+                Snack
+              </div>
+            </div>
+          </div>
+
+          <div class="fld">
+            <label>Date</label>
+            <div class="dateinput">
+              <span>Today · Thursday, May 14</span>
+              <svg class="chev" width="18" height="18" viewBox="0 0 24 24" fill="none"><rect x="4" y="5" width="16" height="15" rx="2" stroke="currentColor" stroke-width="1.6"/><path d="M4 9h16M8 3v4M16 3v4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+            </div>
+          </div>
+
+          <div class="fld">
+            <label>Note (optional)</label>
+            <div class="note">After yoga, before the meeting…</div>
+          </div>
+
+          <div class="preview">
+            <div>
+              <div class="lbl">Will log</div>
+              <div class="calo">195<small>kcal</small></div>
+              <div class="mm"><span>P <b>33 g</b></span><span>C <b>14 g</b></span><span>F <b>0 g</b></span></div>
+            </div>
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="#1F5F5B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </div>
+        </div>
+        <footer>
+          <button class="save">Save to log</button>
+        </footer>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

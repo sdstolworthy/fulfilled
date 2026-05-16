@@ -1,0 +1,43 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/loseit-core",
+    "crates/loseit-db",
+    "crates/loseit-api",
+    "crates/loseit-ingest",
+    "crates/loseit-testing",
+]
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.75"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+loseit-core = { path = "crates/loseit-core" }
+loseit-db = { path = "crates/loseit-db" }
+loseit-testing = { path = "crates/loseit-testing" }
+
+tokio = { version = "1", features = ["full"] }
+async-trait = "0.1"
+axum = { version = "0.7", features = ["macros"] }
+tower = "0.4"
+tower-http = { version = "0.5", features = ["trace", "cors"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+anyhow = "1"
+chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+rust_decimal = { version = "1.36", features = ["serde-with-float"] }
+sqlx = { version = "0.8", default-features = false, features = [
+    "postgres",
+    "runtime-tokio-rustls",
+    "uuid",
+    "chrono",
+    "macros",
+    "migrate",
+    "rust_decimal",
+] }

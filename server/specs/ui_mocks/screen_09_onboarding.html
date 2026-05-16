@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>09 · Onboarding</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#FAFAF8; --surface:#FFFFFF; --ink:#1A1D1A; --ink-2:#5C625C; --ink-3:#9AA09A;
+    --line:#E6E5E0; --line-2:#EFEEE9; --accent:#1F5F5B; --accent-soft:#E4EEEC;
+    --p:#C77B3A; --c:#6E8B3D; --f:#B6883F;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{background:#ECECE6;font-family:'Inter',-apple-system,sans-serif;color:var(--ink);min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:32px 16px 64px}
+  .caption{font-size:13px;color:#5C625C;margin-bottom:12px}
+  .row{display:flex;gap:24px;flex-wrap:wrap;justify-content:center}
+  .device{width:390px;height:844px;background:var(--bg);border-radius:36px;box-shadow:0 20px 60px rgba(20,30,25,.18);overflow:hidden;position:relative;border:1px solid #1a1a1a}
+  .screen{width:100%;height:100%;display:flex;flex-direction:column}
+  .statusbar{height:44px;display:flex;align-items:flex-end;justify-content:space-between;padding:0 24px 6px;font-size:13px;font-weight:600}
+  .step-cap{font-size:11px;letter-spacing:.1em;color:var(--ink-3);font-weight:600;text-transform:uppercase;text-align:center;margin-bottom:6px}
+  .progress{display:flex;gap:4px;padding:0 20px 0;justify-content:center}
+  .progress .seg{height:3px;flex:1;max-width:60px;background:#EFEEE9;border-radius:2px}
+  .progress .seg.on{background:var(--accent)}
+  .topbar{padding:8px 16px;display:flex;align-items:center;justify-content:space-between}
+  .topbar .back{font-size:14px;color:var(--ink-2);font-weight:500;width:50px}
+  .topbar .skip{font-size:14px;color:var(--ink-2);font-weight:500;width:50px;text-align:right}
+
+  /* welcome */
+  .hero{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:0 28px;text-align:center}
+  .logo{width:84px;height:84px;border-radius:20px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;margin-bottom:24px;box-shadow:0 10px 30px rgba(31,95,91,.35)}
+  .hero h1{font-size:30px;font-weight:600;letter-spacing:-.015em;margin:0 0 12px;line-height:1.15}
+  .hero p{font-size:15px;color:var(--ink-2);margin:0;line-height:1.5;max-width:280px}
+  .features{margin:28px 0 0;padding:0;list-style:none;text-align:left;width:100%;max-width:300px}
+  .features li{display:flex;align-items:flex-start;gap:12px;padding:10px 0;font-size:14px;color:var(--ink);font-weight:500}
+  .features li svg{flex-shrink:0;margin-top:2px}
+
+  .footer{padding:14px 20px 30px;background:transparent}
+  .cta{height:54px;width:100%;background:var(--accent);color:#fff;border-radius:14px;font-weight:600;font-size:16px;border:0;display:flex;align-items:center;justify-content:center;gap:8px}
+  .cta.ghost{background:transparent;color:var(--ink-2);font-weight:500;font-size:14px;margin-top:6px}
+
+  /* profile step */
+  .stepbody{flex:1;overflow-y:auto;padding:16px 24px 10px}
+  .stepbody h2{font-size:24px;font-weight:600;letter-spacing:-.01em;margin:6px 0 6px;line-height:1.2}
+  .stepbody .lede{font-size:14px;color:var(--ink-2);margin:0 0 22px;line-height:1.5}
+  .fld{margin-bottom:14px}
+  .fld label{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);font-weight:600;display:block;margin-bottom:8px}
+  .fld input,.fld .ip{height:48px;width:100%;background:#fff;border:1px solid var(--line);border-radius:12px;padding:0 14px;font-family:inherit;font-size:15px;font-weight:500;outline:0;color:var(--ink)}
+  .seg{display:flex;gap:8px}
+  .seg span{flex:1;height:48px;background:#fff;border:1px solid var(--line);border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:500;color:var(--ink-2)}
+  .seg span.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .acts{display:flex;flex-direction:column;gap:8px}
+  .acts label{display:flex;align-items:center;gap:12px;padding:12px 14px;background:#fff;border:1px solid var(--line);border-radius:12px;cursor:pointer;font-size:14px;font-weight:500}
+  .acts label.on{border-color:var(--accent);background:var(--accent-soft)}
+  .acts .r{width:18px;height:18px;border-radius:9px;border:1.5px solid var(--ink-3);flex:0 0 18px;display:flex;align-items:center;justify-content:center}
+  .acts label.on .r{border-color:var(--accent)}
+  .acts label.on .r::after{content:'';width:9px;height:9px;border-radius:5px;background:var(--accent)}
+  .acts .name{font-weight:600;font-size:14px}
+  .acts .desc{font-size:12px;color:var(--ink-2);font-weight:400;margin-top:1px}
+
+  /* goal step */
+  .goalopts{display:flex;flex-direction:column;gap:10px;margin-bottom:14px}
+  .goalopt{background:#fff;border:1px solid var(--line);border-radius:14px;padding:14px;display:flex;align-items:center;gap:12px}
+  .goalopt.on{border-color:var(--accent);background:var(--accent-soft)}
+  .goalopt .ic{width:42px;height:42px;border-radius:21px;background:var(--accent-soft);color:var(--accent);display:flex;align-items:center;justify-content:center;flex:0 0 42px}
+  .goalopt.on .ic{background:var(--accent);color:#fff}
+  .goalopt .name{font-size:15px;font-weight:600}
+  .goalopt .meta{font-size:12px;color:var(--ink-2);margin-top:2px}
+  .ratecard{background:#fff;border:1px solid var(--line);border-radius:14px;padding:16px 16px 18px}
+  .ratecard .l{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink-3);font-weight:600;margin-bottom:8px}
+  .ratecard .v{font-size:24px;font-weight:600;letter-spacing:-.01em;font-variant-numeric:tabular-nums}
+  .ratecard .v small{font-size:13px;color:var(--ink-2);font-weight:500}
+  .slider{height:6px;background:#EFEEE9;border-radius:3px;margin-top:14px;position:relative}
+  .slider::after{content:'';position:absolute;left:0;top:0;bottom:0;width:40%;background:var(--accent);border-radius:3px}
+  .knob{position:absolute;width:22px;height:22px;border-radius:11px;background:#fff;border:2px solid var(--accent);left:38%;top:-8px;box-shadow:0 2px 6px rgba(0,0,0,.12)}
+  .preview{margin-top:14px;background:var(--accent-soft);border-radius:12px;padding:14px;display:flex;align-items:center;justify-content:space-between}
+  .preview .l{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--accent);font-weight:700}
+  .preview .v{font-size:22px;font-weight:600;color:var(--accent);font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+  .preview .v small{font-size:12px;font-weight:500;margin-left:4px}
+  .preview .macros{display:flex;gap:14px;margin-top:2px}
+  .preview .macros span{font-size:11px;color:var(--accent)}
+  .preview .macros b{color:#1A1D1A}
+</style>
+</head>
+<body>
+  <div class="caption">09 · Onboarding (3-up flow)</div>
+  <div class="row">
+
+    <!-- 1. Welcome -->
+    <div>
+      <div style="text-align:center;font-size:11px;color:#9AA09A;margin-bottom:6px;letter-spacing:.1em;text-transform:uppercase;font-weight:600">Step 1 · Welcome</div>
+      <div class="device">
+        <div class="screen">
+          <div class="statusbar"><span>9:41</span><span></span></div>
+          <div class="hero">
+            <div class="logo">
+              <svg width="40" height="40" viewBox="0 0 24 24" fill="none"><path d="M12 21c-3.5-2-7-6-7-11a5 5 0 0 1 7-4.6A5 5 0 0 1 19 10c0 5-3.5 9-7 11z" stroke="#fff" stroke-width="1.7" stroke-linejoin="round"/><path d="M9 11c1.2-1 2-1 3 0M15 11c-1.2-1-2-1-3 0" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/></svg>
+            </div>
+            <h1>Track food without the noise.</h1>
+            <p>A calm, fast logger backed by OpenFoodFacts. No ads, no streak guilt, no upsells.</p>
+
+            <ul class="features">
+              <li>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="#1F5F5B" stroke-width="1.6"/><path d="m20 20-3.5-3.5" stroke="#1F5F5B" stroke-width="1.6" stroke-linecap="round"/></svg>
+                Search 2M+ foods or scan a barcode
+              </li>
+              <li>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="#1F5F5B" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                One-tap recents & frequents
+              </li>
+              <li>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M4 18V10m6 8V6m6 12v-5m4 5h-16" stroke="#1F5F5B" stroke-width="1.6" stroke-linecap="round"/></svg>
+                Weight trend, macros, that's it
+              </li>
+            </ul>
+          </div>
+          <div class="footer">
+            <button class="cta">Get started</button>
+            <button class="cta ghost">I already have an account</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 2. Profile -->
+    <div>
+      <div style="text-align:center;font-size:11px;color:#9AA09A;margin-bottom:6px;letter-spacing:.1em;text-transform:uppercase;font-weight:600">Step 2 · About you</div>
+      <div class="device">
+        <div class="screen">
+          <div class="statusbar"><span>9:41</span><span></span></div>
+          <div class="topbar"><span class="back">Back</span><span class="skip">Skip</span></div>
+          <div style="padding:0 20px 12px">
+            <div class="progress" style="padding:0">
+              <span class="seg on"></span><span class="seg on"></span><span class="seg"></span>
+            </div>
+          </div>
+          <div class="stepbody">
+            <h2>About you</h2>
+            <p class="lede">We use this to estimate your daily calorie needs. You can change it anytime.</p>
+
+            <div class="fld">
+              <label>Sex</label>
+              <div class="seg">
+                <span class="on">Male</span><span>Female</span><span>Other</span>
+              </div>
+            </div>
+            <div class="fld">
+              <label>Birth date</label>
+              <div class="ip" style="display:flex;align-items:center;justify-content:space-between"><span>Aug 12, 1991</span><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><rect x="4" y="5" width="16" height="15" rx="2" stroke="#5C625C" stroke-width="1.6"/><path d="M4 9h16M8 3v4M16 3v4" stroke="#5C625C" stroke-width="1.6" stroke-linecap="round"/></svg></div>
+            </div>
+            <div class="fld" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+              <div>
+                <label>Height</label>
+                <input value="182 cm" />
+              </div>
+              <div>
+                <label>Weight</label>
+                <input value="80.2 kg" />
+              </div>
+            </div>
+            <div class="fld">
+              <label>Activity level</label>
+              <div class="acts">
+                <label><span class="r"></span><div><div class="name">Sedentary</div><div class="desc">Mostly sitting, little exercise</div></div></label>
+                <label><span class="r"></span><div><div class="name">Lightly active</div><div class="desc">Walks, 1–2 workouts / week</div></div></label>
+                <label class="on"><span class="r"></span><div><div class="name">Moderately active</div><div class="desc">3–5 workouts / week</div></div></label>
+                <label><span class="r"></span><div><div class="name">Very active</div><div class="desc">6+ workouts or physical job</div></div></label>
+              </div>
+            </div>
+          </div>
+          <div class="footer">
+            <button class="cta">Continue</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 3. Goal -->
+    <div>
+      <div style="text-align:center;font-size:11px;color:#9AA09A;margin-bottom:6px;letter-spacing:.1em;text-transform:uppercase;font-weight:600">Step 3 · Your goal</div>
+      <div class="device">
+        <div class="screen">
+          <div class="statusbar"><span>9:41</span><span></span></div>
+          <div class="topbar"><span class="back">Back</span><span class="skip">Skip</span></div>
+          <div style="padding:0 20px 12px">
+            <div class="progress" style="padding:0">
+              <span class="seg on"></span><span class="seg on"></span><span class="seg on"></span>
+            </div>
+          </div>
+          <div class="stepbody">
+            <h2>Set a goal</h2>
+            <p class="lede">Pick a direction. You'll get a daily calorie target you can edit later.</p>
+
+            <div class="goalopts">
+              <div class="goalopt">
+                <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M7 14l5-5 5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+                <div><div class="name">Gain weight</div><div class="meta">Build muscle slowly</div></div>
+              </div>
+              <div class="goalopt">
+                <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></div>
+                <div><div class="name">Maintain</div><div class="meta">Stay where you are</div></div>
+              </div>
+              <div class="goalopt on">
+                <div class="ic"><svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M7 10l5 5 5-5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+                <div><div class="name">Lose weight</div><div class="meta">Sustainable cut · recommended</div></div>
+              </div>
+            </div>
+
+            <div class="ratecard">
+              <div class="l">Rate</div>
+              <div class="v">−0.5<small> kg / week</small></div>
+              <div class="slider"><div class="knob"></div></div>
+              <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--ink-3);margin-top:6px;letter-spacing:.04em">
+                <span>−0.25</span><span>−0.5</span><span>−0.75</span><span>−1.0</span>
+              </div>
+            </div>
+
+            <div class="preview">
+              <div>
+                <div class="l">Your daily target</div>
+                <div class="v">2,100<small>kcal</small></div>
+                <div class="macros"><span>P <b>130 g</b></span><span>C <b>263 g</b></span><span>F <b>58 g</b></span></div>
+              </div>
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none"><path d="M5 13l4 4L19 7" stroke="#1F5F5B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+          </div>
+          <div class="footer">
+            <button class="cta">Start logging</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</body>
+</html>

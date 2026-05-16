@@ -1,0 +1,22 @@
+[package]
+name = "loseit-testing"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+# This crate is intended to be consumed as a dev-dependency. It exposes
+# in-memory implementations of the domain ports plus small fixtures, so
+# tests in any crate can exercise services and handlers without a database
+# or a real authenticator.
+
+[dependencies]
+loseit-core.workspace = true
+
+async-trait.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+rust_decimal.workspace = true

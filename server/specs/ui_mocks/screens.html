@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Fulfilled — all screens</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;background:#ECECE6;font-family:'Inter',-apple-system,sans-serif;color:#1A1D1A}
+  .wrap{padding:32px}
+  h1{font-size:22px;font-weight:600;letter-spacing:-.01em;margin:0 0 4px}
+  .lede{font-size:13px;color:#5C625C;margin:0 0 24px}
+  .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:20px}
+  @media (max-width:1400px){.grid{grid-template-columns:repeat(3,1fr)}}
+  @media (max-width:1000px){.grid{grid-template-columns:repeat(2,1fr)}}
+  @media (max-width:640px){.grid{grid-template-columns:1fr}}
+  .cell{background:#fff;border:1px solid #E6E5E0;border-radius:14px;overflow:hidden;display:flex;flex-direction:column}
+  .cap{padding:10px 14px;border-bottom:1px solid #EFEEE9;display:flex;justify-content:space-between;align-items:baseline}
+  .cap .n{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#9AA09A;font-weight:700}
+  .cap .t{font-size:13px;font-weight:600}
+  .cap a{font-size:11px;color:#1F5F5B;text-decoration:none;font-weight:600}
+  .holder{position:relative;height:420px;background:#ECECE6;overflow:hidden}
+  .holder iframe{position:absolute;top:50%;left:50%;width:390px;height:844px;transform:translate(-50%,-50%) scale(.48);transform-origin:center center;border:0}
+  .cell.wide{grid-column:span 2}
+  @media (max-width:1000px){.cell.wide{grid-column:span 2}}
+  .cell.wide .holder{height:420px}
+  .cell.wide .holder iframe{width:1280px;height:800px;transform:translate(-50%,-50%) scale(.32)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>All screens</h1>
+  <p class="lede">All v1 mocks, scaled to fit. Click any caption to open the screen full-size. <a href="INDEX.html" style="color:#1F5F5B;text-decoration:none;font-weight:600">← Back to INDEX</a></p>
+  <div class="grid">
+    <div class="cell"><div class="cap"><span class="n">01 · Mobile</span><span class="t">Day view</span><a href="screen_01_day_view.html">Open</a></div><div class="holder"><iframe src="screen_01_day_view.html" scrolling="no" loading="lazy"></iframe></div></div>
+    <div class="cell"><div class="cap"><span class="n">02 · Mobile</span><span class="t">Search</span><a href="screen_02_search.html">Open</a></div><div class="holder"><iframe src="screen_02_search.html" scrolling="no" loading="lazy"></iframe></div></div>
+    <div class="cell"><div class="cap"><span class="n">03 · Mobile</span><span class="t">Food detail</span><a href="screen_03_food_detail.html">Open</a></div><div class="holder"><iframe src="screen_03_food_detail.html" scrolling="no" loading="lazy"></iframe></div></div>
+    <div class="cell"><div class="cap"><span class="n">04 · Mobile</span><span class="t">Log entry</span><a href="screen_04_log_entry.html">Open</a></div><div class="holder"><iframe src="screen_04_log_entry.html" scrolling="no" loading="lazy"></iframe></div></div>
+    <div class="cell"><div class="cap"><span class="n">05 · Mobile</span><span class="t">Custom food</span><a href="screen_05_custom_food.html">Open</a></div><div class="holder"><iframe src="screen_05_custom_food.html" scrolling="no" loading="lazy"></iframe></div></div>
+    <div class="cell"><div class="cap"><span class="n">06 · Mobile</span><span class="t">Weight log</span><a href="screen_06_weight_log.html">Open</a></div><div class="holder"><iframe src="screen_06_weight_log.html" scrolling="no" loading="lazy"></iframe></div></div>
+    <div class="cell"><div class="cap"><span class="n">07 · Mobile</span><span class="t">Goals</span><a href="screen_07_goals.html">Open</a></div><div class="holder"><iframe src="screen_07_goals.html" scrolling="no" loading="lazy"></iframe></div></div>
+    <div class="cell"><div class="cap"><span class="n">08 · Mobile</span><span class="t">Profile</span><a href="screen_08_profile.html">Open</a></div><div class="holder"><iframe src="screen_08_profile.html" scrolling="no" loading="lazy"></iframe></div></div>
+    <div class="cell wide"><div class="cap"><span class="n">09 · Mobile (3-up)</span><span class="t">Onboarding</span><a href="screen_09_onboarding.html">Open</a></div><div class="holder" style="height:420px"><iframe src="screen_09_onboarding.html" scrolling="no" loading="lazy" style="width:1320px;transform:translate(-50%,-50%) scale(.32)"></iframe></div></div>
+    <div class="cell wide"><div class="cap"><span class="n">01-W · Web 1280×800</span><span class="t">Day view (desktop)</span><a href="screen_01_day_view_web.html">Open</a></div><div class="holder"><iframe src="screen_01_day_view_web.html" scrolling="no" loading="lazy"></iframe></div></div>
+  </div>
+</div>
+</body>
+</html>
