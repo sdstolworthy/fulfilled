@@ -21,6 +21,7 @@ import 'widgets/height_stepper_sheet.dart';
 import 'widgets/settings_card.dart';
 import 'widgets/settings_row.dart';
 import 'widgets/sex_picker.dart';
+import 'widgets/weight_unit_chooser.dart';
 
 /// Local debug flag — flip to `true` to inspect the error/loading
 /// branches against the mock provider, then revert before committing.
@@ -194,17 +195,24 @@ class _ProfileBody extends ConsumerWidget {
         SettingsCard(
           title: 'Preferences',
           rows: <Widget>[
-            // Units row is informational in v1 (PM Risk 4 defers the
-            // toggle). Pass `onTap: null` so the chevron drops + the
-            // row is non-interactive — see `SettingsRow` docstring.
-            const SettingsRow(
-              key: Key('row-units'),
+            // Units row — interactive (LU-010). Tap opens the
+            // `showWeightUnitChooser` (bottom sheet on compact, popup
+            // menu on medium/expanded). The trailing value reflects
+            // the active unit's short label; the other quantities
+            // (cm, kcal, g) are locked in v1 per architect §3.12.
+            SettingsRow(
+              key: const Key('row-units'),
               icon: Icons.public,
               label: 'Units',
-              value: 'kg, cm, kcal, g',
+              value: '${user.weightUnit.shortLabel}, cm, kcal, g',
               semanticsLabel:
-                  'Units: kilograms, centimeters, kilocalories, grams. '
-                  'Unit preferences arrive in a later release.',
+                  'Weight unit: ${user.weightUnit.longLabel}. '
+                  'Tap to change.',
+              onTap: () => showWeightUnitChooser(
+                context,
+                ref,
+                initial: user.weightUnit,
+              ),
             ),
           ],
         ),
