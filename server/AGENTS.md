@@ -39,3 +39,18 @@ When updating the spec:
 
 If a change is purely internal (service plumbing, repo layer, SQL,
 non-wire DTOs) it does not require a spec update.
+
+## Flutter client location
+
+The deploy workflow at `.github/workflows/pages.yml` expects the Flutter
+client to live at the repo-root `app/` directory and to be a standard
+Flutter project (i.e. `app/pubspec.yaml` must exist).
+
+When that file is present the workflow runs `flutter build web --release
+--base-href "/<repo>/app/"` and publishes the output at
+`https://<owner>.github.io/<repo>/app/`. While it's absent, the
+workflow publishes a placeholder from `.github/pages/app-stub/`.
+
+If you scaffold the Flutter project somewhere else, update both
+`.github/workflows/pages.yml` (the `app/pubspec.yaml` detection and the
+`cd app` build step) and this note so the deploy keeps working.

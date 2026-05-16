@@ -1,0 +1,18 @@
+# DTOs go here.
+#
+# Two paths are open:
+#
+# 1. Codegen — run `openapi-generator-cli` with the Dart-Dio template
+#    against `specs/openapi.yaml`. The output lands in this directory.
+#    Pin the generator version in a Makefile target before the first
+#    codegen run; the team has not committed to a generator yet, so this
+#    directory ships empty.
+#
+# 2. Hand-roll — for the few DTOs a screen needs ahead of codegen, write
+#    them with `freezed` + `json_serializable` and commit the `.freezed.dart`
+#    / `.g.dart` outputs alongside (or `.gitignore` them and let CI
+#    regenerate; the project-root `.gitignore` already excludes them).
+#
+# Either way: never invent fields. The wire shape lives in
+# `specs/openapi.yaml`. If a screen needs a field that does not exist on
+# the wire, file a spec change first.

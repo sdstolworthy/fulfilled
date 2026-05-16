@@ -1,0 +1,81 @@
+name: fulfilled
+description: Fulfilled — calorie/food/weight tracker. Flutter client for the LoseIt API.
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: '>=3.6.0 <4.0.0'
+  flutter: '>=3.27.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # State management. Code-generated providers per architecture §5.
+  flutter_riverpod: ^2.5.1
+  riverpod_annotation: ^2.3.5
+
+  # Routing. v14+ required by architecture §4 (ShellRoute + observable router).
+  go_router: ^14.6.2
+
+  # HTTP. Repositories own all calls; widgets never see Dio.
+  dio: ^5.7.0
+
+  # Wire-decimal handling. T-17: Decimal in, formatted out.
+  decimal: ^3.0.2
+
+  # i18n number/date formatting. Drives thousands separators and EEEE, MMM d.
+  intl: ^0.19.0
+
+  # Codegen support for DTOs and presentation models.
+  freezed_annotation: ^2.4.4
+  json_annotation: ^4.9.0
+
+  # Local persistence: outbox Hive box + cached repositories.
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+
+  # Outbox flush trigger (architecture §5 Outbox subsection).
+  connectivity_plus: ^6.1.0
+
+  # Mobile-only barcode scanning. Architecture names ^5.x; web is a no-op which
+  # is what we want (T-19 / §7 "No barcode UI on web").
+  mobile_scanner: ^5.2.3
+
+  # UUIDs for outbox entry ids and optimistic LogEntry ids.
+  uuid: ^4.5.1
+
+  cupertino_icons: ^1.0.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+  # Codegen runners. Run `dart run build_runner build --delete-conflicting-outputs`
+  # after pulling. The DTO generator config lives in `lib/data/dtos/` (TBD —
+  # currently a placeholder; see README).
+  build_runner: ^2.4.13
+  freezed: ^2.5.7
+  json_serializable: ^6.8.0
+  riverpod_generator: ^2.4.3
+  custom_lint: ^0.6.7
+  riverpod_lint: ^2.3.13
+
+flutter:
+  uses-material-design: true
+  # Inter font: bundle, do not load from a CDN at runtime (architecture §2.2).
+  # The actual .ttf assets must be added under `assets/fonts/Inter/` by the
+  # developer running `flutter create .`; the entry stays declarative here so
+  # the first time the assets land the bundling Just Works.
+  # fonts:
+  #   - family: Inter
+  #     fonts:
+  #       - asset: assets/fonts/Inter/Inter-Regular.ttf
+  #         weight: 400
+  #       - asset: assets/fonts/Inter/Inter-Medium.ttf
+  #         weight: 500
+  #       - asset: assets/fonts/Inter/Inter-SemiBold.ttf
+  #         weight: 600
+  #       - asset: assets/fonts/Inter/Inter-Bold.ttf
+  #         weight: 700
