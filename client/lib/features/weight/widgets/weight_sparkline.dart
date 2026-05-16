@@ -3,7 +3,7 @@ import 'dart:math' as math;
 import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:intl/intl.dart';
+import 'package:intl/intl.dart' hide TextDirection;
 
 import '../../../domain/enums.dart';
 import '../../../domain/units/weight.dart';

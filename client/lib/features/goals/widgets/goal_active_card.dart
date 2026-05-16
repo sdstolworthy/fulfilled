@@ -1,6 +1,7 @@
 import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
 
+import '../../../domain/enums.dart';
 import '../../../domain/goal.dart';
 import '../../../domain/units/energy.dart';
 import '../../../domain/units/macros.dart';
