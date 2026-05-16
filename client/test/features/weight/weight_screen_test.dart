@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -13,6 +15,8 @@ import 'package:fulfilled/providers/goal_providers.dart';
 import 'package:fulfilled/providers/weight_providers.dart';
 import 'package:fulfilled/routing/app_router.dart';
 import 'package:fulfilled/theme/theme_data.dart';
+import 'package:fulfilled/widgets/empty_state.dart';
+import 'package:fulfilled/widgets/skeleton.dart';
 import 'package:go_router/go_router.dart';
 
 /// Screen 06 widget tests.
@@ -240,6 +244,82 @@ void main() {
       tester.widget<WeightSparklineCard>(find.byType(WeightSparklineCard)).range,
       WeightRange.all,
     );
+  });
+
+  // T-013 — when `weightHistoryProvider` is parked in the loading state
+  // the history list renders the lifted [Skeleton] primitive, never a
+  // spinner. Goal/series providers resolve immediately so the rest of
+  // the screen settles cleanly while only the history list is loading.
+  testWidgets(
+      'history loading state renders Skeleton, never CircularProgressIndicator',
+      (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final completer = Completer<List<WeightEntry>>();
+    addTearDown(() {
+      if (!completer.isCompleted) completer.complete(<WeightEntry>[]);
+    });
+
+    await tester.pumpWidget(
+      _harness(
+        overrides: <Override>[
+          activeGoalProvider.overrideWith((_) async => _activeGoal()),
+          weightHistoryProvider.overrideWith((_) => completer.future),
+          for (final r in WeightRange.values)
+            weightSeriesProvider(r).overrideWith((_) async => _seriesFor(r)),
+        ],
+      ),
+    );
+    await tester.pump(); // resolve everything that can resolve.
+    await tester.pump();
+
+    expect(find.byType(WeightHistoryList), findsOneWidget);
+    final history = find.descendant(
+      of: find.byType(WeightHistoryList),
+      matching: find.byType(Skeleton),
+    );
+    expect(history, findsWidgets);
+    expect(
+      find.descendant(
+        of: find.byType(WeightHistoryList),
+        matching: find.byType(CircularProgressIndicator),
+      ),
+      findsNothing,
+    );
+  });
+
+  // T-013 — empty `weightHistoryProvider` renders the lifted EmptyState
+  // with a "Log your first weight" CTA. Previous code emitted a plain
+  // text label without an action.
+  testWidgets('empty history renders EmptyState with a "Log your first weight" CTA',
+      (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      _harness(
+        overrides: <Override>[
+          activeGoalProvider.overrideWith((_) async => _activeGoal()),
+          weightHistoryProvider.overrideWith((_) async => <WeightEntry>[]),
+          for (final r in WeightRange.values)
+            weightSeriesProvider(r).overrideWith((_) async => _seriesFor(r)),
+        ],
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final emptyState = find.descendant(
+      of: find.byType(WeightHistoryList),
+      matching: find.byType(EmptyState),
+    );
+    expect(emptyState, findsOneWidget);
+    expect(find.text('No weight logged yet'), findsOneWidget);
+    expect(find.text('Log your first weight'), findsOneWidget);
   });
 
   testWidgets(

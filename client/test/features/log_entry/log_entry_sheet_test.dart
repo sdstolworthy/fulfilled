@@ -190,6 +190,27 @@ void main() {
     expect(captured!.meal, mealForLocalTime(DateTime.now()));
   });
 
+  // T-013 — the sheet must never spin a `CircularProgressIndicator` to
+  // signal submitting; the button swaps its label for a static skeleton
+  // bar (`_SaveButtonSkeleton`). Assert the spinner is absent on the
+  // idle path; T-08 keeps the static skeleton stable when submit fires.
+  testWidgets('idle sheet renders no CircularProgressIndicator',
+      (tester) async {
+    tester.view.physicalSize = const Size(390, 1200);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(_harness(
+      food: _testFood(),
+      onSubmit: (_) {},
+    ));
+    await tester.pump();
+
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.text('Save to log'), findsOneWidget);
+  });
+
   testWidgets('QuickMultiplierChips highlights the chip equal to quantity',
       (tester) async {
     tester.view.physicalSize = const Size(390, 1200);

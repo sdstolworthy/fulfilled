@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../domain/food.dart';
 import '../../../domain/units/energy.dart';
+import '../../../routing/routes.dart';
 import '../../../theme/context_extensions.dart';
+import '../../../widgets/empty_state.dart';
+import '../../../widgets/primary_button.dart';
 
 /// The right-rail "Quick add" card on screen 01-W. Renders recents +
 /// frequents as a wrap of chips; tapping a chip launches the log-entry
@@ -60,10 +64,23 @@ class QuickAddChips extends StatelessWidget {
             SizedBox(height: context.space.x2),
             _ChipWrap(foods: frequentChips, onTap: onTapFood),
           ],
+          // T-013 (B9 absorbed): both providers empty → the lifted
+          // `EmptyState` with a "Find a food" CTA routing to the search
+          // screen. Partial-empty paths render only the populated
+          // section above; the fallback Text used to read "Log a food
+          // and it will show up here" and had no CTA.
           if (recentChips.isEmpty && frequentChips.isEmpty)
-            Text(
-              'Log a food and it will show up here.',
-              style: context.text.meta,
+            EmptyState(
+              icon: Icons.search,
+              title: 'No recents yet',
+              body: "Log your first food and it'll show up here.",
+              action: SizedBox(
+                width: 220,
+                child: PrimaryButton(
+                  label: 'Find a food',
+                  onPressed: () => context.push(Routes.foodsSearchPath),
+                ),
+              ),
             ),
         ],
       ),

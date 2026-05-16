@@ -73,4 +73,24 @@ void main() {
     expect(iconWidget.color, equals(captured));
     expect(captured, equals(AppColors.light.ink3));
   });
+
+  // T-013 — both the title and body strings must be present in the
+  // semantics tree. The widget doesn't wrap itself in a single
+  // `Semantics` node so the visible labels propagate via Flutter's
+  // default text-semantics. A regression that swaps either to an
+  // `ExcludeSemantics` would fail this.
+  testWidgets('semantics tree exposes both title and body', (tester) async {
+    await tester.pumpWidget(
+      _harness(
+        const EmptyState(
+          icon: Icons.search_off,
+          title: 'No matches',
+          body: 'No foods match your query.',
+        ),
+      ),
+    );
+
+    expect(find.bySemanticsLabel('No matches'), findsOneWidget);
+    expect(find.bySemanticsLabel('No foods match your query.'), findsOneWidget);
+  });
 }

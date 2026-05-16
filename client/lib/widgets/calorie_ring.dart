@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../theme/context_extensions.dart';
+import 'motion.dart';
 
 /// The progress ring that sits at the heart of every "today total" surface
 /// (architecture §3 component inventory + T-09 anchor).
@@ -55,6 +56,18 @@ class CalorieRing extends StatelessWidget {
     final colors = context.colors;
     final arcColor = overBudget ? colors.dangerOver : colors.accent;
 
+    // T-016 animation hooks. The arc sweep is driven by a
+    // `TweenAnimationBuilder<double>` so a change in `progress` interpolates
+    // over 600 ms instead of snapping. The over-budget color flip is a
+    // 150 ms `AnimatedSwitcher` cross-fade — we key the inner `CustomPaint`
+    // on the arc color so the switcher rebuilds the subtree when the color
+    // flips (architect's B4 backup: hard fade, not `Color.lerp`, since the
+    // accent→dangerOver midpoint reads muddy). Center number is NOT
+    // animated (T-02 keeps tabular figures stable).
+    final arcDuration = motion(context, const Duration(milliseconds: 600));
+    final colorFadeDuration =
+        motion(context, const Duration(milliseconds: 150));
+
     return Semantics(
       label: '$centerLabel kcal $centerCaption',
       child: SizedBox(
@@ -63,14 +76,27 @@ class CalorieRing extends StatelessWidget {
         child: Stack(
           alignment: Alignment.center,
           children: <Widget>[
-            CustomPaint(
-              size: Size.square(size),
-              painter: _RingPainter(
-                progress: progress,
-                arcColor: arcColor,
-                trackColor: colors.line2,
-                strokeWidth: strokeWidth,
-              ),
+            TweenAnimationBuilder<double>(
+              tween: Tween<double>(begin: 0, end: progress),
+              duration: arcDuration,
+              curve: Curves.easeInOut,
+              builder: (context, value, _) {
+                return AnimatedSwitcher(
+                  duration: colorFadeDuration,
+                  switchInCurve: Curves.easeOutCubic,
+                  switchOutCurve: Curves.easeOutCubic,
+                  child: CustomPaint(
+                    key: ValueKey<Color>(arcColor),
+                    size: Size.square(size),
+                    painter: _RingPainter(
+                      progress: value,
+                      arcColor: arcColor,
+                      trackColor: colors.line2,
+                      strokeWidth: strokeWidth,
+                    ),
+                  ),
+                );
+              },
             ),
             Column(
               mainAxisSize: MainAxisSize.min,

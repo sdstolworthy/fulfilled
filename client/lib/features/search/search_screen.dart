@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:fulfilled/widgets/empty_state.dart';
+import 'package:fulfilled/widgets/primary_button.dart';
 import 'package:fulfilled/widgets/skeleton.dart';
 
 import '../../domain/food.dart';
@@ -419,8 +420,9 @@ class _ResultsSection extends ConsumerWidget {
         results.when(
           loading: () => const _ResultsSkeleton(),
           error: (err, _) {
-            // T-11: transient error → snackbar. The list area shows the
-            // empty state so the user has something to act on.
+            // T-11: transient error → snackbar (attention) + inline
+            // EmptyState (persistence + retry CTA). The retry
+            // re-invalidates the family entry for this query.
             WidgetsBinding.instance.addPostFrameCallback((_) {
               if (!context.mounted) return;
               ScaffoldMessenger.maybeOf(context)?.showSnackBar(
@@ -430,10 +432,18 @@ class _ResultsSection extends ConsumerWidget {
                 ),
               );
             });
-            return const EmptyState(
+            return EmptyState(
               icon: Icons.cloud_off,
-              title: 'Could not load results',
-              body: 'Try again in a moment.',
+              title: "Couldn't load results",
+              body: 'Pull to refresh or tap retry.',
+              action: SizedBox(
+                width: 200,
+                child: PrimaryButton(
+                  label: 'Retry',
+                  onPressed: () =>
+                      ref.invalidate(foodSearchProvider(query)),
+                ),
+              ),
             );
           },
           data: (rows) {
@@ -441,7 +451,7 @@ class _ResultsSection extends ConsumerWidget {
               return EmptyState(
                 icon: Icons.search_off,
                 title: 'No matches',
-                body: 'No foods match "${query.trim()}".',
+                body: 'Try a different name.',
               );
             }
             return _ResultsList(query: query, rows: rows);

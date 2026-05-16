@@ -210,10 +210,10 @@ void main() {
 
     expect(find.text('RESULTS'), findsOneWidget);
     expect(find.text('0 foods'), findsOneWidget);
-    expect(
-      find.textContaining('No foods match'),
-      findsOneWidget,
-    );
+    // T-013 — canonical empty-state copy is "No matches" + "Try a
+    // different name." across the search surface.
+    expect(find.text('No matches'), findsOneWidget);
+    expect(find.text('Try a different name.'), findsOneWidget);
     expect(find.byType(SearchResultRow), findsNothing);
   });
 }

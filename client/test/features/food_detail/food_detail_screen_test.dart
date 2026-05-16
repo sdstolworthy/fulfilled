@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -9,6 +11,8 @@ import 'package:fulfilled/domain/serving.dart';
 import 'package:fulfilled/features/food_detail/food_detail_screen.dart';
 import 'package:fulfilled/providers/food_providers.dart';
 import 'package:fulfilled/theme/theme_data.dart';
+import 'package:fulfilled/widgets/empty_state.dart';
+import 'package:fulfilled/widgets/skeleton.dart';
 
 /// Widget tests for the food detail screen.
 ///
@@ -19,6 +23,9 @@ import 'package:fulfilled/theme/theme_data.dart';
 /// 2. T-10 — the synthetic 100 g serving carries a `Synthetic` badge.
 /// 3. T-21 — sodium renders as `"36 mg"`, not the raw decimal grams that
 ///    arrive on the wire.
+/// 4. T-13 — loading state uses `Skeleton`, never `CircularProgressIndicator`.
+/// 5. T-11 + T-13 — error state renders an `EmptyState`, not a spinner
+///    or a bare text label.
 
 void main() {
   testWidgets('renders successfully with a mocked foodDetailProvider',
@@ -76,6 +83,71 @@ void main() {
     // Defensive: make sure we never render the wire-shaped grams figure.
     expect(find.textContaining('0.036'), findsNothing);
     expect(find.textContaining('0.036 g'), findsNothing);
+  });
+
+  testWidgets('loading state renders Skeleton, never CircularProgressIndicator',
+      (tester) async {
+    tester.view.physicalSize = const Size(390, 1200);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    // Override the provider with a never-completing future so the screen
+    // stays parked in the loading branch through the test.
+    final completer = Completer<Food>();
+    addTearDown(() {
+      if (!completer.isCompleted) completer.complete(_yogurt());
+    });
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: <Override>[
+          foodDetailProvider('f_test_loading')
+              .overrideWith((_) => completer.future),
+        ],
+        child: MaterialApp(
+          theme: buildLightTheme(),
+          home: const FoodDetailScreen(foodId: 'f_test_loading'),
+        ),
+      ),
+    );
+    // A single pump catches the very first frame — no `pumpAndSettle`
+    // because the completer never fires.
+    await tester.pump();
+
+    // T-013 acceptance — no spinner in the loading branch.
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    // T-08 — the layout-matching Skeleton is what the user sees instead.
+    expect(find.byType(Skeleton), findsWidgets);
+  });
+
+  testWidgets(
+      'error branch renders the lifted EmptyState (not a spinner / bare text)',
+      (tester) async {
+    tester.view.physicalSize = const Size(390, 1200);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: <Override>[
+          foodDetailProvider('f_test_err')
+              .overrideWith((_) async => throw Exception('boom')),
+        ],
+        child: MaterialApp(
+          theme: buildLightTheme(),
+          home: const FoodDetailScreen(foodId: 'f_test_err'),
+        ),
+      ),
+    );
+    await tester.pump(); // resolve the error microtask.
+    await tester.pump(); // flush the listen-shim post-frame.
+
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.byType(EmptyState), findsOneWidget);
+    expect(find.text("Couldn't load food details"), findsOneWidget);
+    expect(find.text('Retry'), findsOneWidget);
   });
 }
 

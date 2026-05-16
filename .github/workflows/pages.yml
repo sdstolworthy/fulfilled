@@ -70,6 +70,10 @@ jobs:
         working-directory: client
         run: flutter pub get
 
+      - name: Lint — no cross-feature widget imports (T-23)
+        working-directory: client
+        run: bash tool/lint_no_cross_feature_widget_import.sh
+
       - name: Build Flutter web
         working-directory: client
         env:

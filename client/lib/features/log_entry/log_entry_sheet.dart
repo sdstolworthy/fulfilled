@@ -15,6 +15,7 @@ import '../../providers/food_providers.dart';
 import '../../providers/log_providers.dart';
 import '../../providers/repository_providers.dart';
 import '../../theme/context_extensions.dart';
+import '../../widgets/motion.dart';
 import 'widgets/log_preview_block.dart';
 import 'widgets/meal_chip_picker.dart';
 import 'widgets/quick_multiplier_chips.dart';
@@ -122,16 +123,48 @@ Future<LogEntry?> showLogEntrySheet(
       return Dialog(
         backgroundColor: Colors.transparent,
         insetPadding: const EdgeInsets.all(24),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 480, maxHeight: 720),
-          child: ClipRRect(
-            borderRadius: const BorderRadius.all(Radius.circular(24)),
-            child: contents(scrollController: null, showGrabber: false),
+        child: _DialogEnterAnimation(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 480, maxHeight: 720),
+            child: ClipRRect(
+              borderRadius: const BorderRadius.all(Radius.circular(24)),
+              child: contents(scrollController: null, showGrabber: false),
+            ),
           ),
         ),
       );
     },
   );
+}
+
+/// T-016 dialog arrival animation. Wraps the medium/expanded `Dialog`
+/// child in a one-shot `TweenAnimationBuilder<double>` driving opacity
+/// (0 → 1) + an 8-px upward translate. Duration 200 ms with the
+/// `easeOutCubic` arrival curve. `motion()` collapses to zero under
+/// reduce-motion.
+class _DialogEnterAnimation extends StatelessWidget {
+  const _DialogEnterAnimation({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(begin: 0, end: 1),
+      duration: motion(context, const Duration(milliseconds: 200)),
+      curve: Curves.easeOutCubic,
+      builder: (context, t, inner) {
+        return Opacity(
+          opacity: t,
+          child: Transform.translate(
+            offset: Offset(0, 8 * (1 - t)),
+            child: inner,
+          ),
+        );
+      },
+      child: child,
+    );
+  }
 }
 
 /// The inner widget rendered identically inside the sheet (compact) or
@@ -672,15 +705,32 @@ class _Footer extends StatelessWidget {
             textStyle: context.text.bodyStrong.copyWith(fontSize: 16),
           ),
           child: submitting
-              ? SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: colors.surface,
-                  ),
-                )
+              ? const _SaveButtonSkeleton()
               : const Text('Save to log'),
+        ),
+      ),
+    );
+  }
+}
+
+/// Button-level loading affordance for T-08 / T-13. The submit flow
+/// used to spin a `CircularProgressIndicator` here; T-013 swaps it for
+/// a static skeleton bar that communicates "work-in-flight" without a
+/// ticker — and without the test-suite friction of an indefinite
+/// animation (`pumpAndSettle` finishes cleanly). Mirrors `_ButtonSkeleton`
+/// in `custom_food_screen.dart`.
+class _SaveButtonSkeleton extends StatelessWidget {
+  const _SaveButtonSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 96,
+      height: 12,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(6),
+        child: ColoredBox(
+          color: context.colors.surface.withValues(alpha: 0.35),
         ),
       ),
     );

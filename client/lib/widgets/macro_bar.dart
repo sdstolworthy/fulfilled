@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../domain/units/macros.dart';
 import '../theme/context_extensions.dart';
+import 'motion.dart';
 
 /// Which macro this bar belongs to. The data-only color rule (T-03) lives
 /// here — the widget never accepts an arbitrary color, only one of these
@@ -222,6 +223,14 @@ class _Bar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final radius = BorderRadius.circular(height / 2);
+    // T-016: animate `fraction` over 400 ms with `easeInOut` (the user's
+    // stateful-change curve) via `TweenAnimationBuilder`. The fill color
+    // is interpolated implicitly: when it flips (macro → dangerOver),
+    // `AnimatedContainer` cross-fades the background over the same 400 ms
+    // so the over-budget transition reads as a single coordinated motion
+    // rather than a snap. `motion(context, …)` collapses both durations
+    // to zero when the user has reduce-motion enabled.
+    final fillDuration = motion(context, const Duration(milliseconds: 400));
     return ClipRRect(
       borderRadius: radius,
       child: Container(
@@ -229,9 +238,20 @@ class _Bar extends StatelessWidget {
         color: trackColor,
         child: Align(
           alignment: Alignment.centerLeft,
-          child: FractionallySizedBox(
-            widthFactor: fraction,
-            child: Container(color: fillColor),
+          child: TweenAnimationBuilder<double>(
+            tween: Tween<double>(begin: 0, end: fraction),
+            duration: fillDuration,
+            curve: Curves.easeInOut,
+            builder: (context, value, _) {
+              return FractionallySizedBox(
+                widthFactor: value,
+                child: AnimatedContainer(
+                  duration: fillDuration,
+                  curve: Curves.easeInOut,
+                  color: fillColor,
+                ),
+              );
+            },
           ),
         ),
       ),

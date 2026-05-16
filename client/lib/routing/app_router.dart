@@ -12,11 +12,13 @@ import '../features/profile/profile_screen.dart';
 import '../features/search/search_screen.dart';
 import '../features/today/today_screen.dart';
 import '../features/weight/weight_screen.dart';
+import '../form_factor/breakpoints.dart';
 import '../providers/repository_providers.dart';
 import '../repositories/food_repository.dart';
 import '../theme/context_extensions.dart';
 import '../widgets/app_scaffold.dart';
 import '../widgets/keyboard_shortcuts.dart';
+import '../widgets/motion.dart';
 import '../widgets/placeholder_screen.dart';
 import 'routes.dart';
 
@@ -54,7 +56,11 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           GoRoute(
             name: Routes.todayName,
             path: Routes.todayPath,
-            builder: (_, __) => const TodayScreen(),
+            pageBuilder: (context, state) => _shellPage(
+              context,
+              state,
+              const TodayScreen(),
+            ),
             routes: <RouteBase>[
               GoRoute(
                 name: Routes.todayDateName,
@@ -70,7 +76,11 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           GoRoute(
             name: Routes.foodsName,
             path: Routes.foodsPath,
-            builder: (_, __) => const SearchScreen(),
+            pageBuilder: (context, state) => _shellPage(
+              context,
+              state,
+              const SearchScreen(),
+            ),
             routes: <RouteBase>[
               GoRoute(
                 name: Routes.foodsSearchName,
@@ -94,7 +104,11 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           GoRoute(
             name: Routes.meName,
             path: Routes.mePath,
-            builder: (_, __) => const ProfileScreen(),
+            pageBuilder: (context, state) => _shellPage(
+              context,
+              state,
+              const ProfileScreen(),
+            ),
           ),
           GoRoute(
             name: Routes.goalsName,
@@ -157,6 +171,44 @@ final appRouterProvider = Provider<GoRouter>((ref) {
     ),
   );
 });
+
+// ---------------------------------------------------------------------------
+// T-016 — High-traffic route transitions.
+// ---------------------------------------------------------------------------
+
+/// Form-factor-aware page builder for the three high-traffic shell tabs
+/// (`/today`, `/foods`, `/me`). On expanded width (desktop web) the page
+/// fades in over 180 ms; on compact/medium the default `MaterialPage`
+/// slide-from-right is used.
+///
+/// Architect ruling (§B4): only these three routes get the custom
+/// transition; the rest keep go_router's defaults. The form factor is
+/// read off `MediaQuery.sizeOf(context)` since `state` does not expose
+/// it directly — `ShellRoute` ensures a `MaterialApp` is mounted above
+/// us at this point, so the lookup is safe.
+Page<void> _shellPage(BuildContext context, GoRouterState state, Widget child) {
+  final width = MediaQuery.sizeOf(context).width;
+  final isExpanded = width >= Breakpoints.mediumMax;
+  if (!isExpanded) {
+    return MaterialPage<void>(key: state.pageKey, child: child);
+  }
+  return CustomTransitionPage<void>(
+    key: state.pageKey,
+    child: child,
+    transitionDuration: motion(context, const Duration(milliseconds: 180)),
+    reverseTransitionDuration:
+        motion(context, const Duration(milliseconds: 180)),
+    transitionsBuilder: (context, animation, secondaryAnimation, child) {
+      return FadeTransition(
+        opacity: CurvedAnimation(
+          parent: animation,
+          curve: Curves.easeOutCubic,
+        ),
+        child: child,
+      );
+    },
+  );
+}
 
 // ---------------------------------------------------------------------------
 // T-021 — Barcode resolver screen.

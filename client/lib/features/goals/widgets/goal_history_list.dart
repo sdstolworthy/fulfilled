@@ -5,6 +5,7 @@ import '../../../domain/enums.dart';
 import '../../../domain/goal.dart';
 import '../../../domain/units/energy.dart';
 import '../../../theme/context_extensions.dart';
+import '../../../widgets/empty_state.dart';
 
 /// History list under the active-goal hero. Per architecture §9 the
 /// filter rule lives at the call site (not the repository):
@@ -39,7 +40,7 @@ class GoalHistoryList extends StatelessWidget {
     ]..sort((a, b) => b.startedOn.compareTo(a.startedOn));
 
     if (history.isEmpty) {
-      return const _EmptyState();
+      return const _EmptyHistoryCard();
     }
 
     final colors = context.colors;
@@ -67,27 +68,28 @@ class GoalHistoryList extends StatelessWidget {
   }
 }
 
-class _EmptyState extends StatelessWidget {
-  const _EmptyState();
+/// Bordered-card wrapper around the lifted [EmptyState] for the "no
+/// prior goals" branch. T-013 — the surrounding card preserves the
+/// surface/line silhouette the populated list draws, so the layout
+/// doesn't shift when the user creates a second goal and history
+/// flips from empty to populated. The lifted `EmptyState` covers the
+/// icon + title + body composition; the card chrome lives here.
+class _EmptyHistoryCard extends StatelessWidget {
+  const _EmptyHistoryCard();
   @override
   Widget build(BuildContext context) {
     final colors = context.colors;
     final tokens = context.tokens;
     return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: tokens.space.x4,
-        vertical: tokens.space.x5,
-      ),
       decoration: BoxDecoration(
         color: colors.surface,
         border: Border.all(color: colors.line),
         borderRadius: BorderRadius.circular(tokens.radius.r3),
       ),
-      child: Center(
-        child: Text(
-          'No prior goals yet.',
-          style: context.text.meta.copyWith(color: colors.ink3),
-        ),
+      child: const EmptyState(
+        icon: Icons.flag_outlined,
+        title: 'No prior goals yet',
+        body: 'Past goals will show up here once you set a new one.',
       ),
     );
   }

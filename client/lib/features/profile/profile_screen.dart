@@ -10,6 +10,9 @@ import '../../providers/food_providers.dart';
 import '../../providers/profile_providers.dart';
 import '../../routing/routes.dart';
 import '../../theme/context_extensions.dart';
+import '../../widgets/empty_state.dart';
+import '../../widgets/primary_button.dart';
+import '../../widgets/skeleton.dart';
 import 'widgets/activity_level_picker.dart';
 import 'widgets/birth_date_picker.dart';
 import 'widgets/current_weight_sheet.dart';
@@ -17,6 +20,11 @@ import 'widgets/height_stepper_sheet.dart';
 import 'widgets/settings_card.dart';
 import 'widgets/settings_row.dart';
 import 'widgets/sex_picker.dart';
+
+/// Local debug flag — flip to `true` to inspect the error/loading
+/// branches against the mock provider, then revert before committing.
+/// T-013 — compile-time const so the dead branch is tree-shaken.
+const bool _kDebugForceError = false;
 
 /// Screen 08 — Profile & settings.
 ///
@@ -45,9 +53,33 @@ class ProfileScreen extends ConsumerWidget {
     final meAsync = ref.watch(meProvider);
     final countAsync = ref.watch(customFoodCountProvider);
 
+    // T-11 — transient profile fetch errors raise a SnackBar in addition
+    // to the inline EmptyState. The listen fires once on transition into
+    // the error state.
+    ref.listen<AsyncValue<User>>(meProvider, (prev, next) {
+      if (next.hasError && (prev == null || !prev.hasError)) {
+        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+          SnackBar(
+            content: Text("Couldn't load profile: ${next.error}"),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    });
+
+    if (_kDebugForceError) {
+      return _ProfileError(
+        message: 'forced',
+        onRetry: () => ref.invalidate(meProvider),
+      );
+    }
+
     return meAsync.when(
       loading: () => const _ProfileSkeleton(),
-      error: (err, _) => _ProfileError(message: err.toString()),
+      error: (err, _) => _ProfileError(
+        message: err.toString(),
+        onRetry: () => ref.invalidate(meProvider),
+      ),
       data: (user) => _ProfileBody(
         user: user,
         customFoodCount: countAsync.maybeWhen(
@@ -399,32 +431,102 @@ class _SignOutRow extends StatelessWidget {
 // Loading + error
 // ---------------------------------------------------------------------------
 
+/// Loading state — T-08: blocks mirror the identity row + body /
+/// preferences / data cards rhythm so when the data resolves the layout
+/// shifts as little as possible. Built from the lifted [Skeleton]
+/// primitive.
 class _ProfileSkeleton extends StatelessWidget {
   const _ProfileSkeleton();
 
   @override
   Widget build(BuildContext context) {
-    // T-08: skeleton heights mirror the final layout. Cheap stand-in —
-    // a full skeleton catalogue lives in `widgets/skeleton.dart` (not
-    // yet built); when it lands, swap this in.
-    return const Center(child: CircularProgressIndicator());
+    final space = context.space;
+    final radius = context.radius;
+    return ListView(
+      padding: EdgeInsets.only(top: space.x2, bottom: space.x6),
+      children: <Widget>[
+        // Page title.
+        Padding(
+          padding: EdgeInsets.fromLTRB(space.x5, space.x2, space.x5, space.x3),
+          child: const Skeleton(height: 28, width: 64),
+        ),
+        // Identity row — avatar + two text lines + Edit affordance.
+        Padding(
+          padding: EdgeInsets.fromLTRB(space.x5, space.x1, space.x5, space.x4),
+          child: Row(
+            children: <Widget>[
+              Skeleton(
+                height: 64,
+                width: 64,
+                borderRadius: BorderRadius.circular(32),
+              ),
+              SizedBox(width: space.x3 + 2),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    const Skeleton(height: 18, width: 160),
+                    SizedBox(height: space.x1 + 2),
+                    const Skeleton(height: 12, width: 200),
+                  ],
+                ),
+              ),
+              SizedBox(width: space.x3),
+              const Skeleton(height: 18, width: 36),
+            ],
+          ),
+        ),
+        // Three card silhouettes (Body, Preferences, Data).
+        for (final cardHeight in const <double>[260, 76, 116]) ...<Widget>[
+          Padding(
+            padding: EdgeInsets.fromLTRB(
+              space.x5,
+              0,
+              space.x5,
+              space.x3,
+            ),
+            child: Skeleton(
+              height: cardHeight,
+              borderRadius: BorderRadius.circular(radius.r3),
+            ),
+          ),
+        ],
+        SizedBox(height: space.x4),
+        // Sign-out row silhouette.
+        Padding(
+          padding: EdgeInsets.symmetric(horizontal: space.x5),
+          child: Skeleton(
+            height: 52,
+            borderRadius: BorderRadius.circular(radius.r3),
+          ),
+        ),
+      ],
+    );
   }
 }
 
+/// Error state — lifted [EmptyState] with a retry CTA that re-invalidates
+/// `meProvider`. T-11 (errors inline, not modal) + T-13 (no spinner; the
+/// empty-state composition is the legal home for the failure surface).
 class _ProfileError extends StatelessWidget {
-  const _ProfileError({required this.message});
+  const _ProfileError({required this.message, required this.onRetry});
 
   final String message;
+  final VoidCallback onRetry;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: EdgeInsets.all(context.space.x6),
-      child: Center(
-        child: Text(
-          'Could not load profile.\n$message',
-          style: context.text.meta.copyWith(color: context.colors.danger),
-          textAlign: TextAlign.center,
+    return Center(
+      child: EmptyState(
+        icon: Icons.cloud_off,
+        title: "Couldn't load profile",
+        body: 'Pull to refresh or tap retry.',
+        action: SizedBox(
+          width: 200,
+          child: PrimaryButton(
+            label: 'Retry',
+            onPressed: onRetry,
+          ),
         ),
       ),
     );

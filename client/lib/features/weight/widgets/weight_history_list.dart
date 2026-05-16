@@ -3,10 +3,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
+import '../../../domain/enums.dart';
 import '../../../domain/units/weight.dart';
 import '../../../domain/weight.dart';
+import '../../../form_factor/form_factor.dart';
 import '../../../providers/weight_providers.dart';
 import '../../../theme/context_extensions.dart';
+import '../../../widgets/empty_state.dart';
+import '../../../widgets/primary_button.dart';
+import '../../../widgets/skeleton.dart';
+import 'log_weight_sheet.dart';
 
 /// "Recent entries" card on screen 06. Renders the last ~10 entries
 /// from `weightHistoryProvider` newest-first with date / weight / delta.
@@ -15,8 +21,10 @@ import '../../../theme/context_extensions.dart';
 /// next-older entry (signed, kg). Negative → accent (losing); positive →
 /// danger color (gaining). Zero shows as `±0.0`.
 ///
-/// Tenants: T-02 tabular figures, T-08 skeleton when loading, T-17 Decimal
-/// math, T-21 weight rendered via `formatWeightKg`.
+/// Tenants: T-02 tabular figures, T-08 skeleton when loading (lifted
+/// `Skeleton` primitive — T-23 shared widgets), T-11 errors render an
+/// `EmptyState` + a SnackBar shim (not modal), T-17 Decimal math, T-21
+/// weight rendered via `formatWeightKg`.
 class WeightHistoryList extends ConsumerWidget {
   const WeightHistoryList({super.key});
 
@@ -24,12 +32,28 @@ class WeightHistoryList extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final historyAsync = ref.watch(weightHistoryProvider);
 
+    // T-11 — SnackBar fires on transition into the error state so the
+    // user notices even if scrolled away from the inline EmptyState.
+    ref.listen<AsyncValue<List<WeightEntry>>>(weightHistoryProvider,
+        (prev, next) {
+      if (next.hasError && (prev == null || !prev.hasError)) {
+        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+          SnackBar(
+            content: Text("Couldn't load weight history: ${next.error}"),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    });
+
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: context.space.x5),
       child: historyAsync.when(
         data: (entries) => _List(entries: entries),
         loading: () => const _Skeleton(),
-        error: (_, __) => const _Error(),
+        error: (_, __) => _Error(
+          onRetry: () => ref.invalidate(weightHistoryProvider),
+        ),
       ),
     );
   }
@@ -44,14 +68,16 @@ class _List extends StatelessWidget {
   Widget build(BuildContext context) {
     if (entries.isEmpty) {
       return _Card(
-        child: Padding(
-          padding: EdgeInsets.symmetric(
-            horizontal: context.space.x4,
-            vertical: context.space.x4,
-          ),
-          child: Text(
-            'No entries yet. Tap "Log weight" to record your first.',
-            style: context.text.meta,
+        child: EmptyState(
+          icon: Icons.monitor_weight_outlined,
+          title: 'No weight logged yet',
+          body: 'Track your first entry to start the trend line.',
+          action: SizedBox(
+            width: 220,
+            child: PrimaryButton(
+              label: 'Log your first weight',
+              onPressed: () => _openLogWeightSheet(context),
+            ),
           ),
         ),
       );
@@ -69,6 +95,38 @@ class _List extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Open the log-weight sheet (compact: bottom sheet, medium/expanded:
+/// centered dialog). Mirrors `WeightScreen._openLogSheet` so the list's
+/// empty-state CTA can reach the same flow without threading a callback
+/// from the screen — the empty state needs a CTA per T-013, and the
+/// list is the surface that owns "no entries".
+Future<void> _openLogWeightSheet(BuildContext context) async {
+  // Default to the 1M range; the empty case has no series so the chosen
+  // range is cosmetic for the first save.
+  const range = WeightRange.oneMonth;
+  if (FormFactor.of(context).isCompact) {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => const LogWeightSheet(currentRange: range),
+    );
+    return;
+  }
+  await showDialog<void>(
+    context: context,
+    builder: (dialogCtx) => Dialog(
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(dialogCtx.radius.r4),
+      ),
+      child: const ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: 480),
+        child: LogWeightSheet(currentRange: range, asDialog: true),
+      ),
+    ),
+  );
 }
 
 class _Card extends StatelessWidget {
@@ -208,17 +266,18 @@ class _DeltaText extends StatelessWidget {
   }
 }
 
+/// Loading skeleton — three rows that match the eventual entry-row
+/// rhythm (date + weight + delta). Built from the lifted [Skeleton]
+/// primitive (T-23) so the block fill, radius, and color all flow from
+/// the single source of truth in `lib/widgets/skeleton.dart`.
 class _Skeleton extends StatelessWidget {
   const _Skeleton();
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: context.colors.surface,
-        borderRadius: BorderRadius.circular(context.radius.r3),
-        border: Border.all(color: context.colors.line),
-      ),
+    final space = context.space;
+    final radius = context.radius;
+    return _Card(
       child: Column(
         children: <Widget>[
           for (var i = 0; i < 3; i++)
@@ -231,8 +290,8 @@ class _Skeleton extends StatelessWidget {
                       ),
               ),
               padding: EdgeInsets.symmetric(
-                horizontal: context.space.x4,
-                vertical: context.space.x3,
+                horizontal: space.x4,
+                vertical: space.x3,
               ),
               child: Row(
                 children: <Widget>[
@@ -240,18 +299,34 @@ class _Skeleton extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: <Widget>[
-                        _bar(context, 56, 14),
-                        SizedBox(height: context.space.x1),
-                        _bar(context, 92, 11),
+                        Skeleton(
+                          height: 14,
+                          width: 56,
+                          borderRadius: BorderRadius.circular(radius.r1),
+                        ),
+                        SizedBox(height: space.x1),
+                        Skeleton(
+                          height: 11,
+                          width: 92,
+                          borderRadius: BorderRadius.circular(radius.r1),
+                        ),
                       ],
                     ),
                   ),
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: <Widget>[
-                      _bar(context, 56, 15),
-                      SizedBox(height: context.space.x1),
-                      _bar(context, 28, 11),
+                      Skeleton(
+                        height: 15,
+                        width: 56,
+                        borderRadius: BorderRadius.circular(radius.r1),
+                      ),
+                      SizedBox(height: space.x1),
+                      Skeleton(
+                        height: 11,
+                        width: 28,
+                        borderRadius: BorderRadius.circular(radius.r1),
+                      ),
                     ],
                   ),
                 ],
@@ -261,34 +336,31 @@ class _Skeleton extends StatelessWidget {
       ),
     );
   }
-
-  Widget _bar(BuildContext context, double w, double h) {
-    return Container(
-      width: w,
-      height: h,
-      decoration: BoxDecoration(
-        color: context.colors.line2,
-        borderRadius: BorderRadius.circular(context.radius.r1),
-      ),
-    );
-  }
 }
 
+/// Error state — wraps the lifted [EmptyState] in the same bordered
+/// card the rest of the list lives in, so the card silhouette stays
+/// stable across data / loading / error branches. The retry CTA
+/// re-invalidates `weightHistoryProvider`.
 class _Error extends StatelessWidget {
-  const _Error();
+  const _Error({required this.onRetry});
+
+  final VoidCallback onRetry;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: context.colors.dangerSoft,
-        borderRadius: BorderRadius.circular(context.radius.r3),
-        border: Border.all(color: context.colors.danger),
-      ),
-      padding: EdgeInsets.all(context.space.x4),
-      child: Text(
-        'Couldn\'t load weight history.',
-        style: context.text.meta.copyWith(color: context.colors.danger),
+    return _Card(
+      child: EmptyState(
+        icon: Icons.cloud_off,
+        title: "Couldn't load weight history",
+        body: 'Pull to refresh or tap retry.',
+        action: SizedBox(
+          width: 200,
+          child: PrimaryButton(
+            label: 'Retry',
+            onPressed: onRetry,
+          ),
+        ),
       ),
     );
   }

@@ -2,7 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import 'package:fulfilled/widgets/empty_state.dart';
+import 'package:fulfilled/widgets/primary_button.dart';
 import 'package:fulfilled/widgets/serving_list.dart';
+import 'package:fulfilled/widgets/skeleton.dart';
 
 import '../../domain/food.dart';
 import '../../features/log_entry/log_entry_sheet.dart';
@@ -13,6 +16,12 @@ import '../../theme/context_extensions.dart';
 import 'widgets/food_detail_hero.dart';
 import 'widgets/food_summary_card.dart';
 import 'widgets/nutrition_table.dart';
+
+/// Local debug flag — flip to `true` to inspect the loading or error
+/// branches against the mock provider, then revert before committing.
+/// Compile-time const so the dead branch is tree-shaken in release.
+/// T-013 — pattern shared across the screens this ticket touches.
+const bool _kDebugForceError = false;
 
 /// Signature for the log-entry sheet entry point. Matches
 /// `package:fulfilled/features/log_entry/log_entry_sheet.dart`'s
@@ -58,9 +67,38 @@ class FoodDetailScreen extends ConsumerWidget {
     final async = ref.watch(foodDetailProvider(foodId));
     final open = showLogEntrySheetOverride ?? showLogEntrySheet;
 
+    // T-11 — transient transport errors get a SnackBar in addition to the
+    // inline empty-state, so the user sees the failure even if they were
+    // looking away from the body. The error-state EmptyState is the
+    // persistent half; the snackbar is the attention half.
+    ref.listen<AsyncValue<Food>>(foodDetailProvider(foodId), (prev, next) {
+      if (next.hasError && (prev == null || !prev.hasError)) {
+        if (next.error is FoodNotFoundError) return;
+        final messenger = ScaffoldMessenger.maybeOf(context);
+        messenger?.showSnackBar(
+          SnackBar(
+            content: Text("Couldn't load food: ${next.error}"),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    });
+
+    if (_kDebugForceError) {
+      return _DetailError(
+        error: Exception('forced'),
+        foodId: foodId,
+        onRetry: () => ref.invalidate(foodDetailProvider(foodId)),
+      );
+    }
+
     return async.when(
       loading: () => const _DetailLoading(),
-      error: (e, _) => _DetailError(error: e, foodId: foodId),
+      error: (e, _) => _DetailError(
+        error: e,
+        foodId: foodId,
+        onRetry: () => ref.invalidate(foodDetailProvider(foodId)),
+      ),
       data: (food) => _DetailLoaded(food: food, openLogEntry: open),
     );
   }
@@ -297,76 +335,106 @@ class _BottomCta extends StatelessWidget {
   }
 }
 
+/// Loading state — T-08: shape mirrors the eventual hero + summary +
+/// servings + nutrition rhythm so the layout doesn't jump when data
+/// lands. The skeleton blocks pick up the `line2` tint via the lifted
+/// [Skeleton] primitive; no centered spinner.
 class _DetailLoading extends StatelessWidget {
   const _DetailLoading();
 
   @override
   Widget build(BuildContext context) {
+    final space = context.space;
+    final radius = context.radius;
     return Scaffold(
       backgroundColor: context.colors.bg,
       appBar: _DetailAppBar(showAddToLog: false, onAddToLog: () {}),
-      body: Center(
-        child: CircularProgressIndicator(color: context.colors.accent),
+      body: SafeArea(
+        top: false,
+        child: SingleChildScrollView(
+          padding: EdgeInsets.fromLTRB(space.x5, space.x4, space.x5, space.x6),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              // Hero — eyebrow + title lines.
+              const Skeleton(height: 10, width: 120),
+              SizedBox(height: space.x2),
+              const Skeleton(height: 22),
+              SizedBox(height: space.x1),
+              const Skeleton(height: 22, width: 220),
+              SizedBox(height: space.x5),
+              // Summary card silhouette.
+              Skeleton(
+                height: 120,
+                borderRadius: BorderRadius.circular(radius.r3),
+              ),
+              SizedBox(height: space.x5),
+              // Servings eyebrow + three rows.
+              const Skeleton(height: 10, width: 80),
+              SizedBox(height: space.x3),
+              for (var i = 0; i < 3; i++) ...<Widget>[
+                const SkeletonRow(),
+                if (i < 2) SizedBox(height: space.x1),
+              ],
+              SizedBox(height: space.x5),
+              // Nutrition eyebrow + table block.
+              const Skeleton(height: 10, width: 96),
+              SizedBox(height: space.x3),
+              Skeleton(
+                height: 220,
+                borderRadius: BorderRadius.circular(radius.r3),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
 }
 
+/// Error state — renders the lifted [EmptyState] with a retry CTA. For
+/// the not-found path the retry is replaced with a "Go back" affordance
+/// (re-invalidating won't unstuck a 404).
 class _DetailError extends StatelessWidget {
-  const _DetailError({required this.error, required this.foodId});
+  const _DetailError({
+    required this.error,
+    required this.foodId,
+    required this.onRetry,
+  });
 
   final Object error;
   final String foodId;
+  final VoidCallback onRetry;
 
   @override
   Widget build(BuildContext context) {
     final isNotFound = error is FoodNotFoundError;
-    final title = isNotFound ? 'Food not found' : 'Couldn’t load this food';
-    final detail = isNotFound
-        ? 'We don’t have a record for $foodId.'
-        : 'Check your connection and try again.';
+    final title = isNotFound ? 'Food not found' : "Couldn't load food details";
+    final body = isNotFound
+        ? "We don't have a record for $foodId."
+        : 'Pull to refresh or tap retry.';
 
     return Scaffold(
       backgroundColor: context.colors.bg,
       appBar: _DetailAppBar(showAddToLog: false, onAddToLog: () {}),
       body: SafeArea(
         top: false,
-        child: Padding(
-          padding: EdgeInsets.symmetric(horizontal: context.space.x6),
-          child: Center(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: <Widget>[
-                Icon(
-                  Icons.no_food_outlined,
-                  size: 36,
-                  color: context.colors.ink3,
-                ),
-                SizedBox(height: context.space.x3),
-                Text(
-                  title,
-                  textAlign: TextAlign.center,
-                  style: context.text.title,
-                ),
-                SizedBox(height: context.space.x1),
-                Text(
-                  detail,
-                  textAlign: TextAlign.center,
-                  style: context.text.meta,
-                ),
-                SizedBox(height: context.space.x4),
-                Center(
-                  child: TextButton(
-                    onPressed: () => _DetailAppBar._popOrFallback(context),
-                    style: TextButton.styleFrom(
-                      foregroundColor: context.colors.accent,
-                      textStyle: context.text.bodyStrong,
+        child: Center(
+          child: EmptyState(
+            icon: isNotFound ? Icons.no_food_outlined : Icons.cloud_off,
+            title: title,
+            body: body,
+            action: SizedBox(
+              width: 200,
+              child: isNotFound
+                  ? PrimaryButton(
+                      label: 'Go back',
+                      onPressed: () => _DetailAppBar._popOrFallback(context),
+                    )
+                  : PrimaryButton(
+                      label: 'Retry',
+                      onPressed: onRetry,
                     ),
-                    child: const Text('Go back'),
-                  ),
-                ),
-              ],
             ),
           ),
         ),

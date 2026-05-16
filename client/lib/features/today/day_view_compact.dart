@@ -12,6 +12,7 @@ import '../../providers/log_providers.dart';
 import '../../routing/routes.dart';
 import '../../theme/context_extensions.dart';
 import 'today_internals.dart';
+import 'widgets/log_food_fab.dart';
 
 /// Compact (mobile / narrow-web) variant of screen 01. Renders inside the
 /// shell's `AppScaffold`, threading the FAB through the scaffold slot
@@ -43,7 +44,7 @@ class DayViewCompact extends ConsumerWidget {
     // `NavigationBar`s on top of each other.
     return Scaffold(
       backgroundColor: Colors.transparent,
-      floatingActionButton: _LogFoodFab(
+      floatingActionButton: LogFoodFab(
         onPressed: () => context.push(Routes.foodsSearchPath),
       ),
       body: CustomScrollView(
@@ -203,25 +204,6 @@ class _IconBtn extends StatelessWidget {
           height: 36,
           alignment: Alignment.center,
           child: Icon(icon, size: 20, color: context.colors.ink2),
-        ),
-      ),
-    );
-  }
-}
-
-class _LogFoodFab extends StatelessWidget {
-  const _LogFoodFab({required this.onPressed});
-  final VoidCallback onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    return FloatingActionButton.extended(
-      onPressed: onPressed,
-      icon: const Icon(Icons.add, size: 18),
-      label: Text(
-        'Log food',
-        style: context.text.bodyStrong.copyWith(
-          color: context.colors.surface,
         ),
       ),
     );

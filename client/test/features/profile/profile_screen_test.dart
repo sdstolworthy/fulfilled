@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -8,6 +10,8 @@ import 'package:fulfilled/features/profile/profile_screen.dart';
 import 'package:fulfilled/providers/food_providers.dart';
 import 'package:fulfilled/providers/profile_providers.dart';
 import 'package:fulfilled/theme/theme_data.dart';
+import 'package:fulfilled/widgets/empty_state.dart';
+import 'package:fulfilled/widgets/skeleton.dart';
 
 User _mockUser({
   String? displayName = 'Spencer Stolworthy',
@@ -151,6 +155,68 @@ void main() {
     // in v1; unit prefs surface in v2).
     expect(find.text('Units'), findsOneWidget);
     expect(find.byKey(const Key('row-units')), findsOneWidget);
+  });
+
+  // T-013 — `_ProfileSkeleton` used to render a `CircularProgressIndicator`;
+  // it now lives on the lifted `Skeleton` primitive. Pin both halves so a
+  // regression that pulls the spinner back in fails loudly.
+  testWidgets('loading state renders Skeleton, never CircularProgressIndicator',
+      (tester) async {
+    tester.view.physicalSize = const Size(390, 1500);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final completer = Completer<User>();
+    addTearDown(() {
+      if (!completer.isCompleted) completer.complete(_mockUser());
+    });
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: <Override>[
+          meProvider.overrideWith((ref) => completer.future),
+          customFoodCountProvider.overrideWith((ref) async => 0),
+        ],
+        child: MaterialApp(
+          theme: buildLightTheme(),
+          home: const Scaffold(body: ProfileScreen()),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.byType(Skeleton), findsWidgets);
+  });
+
+  testWidgets(
+      'error branch renders the lifted EmptyState with a retry CTA',
+      (tester) async {
+    tester.view.physicalSize = const Size(390, 1500);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: <Override>[
+          meProvider.overrideWith((_) async => throw Exception('boom')),
+          customFoodCountProvider.overrideWith((_) async => 0),
+        ],
+        child: MaterialApp(
+          theme: buildLightTheme(),
+          home: const Scaffold(body: ProfileScreen()),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.byType(EmptyState), findsOneWidget);
+    expect(find.text("Couldn't load profile"), findsOneWidget);
+    expect(find.text('Retry'), findsOneWidget);
   });
 
   testWidgets('Sign out row opens AlertDialog confirm', (tester) async {
