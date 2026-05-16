@@ -1,9 +1,9 @@
 import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
 
-import '../../../domain/day_summary.dart';
-import '../../../domain/units/energy.dart';
-import '../../../theme/context_extensions.dart';
+import '../domain/day_summary.dart';
+import '../domain/units/energy.dart';
+import '../theme/context_extensions.dart';
 import 'calorie_ring.dart';
 import 'macro_bar.dart';
 

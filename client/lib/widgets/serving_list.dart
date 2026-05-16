@@ -1,16 +1,17 @@
 import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
 
-import '../../../domain/nutrition.dart';
-import '../../../domain/serving.dart';
-import '../../../domain/units/units.dart';
-import '../../../theme/context_extensions.dart';
+import '../domain/nutrition.dart';
+import '../domain/serving.dart';
+import '../domain/units/units.dart';
+import '../theme/context_extensions.dart';
 
-/// Read-only list of `Serving` rows for screen 03. Custom-food (screen 05)
-/// uses a different, editable variant — when that lands, the shared bits
-/// (row chrome, "Default" / "Synthetic" badges) are candidates for a lift
-/// into a `widgets/` common file. Until then this is intentionally
-/// self-contained.
+// v1: the editor variant lives in `features/custom_food/widgets/
+// servings_section.dart`; v1.1 collapses the two via a `ServingRow` that
+// flips between display + edit. See dev_tickets.md T-002 notes.
+
+/// Read-only list of `Serving` rows. Used by the food-detail screen
+/// (screen 03) and the log-entry sheet's serving picker.
 ///
 /// **T-10** — the synthetic 100 g serving is always rendered and tagged
 /// with a `Synthetic` badge. The list never hides it, even when an OFF
@@ -22,11 +23,28 @@ class ServingList extends StatelessWidget {
   const ServingList({
     required this.servings,
     required this.nutritionPer100g,
+    this.selectedId,
+    this.onSelect,
+    this.selectable = false,
     super.key,
   });
 
   final List<Serving> servings;
   final NutritionPer100g nutritionPer100g;
+
+  /// Id of the currently selected serving, if any. When non-null the
+  /// matching row renders with the selected visual (accent border + soft
+  /// fill).
+  final String? selectedId;
+
+  /// Tap callback. When provided rows are tappable and emit the tapped
+  /// serving's id. When null the list is purely display.
+  final ValueChanged<String>? onSelect;
+
+  /// Reserved prop slot for the v1.1 unification with the custom-food
+  /// editor. No behavior yet — the editor lift collapses the two widgets
+  /// behind a single prop. See dev_tickets.md T-002 notes.
+  final bool selectable;
 
   @override
   Widget build(BuildContext context) {
@@ -46,6 +64,9 @@ class ServingList extends StatelessWidget {
               serving: sorted[i],
               nutritionPer100g: nutritionPer100g,
               showDivider: i != sorted.length - 1,
+              isSelected: selectedId != null && sorted[i].id == selectedId,
+              onTap:
+                  onSelect == null ? null : () => onSelect!(sorted[i].id),
             ),
         ],
       ),
@@ -58,26 +79,32 @@ class _ServingRow extends StatelessWidget {
     required this.serving,
     required this.nutritionPer100g,
     required this.showDivider,
+    required this.isSelected,
+    required this.onTap,
   });
 
   final Serving serving;
   final NutritionPer100g nutritionPer100g;
   final bool showDivider;
+  final bool isSelected;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
+    final colors = context.colors;
     final kcalForServing = _kcalForServing(serving, nutritionPer100g);
     final gramsLabel = '${formatGrams(serving.grams)} g';
 
-    return Container(
+    final row = Container(
       padding: EdgeInsets.symmetric(
         horizontal: context.space.x4,
         vertical: context.space.x3,
       ),
       decoration: BoxDecoration(
+        color: isSelected ? colors.accentSoft : Colors.transparent,
         border: Border(
           bottom: BorderSide(
-            color: showDivider ? context.colors.line2 : Colors.transparent,
+            color: showDivider ? colors.line2 : Colors.transparent,
           ),
         ),
       ),
@@ -109,6 +136,14 @@ class _ServingRow extends StatelessWidget {
           ),
         ],
       ),
+    );
+
+    if (onTap == null) return row;
+    return Semantics(
+      button: true,
+      selected: isSelected,
+      label: serving.name,
+      child: InkWell(onTap: onTap, child: row),
     );
   }
 

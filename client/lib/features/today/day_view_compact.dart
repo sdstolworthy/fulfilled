@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import 'package:fulfilled/widgets/meal_section.dart';
+import 'package:fulfilled/widgets/ring_summary_card.dart';
+
 import '../../domain/day_summary.dart';
 import '../../domain/log_entry.dart';
 import '../../domain/meal.dart';
@@ -9,8 +12,6 @@ import '../../providers/log_providers.dart';
 import '../../routing/routes.dart';
 import '../../theme/context_extensions.dart';
 import 'today_internals.dart';
-import 'widgets/meal_section.dart';
-import 'widgets/ring_summary_card.dart';
 
 /// Compact (mobile / narrow-web) variant of screen 01. Renders inside the
 /// shell's `AppScaffold`, threading the FAB through the scaffold slot

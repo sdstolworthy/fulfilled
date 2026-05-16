@@ -2,22 +2,23 @@ import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../../../theme/context_extensions.dart';
+import '../theme/context_extensions.dart';
 
-/// Compact numeric input used for every numeric field in the
-/// custom-food form (T-07 "every numeric input has a stepper").
+/// Canonical numeric input with `-` / `+` buttons (T-07 "every numeric
+/// input has a stepper, never a bare TextField for a number").
 ///
-/// Why this isn't `lib/widgets/quantity_stepper.dart` yet — log_entry
-/// (screen 04) also needs a stepper, and PM/architect want one canonical
-/// widget. This file is a local variant: the API shape is intentionally
-/// generic so a later agent can lift it to `lib/widgets/` and have both
-/// callers depend on the same component. Flagged for lift in the
-/// reply-summary.
+/// **Callback-shaped** — the widget is intentionally NOT Riverpod-coupled.
+/// Drive it from any source of truth via [value] + [onChanged]. The
+/// `log_entry` sheet wraps it in a `Consumer` that bridges its
+/// sheet-scoped `quantityProvider`; other call sites (custom-food editor,
+/// weight log sheet) pass their own local state straight through.
 ///
-/// Layout: `[label] [-] [field with optional unit suffix] [+]` — minus
-/// and plus are `IconButton`-style tap targets, the field accepts decimal
-/// typing. Disabling decimals (`allowDecimal: false`) is for integer-only
-/// inputs (currently none in custom-food).
+/// Layout: `[-] [field with optional unit suffix] [+]`. Stepper buttons
+/// can be hidden via [showStepperButtons] for dense 3-column layouts
+/// (the custom-food P/C/F row uses this).
+///
+/// Number values are `Decimal` end-to-end (T-17). Format and parse via
+/// `package:decimal`; never `double.parse`.
 class QuantityStepper extends StatefulWidget {
   const QuantityStepper({
     super.key,
@@ -42,27 +43,36 @@ class QuantityStepper extends StatefulWidget {
   /// emitted when the field is cleared.
   final ValueChanged<Decimal?> onChanged;
 
-  /// Increment / decrement step. Defaults to 1.
+  /// Increment / decrement step. Defaults to `Decimal.one`.
   final Decimal? step;
 
+  /// Optional inclusive floor. The plus/minus buttons clamp at this
+  /// value; typed values below it are rejected.
   final Decimal? min;
+
+  /// Optional inclusive ceiling. Mirrors [min].
   final Decimal? max;
 
+  /// Hint shown when [value] is `null`.
   final String? placeholder;
+
+  /// Optional trailing unit (e.g. `"g"`, `"kg"`, `"kcal"`, `"mg"`).
   final String? unitSuffix;
 
   /// When true, renders the field with the error border. The inline help
-  /// row (T-11) is rendered by the surrounding [LabeledField], not here,
+  /// row (T-11) is rendered by the surrounding `LabeledField`, not here,
   /// so the stepper stays composable.
   final bool hasError;
 
+  /// Optional Semantics label for the wrapped text field.
   final String? semanticsLabel;
 
+  /// When false, only digits are accepted (no decimal point).
   final bool allowDecimal;
 
   /// Set to false to render just the input with unit suffix — useful for
-  /// dense layouts (the 3-column macro rows in the mock don't show
-  /// per-field buttons because there's no room).
+  /// dense layouts (the 3-column macro rows in custom-food's nutrition
+  /// section don't show per-field buttons because there's no room).
   final bool showStepperButtons;
 
   @override
@@ -85,8 +95,7 @@ class _QuantityStepperState extends State<QuantityStepper> {
     super.didUpdateWidget(old);
     // Sync controller when the model changes from outside (e.g. button
     // tap routed through the parent rebuilds with a new value). Skip if
-    // the user is mid-edit on a value that already parses back to the
-    // same Decimal — that prevents cursor-position thrash.
+    // the user is mid-edit — that prevents cursor-position thrash.
     if (!_focus.hasFocus) {
       final newText = _format(widget.value);
       if (_ctrl.text != newText) {
@@ -104,9 +113,7 @@ class _QuantityStepperState extends State<QuantityStepper> {
 
   String _format(Decimal? v) {
     if (v == null) return '';
-    // Trim trailing zeros after the decimal — "14" not "14.00". The
-    // user typed value wins; this only fires when value changes from
-    // outside.
+    // Trim trailing zeros after the decimal — "14" not "14.00".
     final s = v.toString();
     if (!s.contains('.')) return s;
     return s.replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '');
@@ -128,14 +135,16 @@ class _QuantityStepperState extends State<QuantityStepper> {
       widget.onChanged(null);
       return;
     }
+    // Allow a trailing dot mid-typing without rejecting it.
+    if (trimmed == '.') return;
     try {
       final parsed = Decimal.parse(trimmed);
       if (widget.min != null && parsed < widget.min!) return;
       if (widget.max != null && parsed > widget.max!) return;
       widget.onChanged(parsed);
     } on FormatException {
-      // Reject the keystroke silently — the input formatter blocks most
-      // bad input but a stray '.' can land us here.
+      // The input formatter blocks most bad input; a stray '.' can still
+      // land here and is harmless to drop.
     }
   }
 
@@ -155,6 +164,9 @@ class _QuantityStepperState extends State<QuantityStepper> {
     final field = Container(
       height: 46,
       decoration: BoxDecoration(
+        // TODO(T-014/B2): replace this hex with `colors.dangerSoft` when
+        // the token sweep lands. Kept as-is here to make the lift a pure
+        // refactor (no visual delta vs the pre-lift custom_food widget).
         color: hasError ? const Color(0xFFFFF8F3) : colors.surface,
         borderRadius: BorderRadius.circular(radius.r2),
         border: Border.all(
@@ -191,7 +203,8 @@ class _QuantityStepperState extends State<QuantityStepper> {
                   focusedBorder: InputBorder.none,
                   contentPadding: EdgeInsets.zero,
                   hintText: widget.placeholder ?? '—',
-                  hintStyle: context.text.bodyStrong.copyWith(color: colors.ink3),
+                  hintStyle:
+                      context.text.bodyStrong.copyWith(color: colors.ink3),
                 ),
               ),
             ),

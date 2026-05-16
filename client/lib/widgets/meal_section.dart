@@ -1,11 +1,14 @@
+// Empty-meal exception: the meal header renders at 0 kcal with
+// colors.emptyDot — it does NOT delegate to EmptyState. See
+// flutter_ui_architecture.md §9 and dev_tickets.md T-013.
 import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
 
-import '../../../domain/day_summary.dart';
-import '../../../domain/log_entry.dart';
-import '../../../domain/meal.dart';
-import '../../../domain/units/energy.dart';
-import '../../../theme/context_extensions.dart';
+import '../domain/day_summary.dart';
+import '../domain/log_entry.dart';
+import '../domain/meal.dart';
+import '../domain/units/energy.dart';
+import '../theme/context_extensions.dart';
 
 /// One meal section card: header (dot + name + kcal total) → list of food
 /// rows → "Add food" footer.

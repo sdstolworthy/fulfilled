@@ -1,8 +1,8 @@
 import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
 
-import '../../../domain/units/macros.dart';
-import '../../../theme/context_extensions.dart';
+import '../domain/units/macros.dart';
+import '../theme/context_extensions.dart';
 
 /// Which macro this bar belongs to. The data-only color rule (T-03) lives
 /// here — the widget never accepts an arbitrary color, only one of these

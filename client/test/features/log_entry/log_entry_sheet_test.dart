@@ -10,7 +10,6 @@ import 'package:fulfilled/domain/nutrition.dart';
 import 'package:fulfilled/domain/serving.dart';
 import 'package:fulfilled/features/log_entry/log_entry_sheet.dart';
 import 'package:fulfilled/features/log_entry/widgets/log_preview_block.dart';
-import 'package:fulfilled/features/log_entry/widgets/quantity_stepper.dart';
 import 'package:fulfilled/theme/theme_data.dart';
 
 /// A deterministic test food: 100 kcal / 10 g P / 20 g C / 0 g F per 100 g,
@@ -95,7 +94,10 @@ void main() {
     ));
     await tester.pump();
 
-    final field = find.byKey(const Key('log_entry_quantity_field'));
+    final field = find.descendant(
+      of: find.byKey(const Key('log_entry_quantity_field_host')),
+      matching: find.byType(TextField),
+    );
     expect(field, findsOneWidget);
 
     await tester.tap(field);
@@ -128,7 +130,10 @@ void main() {
     expect(find.text('200'), findsWidgets);
     // Stepper field text mirrors the chip value.
     final fieldWidget = tester.widget<TextField>(
-      find.byKey(const Key('log_entry_quantity_field')),
+      find.descendant(
+      of: find.byKey(const Key('log_entry_quantity_field_host')),
+      matching: find.byType(TextField),
+    ),
     );
     expect(fieldWidget.controller!.text, '2');
   });
@@ -199,7 +204,7 @@ void main() {
     await tester.pump();
 
     // Drive via the stepper plus button: 1 → 1.5 (step is 0.5).
-    final plus = find.bySemanticsLabel('Increment quantity');
+    final plus = find.bySemanticsLabel('Increment');
     expect(plus, findsOneWidget);
     await tester.tap(plus);
     await tester.pump();

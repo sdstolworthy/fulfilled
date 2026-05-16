@@ -2,10 +2,11 @@ import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:fulfilled/widgets/quantity_stepper.dart';
+
 import '../../../providers/draft_providers.dart';
 import '../../../theme/context_extensions.dart';
 import 'labeled_field.dart';
-import 'quantity_stepper.dart';
 
 /// "Nutrition per 100 g" section. Calories (full-width with stepper
 /// buttons) + P/C/F row + Fiber/Sugar/Sodium row.

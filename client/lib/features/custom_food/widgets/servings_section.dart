@@ -2,14 +2,20 @@ import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:fulfilled/widgets/quantity_stepper.dart';
+
 import '../../../domain/drafts.dart';
 import '../../../providers/draft_providers.dart';
 import '../../../theme/context_extensions.dart';
 import 'labeled_field.dart';
-import 'quantity_stepper.dart';
 
-/// Editor variant of `ServingList`. The read-only `ServingList` belongs
-/// to `features/food_detail/`; this widget is the write surface.
+// v1: the editor variant lives here in `custom_food/`; v1.1 collapses
+// the two via a `ServingRow` that flips between display + edit. See
+// dev_tickets.md T-002 notes.
+
+/// Editor variant of `ServingList`. The read-only `ServingList` is
+/// lifted to `lib/widgets/serving_list.dart`; this widget is the write
+/// surface and keeps its own row composition for v1.
 ///
 /// Rules per arch §9 and PM:
 /// - Do NOT render the 100 g system serving — it is auto-seeded

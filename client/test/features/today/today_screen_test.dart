@@ -11,12 +11,12 @@ import 'package:fulfilled/domain/nutrition.dart';
 import 'package:fulfilled/domain/serving.dart';
 import 'package:fulfilled/domain/weight.dart';
 import 'package:fulfilled/features/today/today_screen.dart';
-import 'package:fulfilled/features/today/widgets/meal_section.dart';
-import 'package:fulfilled/features/today/widgets/ring_summary_card.dart';
 import 'package:fulfilled/providers/food_providers.dart';
 import 'package:fulfilled/providers/log_providers.dart';
 import 'package:fulfilled/providers/weight_providers.dart';
 import 'package:fulfilled/theme/theme_data.dart';
+import 'package:fulfilled/widgets/meal_section.dart';
+import 'package:fulfilled/widgets/ring_summary_card.dart';
 import 'package:go_router/go_router.dart';
 
 /// Screen 01 widget tests.

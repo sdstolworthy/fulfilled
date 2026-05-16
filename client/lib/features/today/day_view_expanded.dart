@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import 'package:fulfilled/widgets/meal_section.dart';
+import 'package:fulfilled/widgets/ring_summary_card.dart';
+
 import '../../domain/day_summary.dart';
 import '../../domain/enums.dart';
 import '../../domain/food.dart';
@@ -15,10 +18,8 @@ import '../../routing/routes.dart';
 import '../../theme/context_extensions.dart';
 import '../log_entry/log_entry_sheet.dart';
 import 'today_internals.dart';
-import 'widgets/meal_section.dart';
 import 'widgets/mini_weight_sparkline.dart';
 import 'widgets/quick_add_chips.dart';
-import 'widgets/ring_summary_card.dart';
 
 /// Expanded (desktop / iPad-landscape) variant of screen 01.
 ///

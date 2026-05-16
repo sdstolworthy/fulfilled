@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import 'package:fulfilled/widgets/serving_list.dart';
+
 import '../../domain/food.dart';
 import '../../features/log_entry/log_entry_sheet.dart';
 import '../../form_factor/form_factor.dart';
@@ -11,7 +13,6 @@ import '../../theme/context_extensions.dart';
 import 'widgets/food_detail_hero.dart';
 import 'widgets/food_summary_card.dart';
 import 'widgets/nutrition_table.dart';
-import 'widgets/serving_list.dart';
 
 /// Signature for the log-entry sheet entry point. Matches
 /// `package:fulfilled/features/log_entry/log_entry_sheet.dart`'s

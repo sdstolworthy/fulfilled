@@ -1,13 +1,20 @@
 import 'package:flutter/material.dart';
 
-import '../../../theme/context_extensions.dart';
+import '../theme/context_extensions.dart';
 
-/// Radio-style large list option for the onboarding step-2 activity-level
-/// picker (architecture §3 — `ActivityOption`).
+/// Radio-style large list option used by the onboarding step-2 activity
+/// picker and the profile activity-level editor (architecture §3 —
+/// `ActivityOption`).
 ///
 /// Mock contract: 12 px radius card, surface bg unselected / accentSoft
 /// bg selected, 18 px circular indicator with a 9 px accent dot when
 /// selected. Title (bodyStrong) + subtitle (meta) inline.
+///
+/// **Canonical rendering** for both screens: the architect ruled the
+/// onboarding shape (custom radio dot, ink-coloured title) is the design
+/// of record. The profile picker's old `_ActivityRow` (filled radio icon
+/// with accent-tinted title) was a drift; both now go through this
+/// widget.
 class ActivityOption extends StatelessWidget {
   const ActivityOption({
     required this.title,
@@ -20,7 +27,7 @@ class ActivityOption extends StatelessWidget {
   final String title;
   final String subtitle;
   final bool selected;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {

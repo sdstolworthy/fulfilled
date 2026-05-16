@@ -2,6 +2,8 @@ import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:fulfilled/widgets/quantity_stepper.dart';
+
 import '../../data/outbox/log_outbox_notifier.dart';
 import '../../domain/food.dart';
 import '../../domain/log_entry.dart';
@@ -15,7 +17,7 @@ import '../../providers/repository_providers.dart';
 import '../../theme/context_extensions.dart';
 import 'widgets/log_preview_block.dart';
 import 'widgets/meal_chip_picker.dart';
-import 'widgets/quantity_stepper.dart';
+import 'widgets/quick_multiplier_chips.dart';
 
 /// Per-sheet quantity. Scoped via `ProviderScope.overrides` so each
 /// sheet instance owns its own `Decimal` — see [LogEntrySheetBody] for
@@ -350,7 +352,25 @@ class _LogEntrySheetBodyState extends ConsumerState<LogEntrySheetBody> {
                   SizedBox(height: space.x4 + 2),
                   _SectionLabel(text: 'QUANTITY'),
                   SizedBox(height: space.x2),
-                  const QuantityStepper(),
+                  // Consumer bridge: the lifted `QuantityStepper` is
+                  // callback-shaped (T-15 — same render regardless of
+                  // who drives state). The sheet keeps its scoped
+                  // `quantityProvider`; this wrapper forwards both ways.
+                  Consumer(
+                    builder: (context, ref, _) {
+                      final value = ref.watch(quantityProvider);
+                      return QuantityStepper(
+                        key: const Key('log_entry_quantity_field_host'),
+                        value: value,
+                        step: Decimal.parse('0.5'),
+                        min: Decimal.parse('0.5'),
+                        onChanged: (next) {
+                          if (next == null) return;
+                          ref.read(quantityProvider.notifier).state = next;
+                        },
+                      );
+                    },
+                  ),
                   SizedBox(height: space.x2),
                   const QuickMultiplierChips(),
                   SizedBox(height: space.x4 + 2),

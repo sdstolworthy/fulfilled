@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:fulfilled/widgets/activity_option.dart';
+
 import '../../../domain/enums.dart';
 import '../../../domain/user.dart';
 import '../../../providers/profile_providers.dart';
@@ -10,10 +12,14 @@ import 'editor_footer.dart';
 import 'editor_host.dart';
 
 /// Activity level editor. Five Mifflin-St Jeor bands, rendered as
-/// big-tap rows with a title + subtitle. **Architecturally identical
-/// to onboarding step 2's `ActivityOption`** — once that widget lands
-/// under `widgets/activity_option.dart`, this picker should switch to
-/// import it. See reply notes.
+/// big-tap rows with a title + subtitle.
+///
+/// **Canonical row chrome** comes from `package:fulfilled/widgets/
+/// activity_option.dart` — the architect ruled the onboarding rendering
+/// (custom radio dot, ink-coloured title) is the design of record; the
+/// old `_ActivityRow` in this file rendered a filled radio icon with an
+/// accent-tinted title, which was design drift. Both screens now share
+/// one widget (T-002).
 Future<void> showActivityLevelPicker(
   BuildContext context, {
   required ActivityLevel? initial,
@@ -82,12 +88,19 @@ class _ActivityLevelPickerState
             child: Column(
               children: <Widget>[
                 for (final level in ActivityLevel.values)
-                  _ActivityRow(
-                    level: level,
-                    selected: _value == level,
-                    onTap: _saving
-                        ? null
-                        : () => setState(() => _value = level),
+                  Padding(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: context.space.x5,
+                      vertical: context.space.x1,
+                    ),
+                    child: ActivityOption(
+                      title: activityLevelLabel(level),
+                      subtitle: _subtitle(level),
+                      selected: _value == level,
+                      onTap: _saving
+                          ? null
+                          : () => setState(() => _value = level),
+                    ),
                   ),
               ],
             ),
@@ -133,76 +146,3 @@ String _subtitle(ActivityLevel level) {
   }
 }
 
-class _ActivityRow extends StatelessWidget {
-  const _ActivityRow({
-    required this.level,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final ActivityLevel level;
-  final bool selected;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = context.colors;
-    return Padding(
-      padding: EdgeInsets.symmetric(
-        horizontal: context.space.x5,
-        vertical: context.space.x1,
-      ),
-      child: Material(
-        color: selected ? colors.accentSoft : colors.surface,
-        borderRadius: BorderRadius.circular(context.radius.r2),
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(context.radius.r2),
-          child: Container(
-            padding: EdgeInsets.symmetric(
-              horizontal: context.space.x4,
-              vertical: context.space.x3,
-            ),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(context.radius.r2),
-              border: Border.all(
-                color: selected ? colors.accent : colors.line,
-                width: selected ? 1.5 : 1,
-              ),
-            ),
-            child: Row(
-              children: <Widget>[
-                Icon(
-                  selected
-                      ? Icons.radio_button_checked
-                      : Icons.radio_button_off,
-                  size: 20,
-                  color: selected ? colors.accent : colors.ink3,
-                ),
-                SizedBox(width: context.space.x3),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      Text(
-                        activityLevelLabel(level),
-                        style: context.text.bodyStrong.copyWith(
-                          color: selected ? colors.accent : colors.ink,
-                        ),
-                      ),
-                      SizedBox(height: context.space.x05),
-                      Text(
-                        _subtitle(level),
-                        style: context.text.meta,
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}

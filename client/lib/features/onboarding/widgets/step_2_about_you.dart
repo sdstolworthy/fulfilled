@@ -3,12 +3,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
+import 'package:fulfilled/widgets/activity_option.dart';
+
 import '../../../domain/drafts.dart';
 import '../../../domain/enums.dart';
 import '../../../domain/units/weight.dart';
 import '../../../providers/draft_providers.dart';
 import '../../../theme/context_extensions.dart';
-import 'activity_option.dart';
 import 'segmented_select.dart';
 
 /// "About you" step (2 of 3). Sex segmented control, birth-date picker,

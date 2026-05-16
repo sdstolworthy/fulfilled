@@ -2,7 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
-import '../../../theme/context_extensions.dart';
+import '../theme/context_extensions.dart';
 
 /// The progress ring that sits at the heart of every "today total" surface
 /// (architecture §3 component inventory + T-09 anchor).

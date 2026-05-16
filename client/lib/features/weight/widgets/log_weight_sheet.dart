@@ -6,6 +6,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
+import 'package:fulfilled/widgets/quantity_stepper.dart';
+
 import '../../../domain/enums.dart';
 import '../../../domain/units/weight.dart';
 import '../../../providers/profile_providers.dart';
@@ -58,7 +60,9 @@ class LogWeightSheet extends ConsumerStatefulWidget {
 class _LogWeightSheetState extends ConsumerState<LogWeightSheet> {
   // Internal weight in 0.1-kg units to avoid float drift. Initial value
   // is pulled from `meProvider` if available, otherwise 70.0 kg.
-  static const _stepTenths = 1; // 0.1 kg per tap.
+  // The lifted `QuantityStepper` owns its own step semantics (`0.1` for
+  // kg passed from the caller); chip taps still mutate this store
+  // directly to snap exactly to the chip's value.
   int _tenths = 700;
   DateTime _date = _today();
   final TextEditingController _noteCtrl = TextEditingController();
@@ -138,15 +142,6 @@ class _LogWeightSheetState extends ConsumerState<LogWeightSheet> {
     }
   }
 
-  void _bump(int deltaTenths) {
-    HapticFeedback.selectionClick();
-    setState(() {
-      final next = _tenths + deltaTenths;
-      // Clamp to a sane range — 20 kg .. 300 kg.
-      _tenths = next.clamp(200, 3000);
-    });
-  }
-
   Future<void> _pickDate() async {
     final now = _today();
     final picked = await showDatePicker(
@@ -164,8 +159,17 @@ class _LogWeightSheetState extends ConsumerState<LogWeightSheet> {
   Widget build(BuildContext context) {
     final body = _Body(
       weightKg: _weightKg,
-      onMinus: () => _bump(-_stepTenths),
-      onPlus: () => _bump(_stepTenths),
+      onWeightChanged: (next) {
+        // The lifted `QuantityStepper` is callback-shaped; mirror its
+        // value into our int-tenths store so the chips + format stay
+        // single-sourced. A `null` clear is rare here (the field has a
+        // floor of 20) but defended for safety.
+        if (next == null) return;
+        HapticFeedback.selectionClick();
+        final rounded = next.round(scale: 1);
+        final tenths = (rounded * Decimal.fromInt(10)).toBigInt().toInt();
+        setState(() => _tenths = tenths.clamp(200, 3000));
+      },
       onQuick: (tenths) {
         HapticFeedback.selectionClick();
         setState(() => _tenths = tenths.clamp(200, 3000));
@@ -229,8 +233,7 @@ class _LogWeightSheetState extends ConsumerState<LogWeightSheet> {
 class _Body extends StatelessWidget {
   const _Body({
     required this.weightKg,
-    required this.onMinus,
-    required this.onPlus,
+    required this.onWeightChanged,
     required this.onQuick,
     required this.date,
     required this.onPickDate,
@@ -242,8 +245,7 @@ class _Body extends StatelessWidget {
   });
 
   final Decimal weightKg;
-  final VoidCallback onMinus;
-  final VoidCallback onPlus;
+  final ValueChanged<Decimal?> onWeightChanged;
   final ValueChanged<int> onQuick; // tenths
   final DateTime date;
   final VoidCallback onPickDate;
@@ -281,10 +283,14 @@ class _Body extends StatelessWidget {
           ],
         ),
         SizedBox(height: context.space.x3),
-        _Stepper(
-          weightKg: weightKg,
-          onMinus: onMinus,
-          onPlus: onPlus,
+        QuantityStepper(
+          value: weightKg,
+          onChanged: onWeightChanged,
+          step: Decimal.parse('0.1'),
+          min: Decimal.parse('20'),
+          max: Decimal.parse('300'),
+          unitSuffix: 'kg',
+          semanticsLabel: 'Weight in kilograms',
         ),
         SizedBox(height: context.space.x3),
         _QuickChips(
@@ -324,86 +330,6 @@ class _Body extends StatelessWidget {
         SizedBox(height: context.space.x4),
         _SaveButton(saving: saving, onPressed: onSave),
       ],
-    );
-  }
-}
-
-class _Stepper extends StatelessWidget {
-  const _Stepper({
-    required this.weightKg,
-    required this.onMinus,
-    required this.onPlus,
-  });
-
-  final Decimal weightKg;
-  final VoidCallback onMinus;
-  final VoidCallback onPlus;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: <Widget>[
-        _StepBtn(icon: Icons.remove, onTap: onMinus, tooltip: 'Decrease'),
-        Expanded(
-          child: Center(
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.baseline,
-              textBaseline: TextBaseline.alphabetic,
-              children: <Widget>[
-                Semantics(
-                  label: '${formatWeightKg(weightKg)} kilograms',
-                  child: Text(
-                    formatWeightKg(weightKg),
-                    style: context.text.heroNumeric.copyWith(fontSize: 38),
-                  ),
-                ),
-                SizedBox(width: context.space.x1),
-                Text(
-                  'kg',
-                  style: context.text.body.copyWith(color: context.colors.ink2),
-                ),
-              ],
-            ),
-          ),
-        ),
-        _StepBtn(icon: Icons.add, onTap: onPlus, tooltip: 'Increase'),
-      ],
-    );
-  }
-}
-
-class _StepBtn extends StatelessWidget {
-  const _StepBtn({
-    required this.icon,
-    required this.onTap,
-    required this.tooltip,
-  });
-
-  final IconData icon;
-  final VoidCallback onTap;
-  final String tooltip;
-
-  @override
-  Widget build(BuildContext context) {
-    return Semantics(
-      button: true,
-      label: tooltip,
-      child: SizedBox(
-        width: 48,
-        height: 48,
-        child: Material(
-          color: context.colors.accentSoft,
-          shape: const CircleBorder(),
-          child: InkWell(
-            onTap: onTap,
-            customBorder: const CircleBorder(),
-            child: Center(
-              child: Icon(icon, size: 22, color: context.colors.accent),
-            ),
-          ),
-        ),
-      ),
     );
   }
 }
