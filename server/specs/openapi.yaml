@@ -129,6 +129,12 @@ paths:
       tags: [Weights]
       operationId: list_weights
       summary: List weight entries
+      description: |
+        Lists the caller's weight entries, newest recorded-day first.
+
+        All four query parameters are optional. With no parameters, the
+        response is the 100 most-recent entries across the full history.
+        Default `limit` is 100; server silently clamps requests above 500.
       parameters:
         - in: query
           name: from
@@ -138,14 +144,20 @@ paths:
           name: to
           schema: { type: string, format: date }
           description: Inclusive upper bound on `recorded_on`.
+        - in: query
+          name: limit
+          schema: { type: integer, format: int64, minimum: 0 }
+          description: Page size; 0 or omitted → 100.
+        - in: query
+          name: offset
+          schema: { type: integer, format: int64, minimum: 0 }
+          description: Page offset, starting at 0.
       responses:
         "200":
-          description: Matching weight entries.
+          description: Page of weight entries.
           content:
             application/json:
-              schema:
-                type: array
-                items: { $ref: "#/components/schemas/Weight" }
+              schema: { $ref: "#/components/schemas/PaginatedWeights" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
@@ -1048,6 +1060,15 @@ components:
             results:
               type: array
               items: { $ref: "#/components/schemas/LogEntry" }
+
+    PaginatedWeights:
+      allOf:
+        - $ref: "#/components/schemas/Paginated"
+        - type: object
+          properties:
+            results:
+              type: array
+              items: { $ref: "#/components/schemas/Weight" }
 
     LogEntry:
       type: object
