@@ -436,6 +436,7 @@ mod tests {
             owner_user_id: None,
             barcode: None,
             fdc_id: None,
+            data_type: None,
             name: "Test".into(),
             brands: None,
             categories_tags: vec![],

@@ -16,6 +16,7 @@
 
 ALTER TABLE foods ADD COLUMN IF NOT EXISTS data_type text;
 
+ALTER TABLE foods DROP CONSTRAINT IF EXISTS foods_data_type_check;
 ALTER TABLE foods ADD CONSTRAINT foods_data_type_check
     CHECK (
         data_type IS NULL
@@ -23,6 +24,7 @@ ALTER TABLE foods ADD CONSTRAINT foods_data_type_check
                       'survey_fndds_food', 'branded_food')
     );
 
+ALTER TABLE foods DROP CONSTRAINT IF EXISTS foods_data_type_source_check;
 ALTER TABLE foods ADD CONSTRAINT foods_data_type_source_check
     CHECK (
         source <> 'usda' OR data_type IS NOT NULL

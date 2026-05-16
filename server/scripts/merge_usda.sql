@@ -25,39 +25,12 @@ UPDATE staging_usda SET saturated_fat_100g = NULL WHERE saturated_fat_100g IS NO
 -- Drop rows that lost their energy_kcal (we require it).
 DELETE FROM staging_usda WHERE energy_kcal_100g IS NULL;
 
--- 2) Compute quality_score per row. Same shape as the OFF formula —
---    USDA is generally well-populated so most rows land high.
+-- 2) quality_score is computed centrally by migration 0004's rescore SQL
+--    (driven by data_type + brand + servings + macro coverage). We
+--    still stage a column so the INSERT in step 5 has a value, but a
+--    zero baseline is fine — the post-ingest rescore overwrites it.
 ALTER TABLE staging_usda ADD COLUMN IF NOT EXISTS quality_score smallint;
-
-UPDATE staging_usda SET quality_score = LEAST(100,
-      -- USDA doesn't have nutriscore, so we give baseline 25 to USDA
-      -- data instead. Foundation/SR Legacy are lab-grade; bonus 15.
-      CASE WHEN data_type IN ('foundation_food','sr_legacy_food') THEN 40
-           WHEN data_type = 'survey_fndds_food'                   THEN 30
-           ELSE 25 END
-    + CASE WHEN brand_name IS NOT NULL AND length(btrim(brand_name)) > 0 THEN 15
-           WHEN brand_owner IS NOT NULL AND length(btrim(brand_owner)) > 0 THEN 10
-           ELSE 0 END
-    + CASE WHEN coalesce(serving_size, 0) > 0 THEN 15 ELSE 0 END
-    + CASE
-          WHEN ( (protein_100g       IS NOT NULL)::int
-               + (carbs_100g         IS NOT NULL)::int
-               + (fat_100g           IS NOT NULL)::int
-               + (fiber_100g         IS NOT NULL)::int
-               + (sugar_100g         IS NOT NULL)::int
-               + (sodium_100g        IS NOT NULL)::int
-               + (saturated_fat_100g IS NOT NULL)::int) >= 6 THEN 10
-          WHEN ( (protein_100g       IS NOT NULL)::int
-               + (carbs_100g         IS NOT NULL)::int
-               + (fat_100g           IS NOT NULL)::int
-               + (fiber_100g         IS NOT NULL)::int
-               + (sugar_100g         IS NOT NULL)::int
-               + (sodium_100g        IS NOT NULL)::int
-               + (saturated_fat_100g IS NOT NULL)::int) >= 3 THEN 5
-          ELSE 0
-      END
-    + CASE WHEN extra_nutrients IS NOT NULL THEN 10 ELSE 0 END
-)::smallint;
+UPDATE staging_usda SET quality_score = 0 WHERE quality_score IS NULL;
 
 -- 3) Open a batch row.
 INSERT INTO food_import_batches (id, source_url, status, records_seen)
@@ -111,7 +84,7 @@ SELECT count(*) AS rows, count(barcode) AS with_barcode FROM staging_usda_clean;
 --    existing food. fdc_id is also unique, so we let that protect us
 --    against re-runs.
 INSERT INTO foods (
-    id, source, owner_user_id, fdc_id, barcode, name, brands,
+    id, source, owner_user_id, fdc_id, data_type, barcode, name, brands,
     energy_kcal_100g, protein_100g, carbs_100g, fat_100g,
     fiber_100g, sugar_100g, sodium_100g, saturated_fat_100g,
     quality_score, extra_nutrients, last_import_batch_id
@@ -121,6 +94,7 @@ SELECT
     'usda',
     NULL,
     s.fdc_id,
+    s.data_type,
     s.barcode,
     s.name,
     s.brands,
@@ -155,6 +129,7 @@ SELECT count(*) FILTER (WHERE source = 'usda') AS usda, count(*) FILTER (WHERE s
 UPDATE foods f
    SET source           = 'usda',
        fdc_id           = s.fdc_id,
+       data_type        = s.data_type,
        owner_user_id    = NULL,
        name             = s.name,
        brands           = coalesce(s.brands, f.brands),

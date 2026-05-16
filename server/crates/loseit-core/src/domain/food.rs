@@ -84,6 +84,11 @@ pub struct Food {
     pub barcode: Option<String>,
     /// USDA FoodData Central per-record key. Set only when `source = Usda`.
     pub fdc_id: Option<i64>,
+    /// USDA FoodData Central record class: `foundation_food`, `sr_legacy_food`,
+    /// `survey_fndds_food`, or `branded_food`. Populated only when
+    /// `source = Usda`; the search rescore in 0004 differentiates rank
+    /// caps by class. Not exposed on the wire today.
+    pub data_type: Option<String>,
     pub name: String,
     pub brands: Option<String>,
     pub categories_tags: Vec<String>,

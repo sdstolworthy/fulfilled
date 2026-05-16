@@ -198,7 +198,6 @@ URLs are what the desktop browser shows; they are also the deep-link paths on mo
 | `foods.detail` | `/foods/:foodId` | 03 Food detail |
 | `foods.new` | `/foods/new` | 05 Create custom food |
 | `foods.barcode` | `/foods/barcode/:barcode` | resolves via API → 03 Food detail |
-| `trends` | `/trends` | (placeholder for v1; redirects to `/weight` until trends ship) |
 | `weight` | `/weight` | 06 Weight log |
 | `goals` | `/goals` | 07 Goals |
 | `goals.new` | `/goals/new` | New goal form (modal on compact, page on expanded) |
@@ -223,7 +222,7 @@ Outside the shell (no nav chrome):
 └── auth screens (deferred — v1 uses dev bearer token)
 ```
 
-The sidebar on `expanded` shows: Today, Foods (search), Trends (disabled stub), Weight, Goals, My foods. The bottom tab bar on `compact` shows: Today, Foods, Trends (stub), Me. The discrepancy is intentional — goals and my-foods are reachable from the Me screen on compact.
+The sidebar on `expanded` shows: Today, Foods (search), Weight, Goals, My foods. The bottom tab bar on `compact` shows: Today, Foods, Weight, Me. The discrepancy is intentional — goals and my-foods are reachable from the Me screen on compact. Trends is **not** in v1 on either surface (PM Risk 3 in `pm_decisions_flutter_ui.md`); the slot returns alongside the trends screen design in a later release.
 
 Maintain a single `appRouterProvider` (Riverpod) so the active route is observable; nav highlighting reads from this provider, not from a separate selection state.
 
@@ -267,8 +266,19 @@ Maintain a single `appRouterProvider` (Riverpod) so the active route is observab
 | Weights (`GET /weights`) | yes | yes | Drives sparkline; cache for instant render. |
 | Profile (`GET /me`) | yes | yes | Drives onboarding gates and units; cache it. |
 
-- **Offline write queue**: out of scope for v1. If the device is offline and the user tries to save a log entry, show a non-blocking error toast and keep the sheet open with their input intact. Do not silently queue — users want to know.
+- **Offline write queue**: mobile-only outbox for `POST /log` (the on-the-go logging path). Optimistic insert into the day summary, prepend a `FoodRow` with a "pending sync" badge, flush on connectivity return. Web surfaces the error inline (the sheet stays open with input intact). All other write paths — custom food creation, weight entries, goal mutations, profile edits — are online-only on every form factor: surface the error. See "Outbox (mobile-only)" below and `pm_decisions_flutter_ui.md` Risk 6.
 - **Optimistic updates**: yes for `POST /log` (insert into the day summary immediately, roll back on error), `POST /weights` (prepend to sparkline), `POST /goals/{id}/default`. Not for new-food creation.
+
+### Outbox (mobile-only)
+
+Per PM Risk 6 ruling — the architect's original "no queue, surface the error" stance is **overridden** for the on-the-go logging scenario.
+
+- **Scope**: `POST /log` only. Custom-food creation, weight entries, goal mutations, and profile edits are not queued — they require connectivity, and the user is informed inline.
+- **Form factor gate**: `FormFactor.isCompact` only. Medium and expanded breakpoints (including desktop web) keep the surface-the-error behavior.
+- **Storage**: a Hive box `outbox_log` keyed by client UUID, holding the `LogEntryCreate` payload + `queuedAt` timestamp + `attempt` count.
+- **Flush**: a `connectivityProvider` (via `connectivity_plus`) drives a `LogOutboxNotifier`. On regaining connectivity, drain serially with exponential backoff (1 s, 4 s, 16 s; cap at 3 attempts before surfacing the entry to the user with a retry affordance).
+- **Conflicts**: the server is authoritative. If a queued entry returns with a different `id` or a different nutrition snapshot than the client predicted, replace the optimistic row with the server response — do not merge.
+- **UI**: see section 6 "Offline log outbox" for the rendering rules (badge, animation, tab-indicator dot).
 
 ### Auth
 
@@ -295,6 +305,16 @@ V1 runs against the dev bearer token (`DEV_AUTH_BYPASS`). Wire a single `authTok
 
 - FAB stays bottom-right at `padding.right + 20, padding.bottom + 24`.
 - Primary CTAs (Add to log, Save, Continue) are always within thumb reach: bottom of the screen with safe-area padding, never floating in the middle.
+
+### Offline log outbox
+
+Data layer in section 5. UX rules:
+
+- A pending-sync `FoodRow` is **interactive** but its right-side overflow is restricted to "Retry now" and "Discard". No edit until the server confirms the entry.
+- The "Pending sync" badge sits in the meta row beneath the food name (10 px text, `AppColors.ink3` background, 4 px radius), never adjacent to the calorie number — T-09 keeps numbers free of sync UI noise.
+- On flush success, fade the badge out over 200 ms with a `FadeTransition`; do not move or re-flow the row. Day-summary numbers may move by the row's contribution — they already animate via the providers' normal rebuild path.
+- If the outbox has ≥ 1 pending entry, the Today bottom-tab icon gets a 6 px accent dot (not a count). Clears when the outbox drains.
+- On terminal failure (3 attempts exhausted) the badge flips to a danger-tinted "Retry" affordance; tap re-opens the log-entry sheet pre-populated so the user can correct and resubmit.
 
 ### Background refresh
 
@@ -387,6 +407,10 @@ The non-negotiables. Number them so review comments can cite them by ID (e.g., "
 
 20. **T-20 Accessibility minimums.** Every `IconButton36` has a tooltip and a `Semantics` label. Every chip and row has a usable semantic label that includes the rendered number ("Greek yogurt, 130 kilocalories"). Color is never the sole signal — over-budget macros also get a small "over" suffix in their label.
 
+21. **T-21 Display units are customer-expected, not canonical.** All quantities render in the units a customer expects — sodium in `mg`, body weight in `kg` for v1, macros in `g`, energy in `kcal`. The wire stays canonical SI. Conversion lives in `lib/domain/units/` and is the **only** place a unit transform happens. Widgets never multiply or divide by 1000 inline, never call `.toFixed` on a raw `Decimal` macro value. See `pm_decisions_flutter_ui.md` Display Units Principle for the full rulings (including how `NutritionPer100g.sodium_g` is exposed as `sodiumMg` in the presentation model).
+
+22. **T-22 Pending-sync state is visible, not silent.** An optimistically-inserted log entry awaiting flush from the outbox renders with a `Pending sync` badge until the server acks (T-22 is enforced only on `FormFactor.isCompact` — the outbox doesn't exist elsewhere). Never silently retry without surfacing. Never drop a queued entry without telling the user. See section 6 "Offline log outbox".
+
 ---
 
 ## 9. Per-screen build briefs
@@ -454,11 +478,11 @@ Each brief tells a developer agent (a) what to compose, (b) what to fetch, (c) w
 - **Compose**: top bar (title "Me") + identity row (avatar + name + email + Edit) + sections Body / Preferences / Data, each a `SettingsCard` + sign-out `OutlinedButton`-shaped row in danger color + footnote with version.
 - **Data**: `meProvider` (`User`), `customFoodCountProvider`. Editing fields jumps to inline edit routes (`/me/sex`, `/me/height`, `/me/activity`) or in-line modals; pick modals on `compact` for fewer routes.
 - **Web transform**: same shell. Identity row scales up; the cards stack at the same rhythm.
-- **Gotcha**: the appearance toggle is wired but does nothing in v1 — see section 2.1. Either hide the row in v1 builds (`kReleaseMode ? hidden : visible`) or implement light/dark properly. Don't ship a half-working toggle.
+- **Gotcha**: per PM Risk 5, the Appearance row is **removed entirely** from v1 — do not render the toggle, even disabled. Dark-mode tokens ship with v2 alongside a designer hand-off.
 
 ### Screen 09 — Onboarding (3-up)
 
-- **Compose**: each step uses `OnboardingStepShell`. Step 1: welcome hero with logo + headline + features list + Get started / I already have an account. Step 2: form (sex `SegmentedSelect`, birth date picker, height + weight 2-col, activity level `ActivityOption` list). Step 3: goal direction `GoalOption` list + rate slider + `LogPreviewBlock`-shaped target preview.
+- **Compose**: each step uses `OnboardingStepShell`. Step 1: welcome hero with logo + headline + features list + Get started. (Per PM Risk 2, the "I already have an account" link is **removed** from v1; it returns alongside real auth in v2.) Step 2: form (sex `SegmentedSelect`, birth date picker, height + weight 2-col, activity level `ActivityOption` list). Step 3: goal direction `GoalOption` list + rate slider + `LogPreviewBlock`-shaped target preview.
 - **Data**: an `onboardingDraftProvider` (`Notifier`) accumulates the partial profile and partial goal. Step 3 derives the daily-calorie target client-side using a standard Mifflin-St Jeor or Harris-Benedict formula (whichever the backend uses — confirm in section 10). On finish: PATCH `/me`, then POST `/goals`.
 - **Web transform**: at `expanded`, render all three steps as a 3-column "tour" on a single page (PM may push back — see open questions). Default in v1: still one step at a time, but at `expanded` constrain the form column to 520 px max-width centered.
 - **Gotcha**: the daily-target calculation must match the server's calculation when the goal is later patched — the server stores `daily_calorie_target` as an int (per OpenAPI). Round on the client the same way the server rounds. Fence the calculation in one place: `lib/domain/calories/estimate.dart`.
@@ -469,7 +493,9 @@ Each brief tells a developer agent (a) what to compose, (b) what to fetch, (c) w
 
 Things the designer did not specify or where I'm making an architectural call the PM/designer should confirm.
 
-1. **Over-budget macro behavior.** Confirmed in INDEX.html note 4: macros over budget switch to `#B5552E`. The mocks don't show this state. I'm shipping the rule in T-05 but want PM sign-off on whether it kicks in at exactly 100% or with a 5% tolerance (jitter near the cap is annoying).
+> **PM rulings applied 2026-05-15** — see `specs/pm_decisions_flutter_ui.md`. Items **1, 5, 6, 8, 11, 12** below are resolved; the resolution is noted inline. Items **2, 3, 4, 7, 9, 10** are still open and need a separate PM pass.
+
+1. **Over-budget macro behavior.** **RESOLVED (PM Risk 1):** strict `value > target`, no tolerance. T-05 already encodes this.
 
 2. **Synthetic 100 g serving visibility.** Designer recommended keeping it visible (INDEX note 2). I made it a tenant (T-10). PM should confirm vs. an OFF-default-aware hiding rule.
 
@@ -477,21 +503,21 @@ Things the designer did not specify or where I'm making an architectural call th
 
 4. **Onboarding on web.** I'm defaulting to one step at a time even on desktop because the form is short and consistency wins. If PM wants the 3-up tour as a marketing-style page, treat it as a separate web-only screen.
 
-5. **Trends tab is a stub.** The mobile bottom-tab and the desktop sidebar both show Trends, but no screen was mocked. V1 redirect to `/weight`. PM should confirm whether to ship the tab visibly disabled or hide it entirely.
+5. **Trends tab is a stub.** **RESOLVED (PM Risk 3):** hide entirely from both nav surfaces. Route removed; sidebar prose updated; compact bottom tabs now Today / Foods / Weight / Me.
 
-6. **Dark mode in the profile screen.** The mock has an Appearance row defaulting to "System". V1 will not implement dark theme (see T-01 token notes). The row should be hidden in v1 release builds, or designer must hand off a dark-mode token sweep.
+6. **Dark mode in the profile screen.** **RESOLVED (PM Risk 5):** remove the Appearance row entirely from v1. Returns with v2 dark-mode token sweep.
 
 7. **Profile editing flow.** No editor screens were mocked. I'm proposing per-field route or modal (sex picker, date picker, height stepper, activity selector reusing onboarding's `ActivityOption`). Designer might prefer a single full editor screen — flag for review.
 
-8. **Sodium units.** OpenAPI says sodium is **grams per 100 g** at the food-detail level (`NutritionPer100g.sodium_g`) but **milligrams** on `LogEntry.sodium_mg`. The mock displays "36 mg" for the per-100 g panel — clients must multiply by 1000 for display. This is API-side, but the client must not paper over it. Worth a backend ticket to align units; until then, document the conversion in `repositories/food_repository.dart` and `repositories/log_repository.dart`.
+8. **Sodium units.** **RESOLVED (PM Risk 4):** sodium displays as `mg` everywhere. Conversion lives in `lib/domain/units/sodium.dart` (T-21), not in repositories. No OpenAPI shape change — only a clarifying sentence on `NutritionPer100g.sodium_g`. The Display Units Principle in `pm_decisions_flutter_ui.md` generalises the rule across sodium, weight, energy, and macros.
 
 9. **Decimal precision for display.** No spec on how many fraction digits to show for grams, kcal, weight. Defaulting: kcal as integer (rounded half-up), grams as integer for ≥ 10, one decimal for < 10, weight as one decimal. Sign off needed.
 
 10. **Quality score visibility.** Screen 03 renders "OFF data · quality 0.86". Is this user-facing language acceptable? It's data lineage and most users don't know what `0.86` means. PM should bless or rename.
 
-11. **Offline log creation.** Decision in section 5: no offline queue in v1. PM should confirm — this is a known mobile-tracker gripe and we are shipping the simpler path.
+11. **Offline log creation.** **RESOLVED (PM Risk 6 — architect overridden):** ship a mobile-only outbox scoped to `POST /log` with optimistic insert + pending-sync badge. Section 5 ("Outbox") and section 6 ("Offline log outbox") updated; T-22 added. Web keeps the surface-the-error behavior.
 
-12. **The "I already have an account" path on onboarding step 1.** No login screen was mocked. We need either (a) a real auth provider (Google/Apple sign-in) or (b) a "we'll email you a sign-in link" stub. V1 dev token is fine for now but the button can't be wireless — block the button in v1 with a "Coming soon" affordance or remove it.
+12. **The "I already have an account" path on onboarding step 1.** **RESOLVED (PM Risk 2):** the link is **removed** from v1. Returns alongside real auth in v2. Screen 09 brief updated.
 
 ---
 
@@ -523,11 +549,21 @@ client/
     data/
       api_client.dart              // generated dio client
       auth_token.dart              // authTokenProvider
+      connectivity.dart            // connectivityProvider (connectivity_plus)
       dtos/                        // generated DTOs from openapi.yaml
+      outbox/                      // mobile-only POST /log queue (T-22)
+        log_outbox_notifier.dart
+        outbox_entry.dart
     domain/
       decimal_format.dart
       calories/estimate.dart       // BMR + TDEE math
       food_serving.dart            // value types
+      units/                       // PM-mandated display conversions (T-21)
+        units.dart                 // re-exports
+        sodium.dart                // gramsToMilligrams, formatSodiumMg
+        weight.dart                // kg formatter (lb deferred to v2)
+        energy.dart                // kcal formatter (kJ deferred to v2)
+        macros.dart                // gram formatters with decimal rules
     repositories/
       food_repository.dart
       log_repository.dart

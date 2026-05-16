@@ -32,6 +32,7 @@ struct FoodRow {
     owner_user_id: Option<Uuid>,
     barcode: Option<String>,
     fdc_id: Option<i64>,
+    data_type: Option<String>,
     name: String,
     brands: Option<String>,
     categories_tags: Option<Vec<String>>,
@@ -63,6 +64,7 @@ impl From<FoodRow> for Food {
             owner_user_id: r.owner_user_id,
             barcode: r.barcode,
             fdc_id: r.fdc_id,
+            data_type: r.data_type,
             name: r.name,
             brands: r.brands,
             categories_tags: r.categories_tags.unwrap_or_default(),
@@ -95,7 +97,7 @@ impl From<FoodRow> for Food {
 const SELECT_FOOD_COLS: &str = "id, source, owner_user_id, barcode, fdc_id, name, brands, \
     categories_tags, energy_kcal_100g, protein_100g, carbs_100g, fat_100g, fiber_100g, \
     sugar_100g, sodium_100g, saturated_fat_100g, nutriscore_grade, quality_score, \
-    extra_nutrients, last_import_batch_id, created_at, updated_at";
+    extra_nutrients, last_import_batch_id, created_at, updated_at, data_type";
 
 /// Visibility predicate used by read paths. Implements the trait contract:
 /// OFF and USDA foods are visible to everyone; user-custom foods are
