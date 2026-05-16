@@ -211,6 +211,91 @@ class _ShimmerStripe extends StatelessWidget {
   }
 }
 
+/// "Jump to today" pill rendered in the day-view date bar when the view
+/// is **not** rendering the local-now day. Tapping the pill calls
+/// `context.go(Routes.todayPath)` so a backdate-walked user has a one-tap
+/// return path back to today (QL-106 / PM audit QL-009).
+///
+/// Visual: a small accent-soft chip with a leading "today" glyph,
+/// `Today` label. Per PM §3 "small `Chip`" and architect §7.5 the
+/// background reads `accentSoft` (the chip token set already used by
+/// `quick_add_chips`, `meal_chip_picker`, etc.); the accent ink color is
+/// the foreground. The full chip sits inside a 44-px `InkResponse`
+/// hit-slop wrapper so the tap target clears T-06's 44-px floor even
+/// though the visible pill is shorter.
+///
+/// Semantics (T-20): the chip's announcement is the action
+/// "Jump to today", not a rendered value — the affordance *is* the
+/// effect.
+class TodayPill extends StatelessWidget {
+  const TodayPill({super.key});
+
+  /// T-06 hit-target floor. The visible pill is shorter than this; the
+  /// outer gesture surface expands to 44 px so the slop above + below
+  /// the pill still fires the tap.
+  static const double _hitHeight = 44;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.colors;
+    final space = context.space;
+    final radius = context.radius;
+
+    return Semantics(
+      container: true,
+      button: true,
+      label: 'Jump to today',
+      excludeSemantics: true,
+      child: SizedBox(
+        height: _hitHeight,
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            key: const Key('today-pill'),
+            borderRadius: BorderRadius.circular(radius.rPill),
+            onTap: () => context.go(Routes.todayPath),
+            child: Container(
+              padding: EdgeInsets.symmetric(
+                horizontal: space.x2 + 2,
+                vertical: space.x1 + 2,
+              ),
+              decoration: BoxDecoration(
+                color: colors.accentSoft,
+                border: Border.all(color: colors.accentLine),
+                borderRadius: BorderRadius.circular(radius.rPill),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  Icon(Icons.today_outlined, size: 14, color: colors.accent),
+                  SizedBox(width: space.x1 + 2),
+                  Text(
+                    'Today',
+                    style: context.text.meta.copyWith(
+                      color: colors.accent,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// True when [date]'s Y/M/D matches the local-now Y/M/D. Mirrors the
+/// `pathForDay` / `todayHeadline` checks so the day-view's pill, title
+/// and post-save router stay in lock-step.
+bool isLocalNowDay(DateTime date) {
+  final now = DateTime.now();
+  return date.year == now.year &&
+      date.month == now.month &&
+      date.day == now.day;
+}
+
 /// Inline error card used in place of a snackbar inside the
 /// stream-of-widgets body. T-11 — surface failures inline, not modal.
 class TodayErrorCard extends StatelessWidget {

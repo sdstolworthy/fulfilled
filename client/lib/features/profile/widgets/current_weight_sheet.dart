@@ -112,6 +112,9 @@ class _CurrentWeightSheetState extends ConsumerState<CurrentWeightSheet> {
             maxKg: _max,
             hasError: _error != null,
             semanticsLabel: 'Current weight',
+            // QL-107 — autofocus the weight input on first paint so the
+            // keyboard appears with the sheet (saves a tap per session).
+            autofocus: true,
             onChanged: (next) {
               final clamped = next.round(scale: 1);
               if (clamped < _min || clamped > _max) {

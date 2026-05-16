@@ -472,7 +472,14 @@ class _CustomFoodScreenState extends ConsumerState<CustomFoodScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: <Widget>[
-                    BasicsSection(showNameError: _showErrors),
+                    BasicsSection(
+                      showNameError: _showErrors,
+                      // QL-107 — autofocus the name field in create
+                      // mode only. Edit-mode pre-fills the value, so
+                      // autofocus would steal focus from a pre-filled
+                      // review UI per architect §7.4.
+                      autofocusName: !_isEditing,
+                    ),
                     SizedBox(height: space.x5 - 2),
                     NutritionSection(showErrors: _showErrors),
                     SizedBox(height: space.x5 - 2),

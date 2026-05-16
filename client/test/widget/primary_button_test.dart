@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fulfilled/theme/context_extensions.dart';
 import 'package:fulfilled/theme/theme_data.dart';
 import 'package:fulfilled/theme/tokens.dart';
+import 'package:fulfilled/widgets/button_loading_bar.dart';
 import 'package:fulfilled/widgets/primary_button.dart';
 
 /// T-003 — `PrimaryButton` primitive.
@@ -48,7 +49,11 @@ void main() {
     expect(taps, 1);
   });
 
-  testWidgets('isLoading swaps label for spinner and ignores taps',
+  // QL-106 — `isLoading` used to render a `CircularProgressIndicator`.
+  // The four-site sweep replaced every button-level spinner with the
+  // lifted `ButtonLoadingBar` (T-08 / T-13: static skeleton, not an
+  // indeterminate spinner; `pumpAndSettle()` finishes cleanly).
+  testWidgets('isLoading swaps label for ButtonLoadingBar and ignores taps',
       (tester) async {
     var taps = 0;
     await tester.pumpWidget(
@@ -62,7 +67,8 @@ void main() {
     );
 
     expect(find.text('Save to log'), findsNothing);
-    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(find.byType(ButtonLoadingBar), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
 
     await tester.tap(find.byType(FilledButton));
     await tester.pump();

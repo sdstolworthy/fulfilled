@@ -32,15 +32,20 @@ const bool _kDebugForceError = false;
 /// Screen 08 — Profile & settings.
 ///
 /// Layout (mirrors `specs/ui_mocks/screen_08_profile.html`):
-/// 1. Identity row: avatar + name + email + Edit.
+/// 1. Identity row: avatar + name + email. (The trailing "Edit"
+///    affordance was cut in QL-106 — PM audit QL-007 ruled the no-op
+///    "Coming soon" stub erodes trust; the row returns when a real
+///    identity editor lands.)
 /// 2. **Body** card: sex, birth date, height (cm), current weight (kg),
 ///    activity level.
 /// 3. **Preferences** card: Units (informational in v1 — PM Risk 4
 ///    defers the toggle to v2). The **Appearance row is intentionally
 ///    omitted** — PM Risk 5 removed it entirely from v1. Dark mode
 ///    ships with v2 alongside the token sweep.
-/// 4. **Data** card: "My foods (N)" → `Routes.myFoodsPath`,
-///    "Export data" → SnackBar "Coming soon".
+/// 4. **Data** card: "My foods (N)" → `Routes.myFoodsPath`. The
+///    "Export data" row was cut in QL-106 (PM audit QL-007 / architect
+///    §7.3 — real Export is a v1.1 surface; the no-op stub eroded
+///    trust). Card collapses to a single row in v1.
 /// 5. Sign-out outlined row in danger color → `AlertDialog` confirm.
 /// 6. Version footnote.
 ///
@@ -224,7 +229,12 @@ class _ProfileBody extends ConsumerWidget {
           ],
         ),
 
-        // Data section.
+        // Data section. QL-106 — the "Export data" row used to surface
+        // a "Coming soon" SnackBar; PM audit QL-007 + architect §7.3
+        // cut it in v1 since real Export is a v1.1 product surface. The
+        // card collapses to just "My foods" until Export ships; the
+        // architect's call is to keep the card header so the section
+        // shape is stable when Export returns.
         SettingsCard(
           title: 'Data',
           rows: <Widget>[
@@ -233,15 +243,6 @@ class _ProfileBody extends ConsumerWidget {
               label: 'My foods',
               value: '$customFoodCount',
               onTap: () => context.push(Routes.myFoodsPath),
-            ),
-            SettingsRow(
-              icon: Icons.ios_share_outlined,
-              label: 'Export data',
-              onTap: () {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Coming soon')),
-                );
-              },
             ),
           ],
         ),
@@ -315,6 +316,11 @@ class _IdentityRow extends StatelessWidget {
         space.x5,
         space.x4,
       ),
+      // QL-106 — the trailing "Edit" `TextButton` used to surface a
+      // "Coming soon" SnackBar (v1 has no dedicated identity editor).
+      // PM audit QL-007: hide the row entirely until auth ships, so
+      // we don't ship a broken affordance. The avatar + name + email
+      // remain as informational identity chrome.
       child: Row(
         children: <Widget>[
           Container(
@@ -346,23 +352,6 @@ class _IdentityRow extends StatelessWidget {
                   Text(user.email!, style: context.text.meta),
               ],
             ),
-          ),
-          TextButton(
-            onPressed: () {
-              // The Edit affordance reuses the identity-tap entry
-              // point — opens the same display-name + email editor.
-              // v1 doesn't have a dedicated identity editor; the
-              // designer didn't mock one. Surface a coming-soon hint
-              // rather than ship a half-built form.
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Coming soon')),
-              );
-            },
-            style: TextButton.styleFrom(
-              foregroundColor: colors.accent,
-              textStyle: context.text.bodyStrong,
-            ),
-            child: const Text('Edit'),
           ),
         ],
       ),
@@ -467,7 +456,8 @@ class _ProfileSkeleton extends StatelessWidget {
           padding: EdgeInsets.fromLTRB(space.x5, space.x2, space.x5, space.x3),
           child: const Skeleton(height: 28, width: 64),
         ),
-        // Identity row — avatar + two text lines + Edit affordance.
+        // Identity row — avatar + two text lines. The trailing "Edit"
+        // skeleton was cut in QL-106 alongside the live row.
         Padding(
           padding: EdgeInsets.fromLTRB(space.x5, space.x1, space.x5, space.x4),
           child: Row(
@@ -488,13 +478,12 @@ class _ProfileSkeleton extends StatelessWidget {
                   ],
                 ),
               ),
-              SizedBox(width: space.x3),
-              const Skeleton(height: 18, width: 36),
             ],
           ),
         ),
-        // Three card silhouettes (Body, Preferences, Data).
-        for (final cardHeight in const <double>[260, 76, 116]) ...<Widget>[
+        // Three card silhouettes (Body, Preferences, Data). The Data
+        // card collapses to ~76 px after QL-106 cut the Export row.
+        for (final cardHeight in const <double>[260, 76, 76]) ...<Widget>[
           Padding(
             padding: EdgeInsets.fromLTRB(
               space.x5,

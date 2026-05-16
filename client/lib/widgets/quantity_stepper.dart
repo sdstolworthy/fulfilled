@@ -33,6 +33,7 @@ class QuantityStepper extends StatefulWidget {
     this.semanticsLabel,
     this.allowDecimal = true,
     this.showStepperButtons = true,
+    this.autofocus = false,
   });
 
   /// Current value. `null` means the field is empty — the UI shows
@@ -74,6 +75,12 @@ class QuantityStepper extends StatefulWidget {
   /// dense layouts (the 3-column macro rows in custom-food's nutrition
   /// section don't show per-field buttons because there's no room).
   final bool showStepperButtons;
+
+  /// QL-107 — when true the inner `TextField` autofocuses on first
+  /// paint so the system keyboard appears as the host sheet opens
+  /// (saves a tap per session). Callers gate this on
+  /// create-vs-edit + form factor; the stepper itself just forwards.
+  final bool autofocus;
 
   @override
   State<QuantityStepper> createState() => _QuantityStepperState();
@@ -186,6 +193,7 @@ class _QuantityStepperState extends State<QuantityStepper> {
               child: TextField(
                 controller: _ctrl,
                 focusNode: _focus,
+                autofocus: widget.autofocus,
                 keyboardType: TextInputType.numberWithOptions(
                   decimal: widget.allowDecimal,
                 ),

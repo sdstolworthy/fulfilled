@@ -10,11 +10,22 @@ import 'labeled_field.dart';
 /// `customFoodDraftProvider`; this widget binds onChanged to the
 /// matching notifier method.
 class BasicsSection extends ConsumerWidget {
-  const BasicsSection({super.key, this.showNameError = false});
+  const BasicsSection({
+    super.key,
+    this.showNameError = false,
+    this.autofocusName = false,
+  });
 
   /// Save was attempted and the name field is invalid. Drives the
   /// "Required" inline error per T-11.
   final bool showNameError;
+
+  /// QL-107 — when true, the name field autofocuses on first paint so
+  /// the system keyboard appears with the screen. The screen passes
+  /// `true` in create-mode only (edit-mode pre-fills the value, so
+  /// autofocus would steal focus from a pre-filled review UI per
+  /// architect §7.4).
+  final bool autofocusName;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -39,6 +50,7 @@ class BasicsSection extends ConsumerWidget {
             onChanged: notifier.setName,
             hasError: nameError != null,
             semanticsLabel: 'Food name',
+            autofocus: autofocusName,
           ),
         ),
         SizedBox(height: space.x3),
@@ -86,6 +98,7 @@ class _TextField extends StatefulWidget {
     this.placeholder,
     this.hasError = false,
     this.semanticsLabel,
+    this.autofocus = false,
   });
 
   final String value;
@@ -93,6 +106,7 @@ class _TextField extends StatefulWidget {
   final ValueChanged<String> onChanged;
   final bool hasError;
   final String? semanticsLabel;
+  final bool autofocus;
 
   @override
   State<_TextField> createState() => _TextFieldState();
@@ -148,6 +162,7 @@ class _TextFieldState extends State<_TextField> {
         child: TextField(
           controller: _ctrl,
           focusNode: _focus,
+          autofocus: widget.autofocus,
           onChanged: widget.onChanged,
           style: context.text.bodyStrong,
           decoration: InputDecoration(

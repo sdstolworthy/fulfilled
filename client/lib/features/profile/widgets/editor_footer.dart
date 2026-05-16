@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../theme/context_extensions.dart';
+import '../../../widgets/button_loading_bar.dart';
 
 /// Sticky footer for profile editors. Renders an optional inline error
 /// (T-11) above a full-width accent "Save" button. The Save button is
@@ -66,17 +67,11 @@ class EditorFooter extends StatelessWidget {
                 ),
                 textStyle: context.text.bodyStrong,
               ),
-              child: saving
-                  ? SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        valueColor:
-                            AlwaysStoppedAnimation<Color>(colors.surface),
-                      ),
-                    )
-                  : Text(saveLabel),
+              // QL-106 — `ButtonLoadingBar` replaces the prior
+              // `CircularProgressIndicator`. Static skeleton per T-08 /
+              // T-13; visual lifted from `_SaveButtonSkeleton` so the
+              // four save-button sites stay in lock-step.
+              child: saving ? const ButtonLoadingBar() : Text(saveLabel),
             ),
           ),
         ],

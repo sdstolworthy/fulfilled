@@ -81,16 +81,56 @@ void main() {
     expect(find.text('Current weight'), findsOneWidget);
     expect(find.text('Activity'), findsOneWidget);
 
-    // Data section.
+    // Data section. QL-106 cut the Export data row entirely (PM audit
+    // QL-007 / architect §7.3 — the no-op "Coming soon" stub was a
+    // trust eroder; real Export is a v1.1 surface).
     expect(find.text('My foods'), findsOneWidget);
     expect(find.text('14'), findsOneWidget);
-    expect(find.text('Export data'), findsOneWidget);
+    expect(find.text('Export data'), findsNothing);
 
     // Sign-out row.
     expect(find.text('Sign out'), findsOneWidget);
 
     // Version footnote.
     expect(find.text('Fulfilled · v0.1.0 (dev)'), findsOneWidget);
+  });
+
+  // QL-106 regression — the trailing "Edit" affordance on the identity
+  // row used to surface a "Coming soon" SnackBar (no real identity
+  // editor in v1). PM audit QL-007 ruled the stub eroded trust; the row
+  // is cut entirely until the editor lands. The avatar + name + email
+  // remain as informational identity chrome.
+  testWidgets('Identity row does NOT render an Edit affordance',
+      (tester) async {
+    tester.view.physicalSize = const Size(390, 1500);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(_harness(user: _mockUser()));
+    await tester.pumpAndSettle();
+
+    // The avatar's initials + name + email remain.
+    expect(find.text('Spencer Stolworthy'), findsOneWidget);
+    expect(find.text('sdstolworthy@gmail.com'), findsOneWidget);
+
+    // The trailing TextButton labeled "Edit" is gone.
+    expect(find.widgetWithText(TextButton, 'Edit'), findsNothing);
+  });
+
+  // QL-106 regression — no "Coming soon" SnackBar should ever surface
+  // from this screen because the two rows that triggered it are gone.
+  testWidgets('Coming-soon copy never appears in the Profile screen',
+      (tester) async {
+    tester.view.physicalSize = const Size(390, 1500);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(_harness(user: _mockUser()));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Coming soon'), findsNothing);
   });
 
   testWidgets('does NOT render the Appearance row (PM Risk 5 regression)',

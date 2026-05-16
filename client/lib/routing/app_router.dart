@@ -304,14 +304,39 @@ class _BarcodeResolveScreenState extends ConsumerState<_BarcodeResolveScreen> {
     return Scaffold(
       backgroundColor: context.colors.bg,
       body: SafeArea(
-        child: Center(
-          child: _loading
-              ? const CircularProgressIndicator()
-              : _BarcodeResolveError(
+        // QL-106 — the ~80 ms cache-hit window used to flash a centered
+        // `CircularProgressIndicator`. T-08 + architect §7.1: render a
+        // skeleton sized to the food-detail hero (~140 px) so the
+        // surface is layout-stable across the resolve.
+        child: _loading
+            ? Padding(
+                padding: EdgeInsets.fromLTRB(
+                  context.space.x5,
+                  context.space.x5,
+                  context.space.x5,
+                  0,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: <Widget>[
+                    Skeleton(
+                      height: 140,
+                      borderRadius:
+                          BorderRadius.circular(context.radius.r3),
+                    ),
+                    SizedBox(height: context.space.x4),
+                    const Skeleton(height: 18, width: 200),
+                    SizedBox(height: context.space.x2),
+                    const Skeleton(height: 12, width: 140),
+                  ],
+                ),
+              )
+            : Center(
+                child: _BarcodeResolveError(
                   barcode: widget.barcode,
                   onRetry: _resolve,
                 ),
-        ),
+              ),
       ),
     );
   }

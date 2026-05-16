@@ -252,14 +252,11 @@ class _DetailAppBar extends StatelessWidget implements PreferredSizeWidget {
         onPressed: () => _popOrFallback(context),
       ),
       actions: <Widget>[
-        IconButton(
-          icon: const Icon(Icons.bookmark_border),
-          tooltip: 'Save',
-          onPressed: () {
-            // Save-to-favorites lives on a parallel agent's surface; this
-            // screen owns the entry point only. No-op until that lands.
-          },
-        ),
+        // QL-106 — the `Icons.bookmark_border` "Save" icon used to live
+        // here as a no-op until favorites ship. PM audit QL-006 ruled it
+        // a trust eroder; the icon is deleted for v1. Restore when the
+        // favorites feature lands (architect §7.2 — tracking note here
+        // so the restoration is cleanly slotted).
         if (onEdit != null)
           Padding(
             padding: EdgeInsets.only(left: context.space.x1),

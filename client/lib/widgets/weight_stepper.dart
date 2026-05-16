@@ -62,6 +62,7 @@ class WeightStepper extends ConsumerStatefulWidget {
     this.hasError = false,
     this.placeholder,
     this.semanticsLabel,
+    this.autofocus = false,
     super.key,
   });
 
@@ -94,6 +95,13 @@ class WeightStepper extends ConsumerStatefulWidget {
   /// Optional Semantics wrapper label. For st the wrapper
   /// Semantics-labels each sub-field with this prefix.
   final String? semanticsLabel;
+
+  /// QL-107 — autofocus the first input on first paint. In `kg` / `lb`
+  /// mode that's the single canonical-unit field; in `st` mode it's
+  /// the stones sub-field (pounds follows naturally on commit). The
+  /// caller gates appropriateness (form factor / mode); the stepper
+  /// just forwards.
+  final bool autofocus;
 
   @override
   ConsumerState<WeightStepper> createState() => _WeightStepperState();
@@ -403,6 +411,7 @@ class _WeightStepperState extends ConsumerState<WeightStepper> {
       onDecrement: () => bump(Decimal.zero - step),
       hasError: widget.hasError,
       semanticsLabel: widget.semanticsLabel,
+      autofocus: widget.autofocus,
     );
   }
 
@@ -435,6 +444,8 @@ class _WeightStepperState extends ConsumerState<WeightStepper> {
             semanticsLabel: widget.semanticsLabel == null
                 ? 'Stones'
                 : '${widget.semanticsLabel} stones',
+            // Autofocus the stones sub-field (leftmost / first input).
+            autofocus: widget.autofocus,
           ),
         ),
         SizedBox(width: space.x3),
@@ -520,6 +531,7 @@ class _TapStepper extends StatelessWidget {
     required this.onDecrement,
     this.hasError = false,
     this.semanticsLabel,
+    this.autofocus = false,
   });
 
   final TextEditingController controller;
@@ -531,6 +543,7 @@ class _TapStepper extends StatelessWidget {
   final VoidCallback onDecrement;
   final bool hasError;
   final String? semanticsLabel;
+  final bool autofocus;
 
   @override
   Widget build(BuildContext context) {
@@ -579,6 +592,7 @@ class _TapStepper extends StatelessWidget {
                     child: TextField(
                       controller: controller,
                       focusNode: focusNode,
+                      autofocus: autofocus,
                       textAlign: TextAlign.center,
                       keyboardType: TextInputType.numberWithOptions(
                         decimal: allowDecimal,

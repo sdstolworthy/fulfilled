@@ -128,6 +128,7 @@ class _DateChevrons extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = context.colors;
+    final showTodayPill = !isLocalNowDay(date);
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
@@ -155,6 +156,13 @@ class _DateChevrons extends StatelessWidget {
             ),
           ),
         ),
+        // QL-106 — pill renders to the right of the date title, before
+        // the forward chevron, only when the rendered date isn't the
+        // local-now day. Same render rule as compact.
+        if (showTodayPill) ...<Widget>[
+          SizedBox(width: context.space.x2),
+          const TodayPill(),
+        ],
         SizedBox(width: context.space.x2),
         _Chevron(
           icon: Icons.chevron_right,

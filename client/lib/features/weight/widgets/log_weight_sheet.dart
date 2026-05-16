@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
+import 'package:fulfilled/widgets/button_loading_bar.dart';
 import 'package:fulfilled/widgets/weight_stepper.dart';
 
 import '../../../domain/enums.dart';
@@ -301,6 +302,10 @@ class _Body extends StatelessWidget {
           minKg: Decimal.parse('20'),
           maxKg: Decimal.parse('300'),
           semanticsLabel: 'Weight',
+          // QL-107 — autofocus the weight input when the sheet opens so
+          // the system keyboard appears immediately (single-mode sheet,
+          // no create-vs-edit distinction).
+          autofocus: true,
         ),
         SizedBox(height: context.space.x3),
         _QuickChips(
@@ -483,16 +488,12 @@ class _SaveButton extends StatelessWidget {
           onTap: saving ? null : onPressed,
           borderRadius: BorderRadius.circular(context.radius.r3),
           child: Center(
+            // QL-106 — `ButtonLoadingBar` replaces the prior
+            // `CircularProgressIndicator`. T-08 / T-13: static skeleton,
+            // not an indeterminate spinner; the four save-button sites
+            // share the lifted widget in `lib/widgets/button_loading_bar.dart`.
             child: saving
-                ? SizedBox(
-                    width: 22,
-                    height: 22,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      valueColor:
-                          AlwaysStoppedAnimation<Color>(context.colors.surface),
-                    ),
-                  )
+                ? const ButtonLoadingBar()
                 : Text(
                     'Save weight',
                     style: context.text.bodyStrong.copyWith(

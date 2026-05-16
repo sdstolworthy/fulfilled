@@ -172,6 +172,14 @@ class _DateBar extends StatelessWidget {
               ],
             ),
           ),
+          // QL-106 — the pill sits between the title block and the
+          // chevrons. Hidden on the local-now day (the chip would tap
+          // back to the same view). Tapping calls `context.go(
+          // Routes.todayPath)`; backdated users get a one-tap return.
+          if (!isLocalNowDay(date)) ...<Widget>[
+            const TodayPill(),
+            SizedBox(width: context.space.x2),
+          ],
           IconButton36(
             icon: Icons.chevron_left,
             tooltip: 'Previous day',

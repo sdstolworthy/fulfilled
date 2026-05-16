@@ -2,6 +2,7 @@ import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:intl/intl.dart';
 
 import 'package:fulfilled/widgets/quantity_stepper.dart';
 
@@ -296,6 +297,41 @@ class _LogEntrySheetBodyState extends ConsumerState<LogEntrySheetBody> {
     super.dispose();
   }
 
+  /// Backdate / forward-pick the entry's `consumedOn`. QL-107 — DATE
+  /// row tap target.
+  ///
+  /// `firstDate` is 60 days ago (QL-107 dev-ticket constraint —
+  /// architect §7.7's 365-day window was narrowed by PM); `lastDate`
+  /// is today, so future-dating is not allowed. On cancel the picker
+  /// resolves to `null` and `_date` is preserved.
+  ///
+  /// The picked date updates `_date` via `setState`; the existing
+  /// submit path already reads `_date` to construct the payload (and
+  /// QL-105's router uses the new date on save), so no other wiring
+  /// is needed here.
+  Future<void> _pickDate() async {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final firstDate = today.subtract(const Duration(days: 60));
+    // Clamp `initialDate` into `[firstDate, today]` — `showDatePicker`
+    // asserts on initial outside the window, which would crash on an
+    // edited entry whose `consumedOn` precedes the 60-day floor.
+    DateTime initial = _date;
+    if (initial.isBefore(firstDate)) initial = firstDate;
+    if (initial.isAfter(today)) initial = today;
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: firstDate,
+      lastDate: today,
+    );
+    if (picked == null) return;
+    if (!mounted) return;
+    setState(() {
+      _date = DateTime(picked.year, picked.month, picked.day);
+    });
+  }
+
   LogCreate _buildLogCreate() {
     final quantity = ref.read(quantityProvider);
     final note = _noteCtrl.text.trim();
@@ -582,6 +618,13 @@ class _LogEntrySheetBodyState extends ConsumerState<LogEntrySheetBody> {
     final colors = context.colors;
     final space = context.space;
     final quantity = ref.watch(quantityProvider);
+    // Autofocus the quantity stepper only when (a) the sheet is in
+    // create mode (edit mode is reviewing pre-filled values, per
+    // architect §7.4 / QL-107) and (b) the form factor is compact —
+    // popping the system keyboard inside the centered desktop dialog
+    // is jarring (per QL-107 dev-ticket constraint).
+    final autofocusQuantity =
+        !_isEditing && FormFactor.of(context).isCompact;
 
     return Material(
       color: colors.bg,
@@ -640,6 +683,7 @@ class _LogEntrySheetBodyState extends ConsumerState<LogEntrySheetBody> {
                         value: value,
                         step: Decimal.parse('0.5'),
                         min: Decimal.parse('0.5'),
+                        autofocus: autofocusQuantity,
                         onChanged: (next) {
                           if (next == null) return;
                           ref.read(quantityProvider.notifier).state = next;
@@ -655,6 +699,13 @@ class _LogEntrySheetBodyState extends ConsumerState<LogEntrySheetBody> {
                   MealChipPicker(
                     value: _meal,
                     onChanged: (m) => setState(() => _meal = m),
+                  ),
+                  SizedBox(height: space.x4 + 2),
+                  _SectionLabel(text: 'DATE'),
+                  SizedBox(height: space.x2),
+                  _DateRow(
+                    date: _date,
+                    onTap: _pickDate,
                   ),
                   SizedBox(height: space.x4 + 2),
                   _SectionLabel(text: 'NOTE (OPTIONAL)'),
@@ -1004,6 +1055,82 @@ class _SaveButtonSkeleton extends StatelessWidget {
         borderRadius: BorderRadius.circular(6),
         child: ColoredBox(
           color: context.colors.surface.withValues(alpha: 0.35),
+        ),
+      ),
+    );
+  }
+}
+
+/// QL-107 — DATE row inside `LogEntrySheet`. Mirrors
+/// `log_weight_sheet.dart`'s `_DateRow` shape: a full-width tap target
+/// (≥ 44 px tall — T-06 floor) rendering the current date with a
+/// calendar leading icon and a chevron trailing affordance.
+///
+/// Label wording per architect §7.7 / QL-107:
+/// - `"Today · MMM d"` when `date` is today (DateFormat `MMM d` —
+///   e.g. `"Today · May 14"`).
+/// - `"EEE, MMM d"` otherwise (e.g. `"Wed, May 14"`).
+class _DateRow extends StatelessWidget {
+  const _DateRow({required this.date, required this.onTap});
+
+  final DateTime date;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final now = DateTime.now();
+    final isToday = now.year == date.year &&
+        now.month == date.month &&
+        now.day == date.day;
+    final label = isToday
+        ? 'Today · ${DateFormat('MMM d').format(date)}'
+        : DateFormat('EEE, MMM d').format(date);
+    final colors = context.colors;
+    final radius = context.radius;
+    final space = context.space;
+
+    return Semantics(
+      button: true,
+      label: 'Date: $label. Tap to change.',
+      child: InkWell(
+        key: const Key('log_entry_date_row'),
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(radius.r2),
+        child: Container(
+          constraints: const BoxConstraints(minHeight: 48),
+          padding: EdgeInsets.symmetric(
+            horizontal: space.x3 + 2,
+            vertical: space.x2 + 2,
+          ),
+          decoration: BoxDecoration(
+            color: colors.surface,
+            border: Border.all(color: colors.line),
+            borderRadius: BorderRadius.circular(radius.r2),
+          ),
+          child: Row(
+            children: <Widget>[
+              Icon(
+                Icons.calendar_today_outlined,
+                size: 18,
+                color: colors.ink2,
+              ),
+              SizedBox(width: space.x2),
+              Expanded(
+                child: Text(
+                  label,
+                  key: const Key('log_entry_date_row_label'),
+                  style: context.text.body.copyWith(
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ),
+              Icon(
+                Icons.chevron_right,
+                size: 18,
+                color: colors.ink3,
+              ),
+            ],
+          ),
         ),
       ),
     );

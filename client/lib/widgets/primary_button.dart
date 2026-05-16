@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../theme/context_extensions.dart';
+import 'button_loading_bar.dart';
 
 /// Canonical primary CTA.
 ///
@@ -29,11 +30,10 @@ import '../theme/context_extensions.dart';
 /// - [dense] — when `true`, render a compact 36-px-tall variant for
 ///   in-content actions where the standard 54-px sticky-CTA shape
 ///   would crowd surrounding content. The accent fill, ink color, and
-///   `bodyStrong` text weight are unchanged; only the height, the
-///   horizontal padding (down to `space.x3`), and the loading spinner
-///   (16 px instead of 20 px) shrink. The 36-px visible pill sits
-///   inside a 44-px `InkResponse` hit-slop wrapper so the gesture
-///   target still clears T-06's 44-px minimum even though the
+///   `bodyStrong` text weight are unchanged; only the height and the
+///   horizontal padding (down to `space.x3`) shrink. The 36-px visible
+///   pill sits inside a 44-px `InkResponse` hit-slop wrapper so the
+///   gesture target still clears T-06's 44-px minimum even though the
 ///   rendered surface is smaller. Used by the scanner's no-detect
 ///   hint (SC-003/SC-005).
 class PrimaryButton extends StatelessWidget {
@@ -52,8 +52,10 @@ class PrimaryButton extends StatelessWidget {
   /// Tap handler. `null` => disabled.
   final VoidCallback? onPressed;
 
-  /// When `true`, render a 20-px spinner (16-px in [dense]) instead of
-  /// [label] and ignore taps regardless of [onPressed].
+  /// When `true`, render a [ButtonLoadingBar] instead of [label] and
+  /// ignore taps regardless of [onPressed]. QL-106 — the bar replaces
+  /// the prior `CircularProgressIndicator` so save flows show a static
+  /// skeleton per T-08 / T-13.
   final bool isLoading;
 
   /// When `true`, swap the accent background for `colors.danger`. Used
@@ -85,15 +87,11 @@ class PrimaryButton extends StatelessWidget {
     final space = context.space;
     final background = isDestructive ? colors.danger : colors.accent;
     final effectiveOnPressed = isLoading ? null : onPressed;
-    final spinnerSize = dense ? 16.0 : 20.0;
-    final spinner = SizedBox(
-      width: spinnerSize,
-      height: spinnerSize,
-      child: CircularProgressIndicator(
-        strokeWidth: 2,
-        color: colors.surface,
-      ),
-    );
+    // QL-106 — lifts the button-level loader from
+    // `_SaveButtonSkeleton` (log_entry_sheet) to the shared
+    // `ButtonLoadingBar`. T-08 / T-13: static skeleton, no
+    // indeterminate spinner; `pumpAndSettle()` finishes cleanly.
+    const loadingChild = ButtonLoadingBar();
     final button = FilledButton(
       onPressed: effectiveOnPressed,
       style: FilledButton.styleFrom(
@@ -118,7 +116,7 @@ class PrimaryButton extends StatelessWidget {
         // hit-slopped, identical to today.
         tapTargetSize: dense ? MaterialTapTargetSize.shrinkWrap : null,
       ),
-      child: isLoading ? spinner : Text(label),
+      child: isLoading ? loadingChild : Text(label),
     );
 
     if (!dense) {
