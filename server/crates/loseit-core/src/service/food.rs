@@ -122,9 +122,7 @@ impl FoodService {
                 if trimmed.is_empty() {
                     None
                 } else if trimmed.len() > 200 {
-                    return Err(CoreError::Validation(
-                        "q must be <= 200 bytes".into(),
-                    ));
+                    return Err(CoreError::Validation("q must be <= 200 bytes".into()));
                 } else {
                     Some(trimmed)
                 }
@@ -161,7 +159,11 @@ impl FoodService {
         // creates that collide with the sentinel are rejected here so the
         // partial unique index `foods_quick_add_singleton` never has to be
         // the line of defense. Case-insensitive on the trimmed value.
-        if draft.name.trim().eq_ignore_ascii_case(QUICK_ADD_SENTINEL_NAME) {
+        if draft
+            .name
+            .trim()
+            .eq_ignore_ascii_case(QUICK_ADD_SENTINEL_NAME)
+        {
             return Err(CoreError::Validation("name is reserved".into()));
         }
         validate_nutrition(&draft.nutrition)?;

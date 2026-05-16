@@ -873,6 +873,77 @@ async fn test_get_recent_foods_returns_lean_hits() {
 }
 
 #[tokio::test]
+async fn test_recent_foods_calories_per_serving_is_whole_kcal() {
+    // 200 kcal/100g food with a 150g serving → calories_per_serving = 300 (whole number).
+    // Verifies that hydrate_hits uses .round() not .round_dp(2), matching the
+    // "whole-kcal in the wire contract" rule from food_repo.rs.
+    let (app, _alice) = build_test_app_with(move |foods, servings, logs, _goals, alice| {
+        let foods = foods.clone();
+        let servings = servings.clone();
+        let logs = logs.clone();
+        Box::pin(async move {
+            // 200 kcal/100g × 150g = 300 kcal exactly — but use a non-round
+            // kcal density so any .round_dp(2) would produce a decimal.
+            // 333 kcal/100g × 150g = 499.5 → round() = 500, round_dp(2) = "499.50"
+            let (fid, _) = seed_food_with_serving(
+                &foods,
+                &servings,
+                alice,
+                "Dense Food",
+                Decimal::from(333),
+                Decimal::from(150),
+            )
+            .await;
+            let entry = PersistedLogEntry {
+                food_id: fid,
+                serving_id: None,
+                consumed_on: NaiveDate::from_ymd_opt(2026, 5, 15).unwrap(),
+                meal: Meal::Dinner,
+                quantity: Decimal::from(1),
+                grams_total: Decimal::from(150),
+                snapshot: NutritionSnapshot {
+                    calories_kcal: Decimal::from(500),
+                    protein_g: None,
+                    carbs_g: None,
+                    fat_g: None,
+                    fiber_g: None,
+                    sugar_g: None,
+                    sodium_mg: None,
+                    saturated_fat_g: None,
+                },
+                note: None,
+            };
+            logs.create(alice, &entry).await.unwrap();
+        })
+    })
+    .await;
+
+    let resp = app
+        .oneshot(authed_request("GET", "/api/v1/foods/recent"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = read_json(resp.into_body()).await;
+    let arr = body.as_array().expect("array");
+    assert_eq!(arr.len(), 1);
+    let hit = &arr[0];
+    // calories_per_serving is a Decimal-as-string on the wire. It must parse
+    // to a whole number (no fractional part), confirming that hydrate_hits
+    // uses .round() not .round_dp(2).
+    // 333 kcal/100g × 150g = 499.5 → round() = "500"; round_dp(2) = "499.50".
+    let cps_str = hit["calories_per_serving"]
+        .as_str()
+        .expect("calories_per_serving is a string");
+    let cps_val: rust_decimal::Decimal = cps_str
+        .parse()
+        .expect("calories_per_serving parses as Decimal");
+    assert!(
+        cps_val.fract().is_zero(),
+        "calories_per_serving must be whole kcal, got {cps_str}"
+    );
+}
+
+#[tokio::test]
 async fn test_get_frequent_foods_orders_by_count_descending() {
     // Log 3× food A, 2× food B, 1× food C — repo returns them ordered by
     // count desc.

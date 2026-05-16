@@ -737,10 +737,7 @@ async fn list_mine_rejects_q_over_200_chars() {
 
     let long_q = "a".repeat(201);
     let uri = format!("/api/v1/foods/mine?q={long_q}");
-    let resp = app
-        .oneshot(authed_request("GET", &uri))
-        .await
-        .unwrap();
+    let resp = app.oneshot(authed_request("GET", &uri)).await.unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 

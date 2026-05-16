@@ -96,9 +96,7 @@ impl ExportJobRepository for PgExportJobRepository {
     }
 
     async fn find(&self, user_id: Uuid, job_id: Uuid) -> CoreResult<Option<ExportJob>> {
-        let sql = format!(
-            "SELECT {SELECT_COLS} FROM export_jobs WHERE id = $1 AND user_id = $2"
-        );
+        let sql = format!("SELECT {SELECT_COLS} FROM export_jobs WHERE id = $1 AND user_id = $2");
         let row: Option<ExportJobRow> = sqlx::query_as(&sql)
             .bind(job_id)
             .bind(user_id)

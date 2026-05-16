@@ -44,10 +44,7 @@ pub struct PageParams {
 /// * `Some(n)` where `n > MAX_PAGE_LIMIT` → silently clamp to [`MAX_PAGE_LIMIT`]
 /// * `None` for offset → 0
 /// * `Some(n)` where `n < 0` → `Validation("offset must be non-negative")`
-pub fn resolve_page_params(
-    limit: Option<i64>,
-    offset: Option<i64>,
-) -> CoreResult<PageParams> {
+pub fn resolve_page_params(limit: Option<i64>, offset: Option<i64>) -> CoreResult<PageParams> {
     let limit = match limit {
         None | Some(0) => DEFAULT_PAGE_LIMIT,
         Some(n) if n < 0 => {

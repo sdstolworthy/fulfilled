@@ -1,30 +1,18 @@
 //! Food + serving handlers.
 //!
-//! Read endpoints (T10/T11):
+//! Routes:
 //!
-//! * `GET /foods/:id` — full food + servings.
-//! * `GET /foods/barcode/:barcode` — same shape, looked up by barcode.
-//! * `GET /foods/search` — paginated `FoodSearchHit` projection.
-//!
-//! Custom-food writes (T12):
-//!
-//! * `POST /foods` — create a user-owned custom food (auto-seeds a default
-//!   100 g system serving).
-//! * `PATCH /foods/:id` — partial update; only the owner of a `user`-source
-//!   food may patch.
-//! * `DELETE /foods/:id` — soft 404 / 403 / 409 by visibility, source, and
-//!   log references respectively.
-//!
-//! Serving CRUD (T13) — kept in this module since servings are scoped under
-//! `/foods/:food_id/servings` and the existing DTOs/helpers already live
-//! here:
-//!
-//! * `POST /foods/:food_id/servings`
-//! * `PATCH /servings/:id`
-//! * `DELETE /servings/:id`
-//! * `POST /servings/:id/default` — atomic default flip. (Spec deviation:
-//!   the original API surface only mentioned `is_default` on create/patch;
-//!   PM sign-off pending on the explicit endpoint.)
+//! * `GET    /foods/:id`                    — full food detail + servings.
+//! * `GET    /foods/barcode/:barcode`       — same shape, looked up by barcode.
+//! * `GET    /foods/search`                 — paginated `FoodSearchHit` projection.
+//! * `GET    /foods/mine`                   — user's custom foods, paginated.
+//! * `POST   /foods`                        — create a user-owned custom food.
+//! * `PATCH  /foods/:id`                    — partial update (owner only).
+//! * `DELETE /foods/:id`                    — soft-delete (owner only).
+//! * `POST   /foods/:food_id/servings`      — add a serving to a food.
+//! * `PATCH  /servings/:id`                 — update a serving.
+//! * `DELETE /servings/:id`                 — delete a serving.
+//! * `POST   /servings/:id/default`         — atomic default-serving flip.
 
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;

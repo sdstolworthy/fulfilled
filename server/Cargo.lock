@@ -1666,6 +1666,7 @@ name = "loseit-core"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "bytes",
  "chrono",
  "loseit-testing",
  "rust_decimal",
@@ -1680,13 +1681,20 @@ dependencies = [
 name = "loseit-db"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "async-trait",
+ "base64",
+ "bytes",
  "chrono",
+ "hmac",
  "loseit-core",
  "rust_decimal",
  "serde_json",
+ "sha2",
  "sqlx",
+ "tempfile",
  "thiserror 1.0.69",
+ "tokio",
  "tracing",
  "uuid",
 ]

@@ -74,11 +74,7 @@ fn authed_request(method: &str, uri: &str) -> Request<Body> {
 
 /// Seed `count` weight entries for `alice` on consecutive days starting from
 /// 2025-01-01, with weight_kg incrementing by 1 each day.
-async fn seed_weights(
-    weights: &Arc<InMemoryWeightRepository>,
-    alice: Uuid,
-    count: usize,
-) {
+async fn seed_weights(weights: &Arc<InMemoryWeightRepository>, alice: Uuid, count: usize) {
     for i in 0..count {
         let day = NaiveDate::from_ymd_opt(2025, 1, 1 + i as u32).unwrap();
         let draft = WeightDraft {
@@ -164,10 +160,7 @@ async fn list_weights_paginates() {
 
     // Page 2: offset=2, limit=2 → 2 results, total=5.
     let resp = app
-        .oneshot(authed_request(
-            "GET",
-            "/api/v1/weights?limit=2&offset=2",
-        ))
+        .oneshot(authed_request("GET", "/api/v1/weights?limit=2&offset=2"))
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);

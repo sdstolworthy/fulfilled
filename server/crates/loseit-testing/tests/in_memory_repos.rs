@@ -576,7 +576,9 @@ async fn log_repo_list_paginated_filters_by_both() {
         .await
         .expect("list");
     assert_eq!(page.len(), 2, "both filters: jan5..=jan7");
-    assert!(page.iter().all(|e| e.consumed_on >= jan5 && e.consumed_on <= jan7));
+    assert!(page
+        .iter()
+        .all(|e| e.consumed_on >= jan5 && e.consumed_on <= jan7));
 }
 
 #[tokio::test]
@@ -702,10 +704,7 @@ async fn log_repo_create_many_inserts_in_input_order() {
         sample_persisted_entry(food_c, jan3),
     ];
 
-    let result = repo
-        .create_many(user, &entries)
-        .await
-        .expect("create_many");
+    let result = repo.create_many(user, &entries).await.expect("create_many");
 
     assert_eq!(result.len(), 3, "should return 3 rows");
     assert_eq!(result[0].food_id, food_a, "first entry should be food_a");
@@ -773,10 +772,7 @@ async fn log_repo_create_many_returns_matching_field_values() {
         note: Some("test note".to_string()),
     };
 
-    let result = repo
-        .create_many(user, &[entry])
-        .await
-        .expect("create_many");
+    let result = repo.create_many(user, &[entry]).await.expect("create_many");
 
     assert_eq!(result.len(), 1);
     let r = &result[0];
@@ -1015,14 +1011,8 @@ async fn find_or_create_quick_add_is_idempotent() {
     foods.set_serving_repo(servings.clone());
     let owner = Uuid::new_v4();
 
-    let (food_a, serving_a) = foods
-        .find_or_create_quick_add(owner)
-        .await
-        .expect("first");
-    let (food_b, serving_b) = foods
-        .find_or_create_quick_add(owner)
-        .await
-        .expect("second");
+    let (food_a, serving_a) = foods.find_or_create_quick_add(owner).await.expect("first");
+    let (food_b, serving_b) = foods.find_or_create_quick_add(owner).await.expect("second");
 
     assert_eq!(food_a.id, food_b.id, "same food row across calls");
     assert_eq!(serving_a.id, serving_b.id, "same serving row across calls");
@@ -1067,7 +1057,11 @@ async fn find_or_create_quick_add_concurrent_first_uses_dont_duplicate() {
         serving_ids.insert(serving.id);
     }
 
-    assert_eq!(food_ids.len(), 1, "concurrent calls must collapse to one food");
+    assert_eq!(
+        food_ids.len(),
+        1,
+        "concurrent calls must collapse to one food"
+    );
     assert_eq!(
         serving_ids.len(),
         1,
@@ -1178,7 +1172,10 @@ async fn create_custom_rejects_reserved_sentinel_name() {
         .expect_err("must reject reserved name");
     match err {
         loseit_core::CoreError::Validation(msg) => {
-            assert!(msg.contains("reserved"), "expected reserved-name validation, got: {msg}");
+            assert!(
+                msg.contains("reserved"),
+                "expected reserved-name validation, got: {msg}"
+            );
         }
         other => panic!("expected Validation, got {other:?}"),
     }
@@ -1407,7 +1404,11 @@ mod export_repo {
         assert!(ready.error.is_none());
 
         // Re-read via find: the persisted state matches.
-        let fetched = repo.find(user, pending.id).await.expect("find").expect("some");
+        let fetched = repo
+            .find(user, pending.id)
+            .await
+            .expect("find")
+            .expect("some");
         assert_eq!(fetched.status, ExportStatus::Ready);
         assert_eq!(fetched.storage_key.as_deref(), Some("exports/u/123.json"));
     }

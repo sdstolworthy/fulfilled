@@ -567,7 +567,7 @@ impl LogService {
                 food.nutrition.energy_kcal,
                 default_serving.as_ref().map(|s| s.grams),
             ) {
-                (Some(kcal), Some(grams)) => Some((kcal * grams / Decimal::from(100)).round_dp(2)),
+                (Some(kcal), Some(grams)) => Some((kcal * grams / Decimal::from(100)).round()),
                 _ => None,
             };
             out.push(FoodSearchHit {
