@@ -672,6 +672,115 @@ async fn log_service_list_applies_default_limit_when_omitted() {
     assert_eq!(result.offset, 0, "default offset must be 0");
 }
 
+// ── log_repo::create_many tests (T09) ─────────────────────────────────────────
+
+#[tokio::test]
+async fn log_repo_create_many_inserts_in_input_order() {
+    let repo = InMemoryLogRepository::new();
+    let user = Uuid::new_v4();
+    let food_a = Uuid::new_v4();
+    let food_b = Uuid::new_v4();
+    let food_c = Uuid::new_v4();
+
+    let jan1 = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
+    let jan2 = NaiveDate::from_ymd_opt(2026, 1, 2).unwrap();
+    let jan3 = NaiveDate::from_ymd_opt(2026, 1, 3).unwrap();
+
+    let entries = vec![
+        sample_persisted_entry(food_a, jan1),
+        sample_persisted_entry(food_b, jan2),
+        sample_persisted_entry(food_c, jan3),
+    ];
+
+    let result = repo
+        .create_many(user, &entries)
+        .await
+        .expect("create_many");
+
+    assert_eq!(result.len(), 3, "should return 3 rows");
+    assert_eq!(result[0].food_id, food_a, "first entry should be food_a");
+    assert_eq!(result[1].food_id, food_b, "second entry should be food_b");
+    assert_eq!(result[2].food_id, food_c, "third entry should be food_c");
+    assert_eq!(result[0].consumed_on, jan1);
+    assert_eq!(result[1].consumed_on, jan2);
+    assert_eq!(result[2].consumed_on, jan3);
+    // All entries should be persisted with the correct user_id.
+    assert!(result.iter().all(|e| e.user_id == user));
+}
+
+#[tokio::test]
+async fn log_repo_create_many_with_empty_input_returns_empty_vec_without_sql() {
+    let repo = InMemoryLogRepository::new();
+    let user = Uuid::new_v4();
+
+    let result = repo
+        .create_many(user, &[])
+        .await
+        .expect("create_many empty");
+
+    assert!(result.is_empty(), "empty input must return empty Vec");
+
+    // Nothing should have been inserted.
+    let all = repo
+        .list_paginated(user, None, None, 100, 0)
+        .await
+        .expect("list");
+    assert!(all.is_empty(), "no entries should be stored");
+}
+
+#[tokio::test]
+async fn log_repo_create_many_returns_matching_field_values() {
+    let repo = InMemoryLogRepository::new();
+    let user = Uuid::new_v4();
+    let food_id = Uuid::new_v4();
+    let serving_id = Uuid::new_v4();
+    let jan1 = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
+
+    let qty = Decimal::from(2); // 2 servings
+    let grams = Decimal::from(200);
+    let cal = Decimal::from(300);
+    let protein = Decimal::from(15);
+    let carbs = Decimal::from(40);
+    let fat = Decimal::from(10);
+
+    let entry = PersistedLogEntry {
+        food_id,
+        serving_id: Some(serving_id),
+        consumed_on: jan1,
+        meal: Meal::Lunch,
+        quantity: qty,
+        grams_total: grams,
+        snapshot: NutritionSnapshot {
+            calories_kcal: cal,
+            protein_g: Some(protein),
+            carbs_g: Some(carbs),
+            fat_g: Some(fat),
+            fiber_g: None,
+            sugar_g: None,
+            sodium_mg: None,
+            saturated_fat_g: None,
+        },
+        note: Some("test note".to_string()),
+    };
+
+    let result = repo
+        .create_many(user, &[entry])
+        .await
+        .expect("create_many");
+
+    assert_eq!(result.len(), 1);
+    let r = &result[0];
+    assert_eq!(r.food_id, food_id);
+    assert_eq!(r.serving_id, Some(serving_id));
+    assert_eq!(r.consumed_on, jan1);
+    assert_eq!(r.meal, Meal::Lunch);
+    assert_eq!(r.quantity, qty);
+    assert_eq!(r.grams_total, grams);
+    assert_eq!(r.snapshot.calories_kcal, cal);
+    assert_eq!(r.snapshot.protein_g, Some(protein));
+    assert_eq!(r.note.as_deref(), Some("test note"));
+}
+
 // ── weight_repo list_paginated / count_for_user tests (T05) ──────────────────
 
 fn make_weight_draft(recorded_on: NaiveDate) -> WeightDraft {

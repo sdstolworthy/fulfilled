@@ -393,4 +393,113 @@ impl LogRepository for PgLogRepository {
         .map_err(map_sqlx)?;
         Ok(count)
     }
+
+    async fn create_many(
+        &self,
+        user_id: Uuid,
+        entries: &[PersistedLogEntry],
+    ) -> CoreResult<Vec<FoodLogEntry>> {
+        if entries.is_empty() {
+            return Ok(vec![]);
+        }
+
+        // Pack each per-column slice for the UNNEST call. nullable columns use
+        // Vec<Option<_>> so sqlx can encode NULLs without extra casts.
+        let mut food_ids: Vec<Uuid> = Vec::with_capacity(entries.len());
+        let mut serving_ids: Vec<Option<Uuid>> = Vec::with_capacity(entries.len());
+        let mut consumed_ons: Vec<NaiveDate> = Vec::with_capacity(entries.len());
+        let mut meals: Vec<String> = Vec::with_capacity(entries.len());
+        let mut quantities: Vec<Decimal> = Vec::with_capacity(entries.len());
+        let mut grams_totals: Vec<Decimal> = Vec::with_capacity(entries.len());
+        let mut calories_kcals: Vec<Decimal> = Vec::with_capacity(entries.len());
+        let mut protein_gs: Vec<Option<Decimal>> = Vec::with_capacity(entries.len());
+        let mut carbs_gs: Vec<Option<Decimal>> = Vec::with_capacity(entries.len());
+        let mut fat_gs: Vec<Option<Decimal>> = Vec::with_capacity(entries.len());
+        let mut fiber_gs: Vec<Option<Decimal>> = Vec::with_capacity(entries.len());
+        let mut sugar_gs: Vec<Option<Decimal>> = Vec::with_capacity(entries.len());
+        let mut sodium_mgs: Vec<Option<Decimal>> = Vec::with_capacity(entries.len());
+        let mut saturated_fat_gs: Vec<Option<Decimal>> = Vec::with_capacity(entries.len());
+        let mut notes: Vec<Option<String>> = Vec::with_capacity(entries.len());
+
+        for e in entries {
+            food_ids.push(e.food_id);
+            serving_ids.push(e.serving_id);
+            consumed_ons.push(e.consumed_on);
+            meals.push(e.meal.as_str().to_string());
+            quantities.push(e.quantity);
+            grams_totals.push(e.grams_total);
+            calories_kcals.push(e.snapshot.calories_kcal);
+            protein_gs.push(e.snapshot.protein_g);
+            carbs_gs.push(e.snapshot.carbs_g);
+            fat_gs.push(e.snapshot.fat_g);
+            fiber_gs.push(e.snapshot.fiber_g);
+            sugar_gs.push(e.snapshot.sugar_g);
+            sodium_mgs.push(e.snapshot.sodium_mg);
+            saturated_fat_gs.push(e.snapshot.saturated_fat_g);
+            notes.push(e.note.clone());
+        }
+
+        let sql = format!(
+            "INSERT INTO food_log_entries (\
+                user_id, food_id, serving_id, consumed_on, meal, \
+                quantity, grams_total, \
+                calories_kcal, protein_g, carbs_g, fat_g, fiber_g, sugar_g, sodium_mg, saturated_fat_g, \
+                note\
+             ) \
+             SELECT \
+                $1, \
+                food_id, serving_id, consumed_on, meal, \
+                quantity, grams_total, \
+                calories_kcal, protein_g, carbs_g, fat_g, fiber_g, sugar_g, sodium_mg, saturated_fat_g, \
+                note \
+             FROM UNNEST(\
+                $2::uuid[], \
+                $3::uuid[], \
+                $4::date[], \
+                $5::text[], \
+                $6::numeric[], \
+                $7::numeric[], \
+                $8::numeric[], \
+                $9::numeric[], \
+                $10::numeric[], \
+                $11::numeric[], \
+                $12::numeric[], \
+                $13::numeric[], \
+                $14::numeric[], \
+                $15::numeric[], \
+                $16::text[] \
+             ) AS x(\
+                food_id, serving_id, consumed_on, meal, \
+                quantity, grams_total, \
+                calories_kcal, protein_g, carbs_g, fat_g, fiber_g, sugar_g, sodium_mg, saturated_fat_g, \
+                note\
+             ) \
+             RETURNING {SELECT_COLS}"
+        );
+
+        let mut tx = self.pool.begin().await.map_err(map_sqlx)?;
+        let rows: Vec<LogEntryRow> = sqlx::query_as(&sql)
+            .bind(user_id)
+            .bind(&food_ids)
+            .bind(&serving_ids)
+            .bind(&consumed_ons)
+            .bind(&meals)
+            .bind(&quantities)
+            .bind(&grams_totals)
+            .bind(&calories_kcals)
+            .bind(&protein_gs)
+            .bind(&carbs_gs)
+            .bind(&fat_gs)
+            .bind(&fiber_gs)
+            .bind(&sugar_gs)
+            .bind(&sodium_mgs)
+            .bind(&saturated_fat_gs)
+            .bind(&notes)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(map_sqlx)?;
+        tx.commit().await.map_err(map_sqlx)?;
+
+        Ok(rows.into_iter().map(Into::into).collect())
+    }
 }

@@ -65,4 +65,13 @@ pub trait LogRepository: Send + Sync + 'static {
         from: Option<NaiveDate>,
         to: Option<NaiveDate>,
     ) -> CoreResult<i64>;
+
+    /// Bulk-insert log entries in a single transaction. Returns the inserted
+    /// rows in the same order as the input slice. All-or-nothing: any DB
+    /// failure rolls back every insert.
+    async fn create_many(
+        &self,
+        user_id: Uuid,
+        entries: &[PersistedLogEntry],
+    ) -> CoreResult<Vec<FoodLogEntry>>;
 }

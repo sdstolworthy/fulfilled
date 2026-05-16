@@ -277,4 +277,17 @@ impl LogRepository for InMemoryLogRepository {
             .count();
         Ok(count as i64)
     }
+
+    async fn create_many(
+        &self,
+        user_id: Uuid,
+        entries: &[PersistedLogEntry],
+    ) -> CoreResult<Vec<FoodLogEntry>> {
+        let mut out = Vec::with_capacity(entries.len());
+        for entry in entries {
+            let stored = self.create(user_id, entry).await?;
+            out.push(stored);
+        }
+        Ok(out)
+    }
 }
