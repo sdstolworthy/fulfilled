@@ -7,8 +7,12 @@ use loseit_core::domain::{
     FoodDraft, FoodSource, Meal, NutritionPer100g, NutritionSnapshot, PersistedLogEntry,
 };
 use loseit_core::repo::{FoodRepository, LogRepository, ServingRepository};
+use loseit_core::service::LogService;
 use loseit_core::CoreError;
-use loseit_testing::{InMemoryFoodRepository, InMemoryLogRepository, InMemoryServingRepository};
+use loseit_testing::{
+    InMemoryFoodRepository, InMemoryGoalRepository, InMemoryLogRepository,
+    InMemoryServingRepository,
+};
 use rust_decimal::Decimal;
 use uuid::Uuid;
 
@@ -419,4 +423,250 @@ async fn list_mine_trims_whitespace_in_q() {
         .await
         .expect("count_mine with whitespace-only q");
     assert_eq!(count, 2);
+}
+
+// ── list_paginated / count_in_range tests (T03) ───────────────────────────────
+
+fn make_log_service() -> (Arc<InMemoryLogRepository>, LogService) {
+    let logs = Arc::new(InMemoryLogRepository::new());
+    let foods = Arc::new(InMemoryFoodRepository::new());
+    let servings = Arc::new(InMemoryServingRepository::new());
+    let goals = Arc::new(InMemoryGoalRepository::new());
+    let svc = LogService::new(logs.clone(), foods, servings, goals);
+    (logs, svc)
+}
+
+#[tokio::test]
+async fn log_repo_list_paginated_orders_by_consumed_on_then_created_at_then_id() {
+    // Seed 3 entries across 2 dates. We need the order to be deterministic.
+    // Because InMemoryLogRepository uses Utc::now() for created_at and all
+    // inserts happen in tight sequence the timestamps may collide — the id
+    // tiebreaker (UUID v4 random) would make order non-deterministic in that
+    // case. Work around it by inserting in date order and verifying that the
+    // descending date sort is what drives the top-level ordering.
+    let repo = InMemoryLogRepository::new();
+    let user = Uuid::new_v4();
+    let food = Uuid::new_v4();
+
+    let day_old = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
+    let day_new = NaiveDate::from_ymd_opt(2026, 1, 3).unwrap();
+
+    // Insert: two entries on the older date, one on the newer.
+    let e_old_a = repo
+        .create(user, &sample_persisted_entry(food, day_old))
+        .await
+        .expect("create old_a");
+    let e_old_b = repo
+        .create(user, &sample_persisted_entry(food, day_old))
+        .await
+        .expect("create old_b");
+    let e_new = repo
+        .create(user, &sample_persisted_entry(food, day_new))
+        .await
+        .expect("create new");
+
+    let page = repo
+        .list_paginated(user, None, None, 10, 0)
+        .await
+        .expect("list_paginated");
+
+    assert_eq!(page.len(), 3);
+    // The newer date entry must be first.
+    assert_eq!(page[0].id, e_new.id, "newest date should be first");
+    // Both older entries follow.
+    assert!(
+        page[1].consumed_on == day_old && page[2].consumed_on == day_old,
+        "older entries should come after"
+    );
+    // Verify none of the older-date entries are e_new.
+    assert_ne!(page[1].id, e_new.id);
+    assert_ne!(page[2].id, e_new.id);
+    // The two old entries are either e_old_a or e_old_b — just confirm both present.
+    let old_ids: Vec<_> = vec![page[1].id, page[2].id];
+    assert!(old_ids.contains(&e_old_a.id));
+    assert!(old_ids.contains(&e_old_b.id));
+}
+
+#[tokio::test]
+async fn log_repo_list_paginated_filters_by_from_only() {
+    let repo = InMemoryLogRepository::new();
+    let user = Uuid::new_v4();
+    let food = Uuid::new_v4();
+
+    let jan1 = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
+    let jan5 = NaiveDate::from_ymd_opt(2026, 1, 5).unwrap();
+    let jan10 = NaiveDate::from_ymd_opt(2026, 1, 10).unwrap();
+
+    repo.create(user, &sample_persisted_entry(food, jan1))
+        .await
+        .expect("create jan1");
+    repo.create(user, &sample_persisted_entry(food, jan5))
+        .await
+        .expect("create jan5");
+    repo.create(user, &sample_persisted_entry(food, jan10))
+        .await
+        .expect("create jan10");
+
+    // from=jan5 → jan5 and jan10 only.
+    let page = repo
+        .list_paginated(user, Some(jan5), None, 10, 0)
+        .await
+        .expect("list");
+    assert_eq!(page.len(), 2, "from filter should include jan5..=jan10");
+    assert!(page.iter().all(|e| e.consumed_on >= jan5));
+}
+
+#[tokio::test]
+async fn log_repo_list_paginated_filters_by_to_only() {
+    let repo = InMemoryLogRepository::new();
+    let user = Uuid::new_v4();
+    let food = Uuid::new_v4();
+
+    let jan1 = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
+    let jan5 = NaiveDate::from_ymd_opt(2026, 1, 5).unwrap();
+    let jan10 = NaiveDate::from_ymd_opt(2026, 1, 10).unwrap();
+
+    repo.create(user, &sample_persisted_entry(food, jan1))
+        .await
+        .expect("create jan1");
+    repo.create(user, &sample_persisted_entry(food, jan5))
+        .await
+        .expect("create jan5");
+    repo.create(user, &sample_persisted_entry(food, jan10))
+        .await
+        .expect("create jan10");
+
+    // to=jan5 → jan1 and jan5 only.
+    let page = repo
+        .list_paginated(user, None, Some(jan5), 10, 0)
+        .await
+        .expect("list");
+    assert_eq!(page.len(), 2, "to filter should include jan1..=jan5");
+    assert!(page.iter().all(|e| e.consumed_on <= jan5));
+}
+
+#[tokio::test]
+async fn log_repo_list_paginated_filters_by_both() {
+    let repo = InMemoryLogRepository::new();
+    let user = Uuid::new_v4();
+    let food = Uuid::new_v4();
+
+    let jan1 = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
+    let jan5 = NaiveDate::from_ymd_opt(2026, 1, 5).unwrap();
+    let jan7 = NaiveDate::from_ymd_opt(2026, 1, 7).unwrap();
+    let jan10 = NaiveDate::from_ymd_opt(2026, 1, 10).unwrap();
+
+    repo.create(user, &sample_persisted_entry(food, jan1))
+        .await
+        .expect("create jan1");
+    repo.create(user, &sample_persisted_entry(food, jan5))
+        .await
+        .expect("create jan5");
+    repo.create(user, &sample_persisted_entry(food, jan7))
+        .await
+        .expect("create jan7");
+    repo.create(user, &sample_persisted_entry(food, jan10))
+        .await
+        .expect("create jan10");
+
+    // from=jan5, to=jan7 → jan5 and jan7 only.
+    let page = repo
+        .list_paginated(user, Some(jan5), Some(jan7), 10, 0)
+        .await
+        .expect("list");
+    assert_eq!(page.len(), 2, "both filters: jan5..=jan7");
+    assert!(page.iter().all(|e| e.consumed_on >= jan5 && e.consumed_on <= jan7));
+}
+
+#[tokio::test]
+async fn log_repo_list_paginated_filters_by_neither() {
+    let repo = InMemoryLogRepository::new();
+    let user = Uuid::new_v4();
+    let food = Uuid::new_v4();
+
+    let jan1 = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
+    let jan10 = NaiveDate::from_ymd_opt(2026, 1, 10).unwrap();
+
+    repo.create(user, &sample_persisted_entry(food, jan1))
+        .await
+        .expect("create jan1");
+    repo.create(user, &sample_persisted_entry(food, jan10))
+        .await
+        .expect("create jan10");
+
+    let page = repo
+        .list_paginated(user, None, None, 10, 0)
+        .await
+        .expect("list");
+    assert_eq!(page.len(), 2, "no filters: all entries returned");
+}
+
+#[tokio::test]
+async fn log_repo_count_in_range_matches_list_paginated_total_without_limit() {
+    let repo = InMemoryLogRepository::new();
+    let user = Uuid::new_v4();
+    let food = Uuid::new_v4();
+
+    let jan1 = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
+    let jan5 = NaiveDate::from_ymd_opt(2026, 1, 5).unwrap();
+
+    for d in [jan1, jan5, jan5] {
+        repo.create(user, &sample_persisted_entry(food, d))
+            .await
+            .expect("create");
+    }
+
+    // count with from=jan5 should be 2 (the two jan5 entries).
+    let count = repo
+        .count_in_range(user, Some(jan5), None)
+        .await
+        .expect("count");
+    let page = repo
+        .list_paginated(user, Some(jan5), None, 1000, 0)
+        .await
+        .expect("list");
+    assert_eq!(
+        count,
+        page.len() as i64,
+        "count_in_range must equal list_paginated length when limit is large"
+    );
+    assert_eq!(count, 2);
+}
+
+#[tokio::test]
+async fn log_service_list_returns_validation_error_on_from_after_to() {
+    let (_logs, svc) = make_log_service();
+    let user = Uuid::new_v4();
+
+    let jan10 = NaiveDate::from_ymd_opt(2026, 1, 10).unwrap();
+    let jan1 = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
+
+    let err = svc
+        .list(user, Some(jan10), Some(jan1), None, None)
+        .await
+        .expect_err("from > to should fail");
+
+    match err {
+        CoreError::Validation(msg) => {
+            assert!(
+                msg.contains("from"),
+                "error message should mention `from`: {msg}"
+            );
+        }
+        other => panic!("expected Validation, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn log_service_list_applies_default_limit_when_omitted() {
+    let (_logs, svc) = make_log_service();
+    let user = Uuid::new_v4();
+
+    let result = svc
+        .list(user, None, None, None, None)
+        .await
+        .expect("list with no params");
+
+    assert_eq!(result.limit, 100, "default limit must be 100");
+    assert_eq!(result.offset, 0, "default offset must be 0");
 }

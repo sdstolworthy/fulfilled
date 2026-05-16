@@ -44,4 +44,25 @@ pub trait LogRepository: Send + Sync + 'static {
     /// True iff any entry references the given food. Used by the food
     /// service to surface a clean conflict before attempting a delete.
     async fn any_entry_references_food(&self, food_id: Uuid) -> CoreResult<bool>;
+
+    /// Paginated list of log entries for the given user, optionally filtered
+    /// by date range. Results are ordered `consumed_on DESC, created_at DESC,
+    /// id DESC` for stable cursor-compatible pagination.
+    async fn list_paginated(
+        &self,
+        user_id: Uuid,
+        from: Option<NaiveDate>,
+        to: Option<NaiveDate>,
+        limit: i64,
+        offset: i64,
+    ) -> CoreResult<Vec<FoodLogEntry>>;
+
+    /// Total count of log entries for `user_id` matching the optional date
+    /// range. Used alongside [`list_paginated`] to populate `Paginated::total`.
+    async fn count_in_range(
+        &self,
+        user_id: Uuid,
+        from: Option<NaiveDate>,
+        to: Option<NaiveDate>,
+    ) -> CoreResult<i64>;
 }

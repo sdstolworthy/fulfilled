@@ -177,4 +177,52 @@ impl LogRepository for InMemoryLogRepository {
         let store = self.by_id.lock().unwrap();
         Ok(store.values().any(|e| e.food_id == food_id))
     }
+
+    async fn list_paginated(
+        &self,
+        user_id: Uuid,
+        from: Option<NaiveDate>,
+        to: Option<NaiveDate>,
+        limit: i64,
+        offset: i64,
+    ) -> CoreResult<Vec<FoodLogEntry>> {
+        let store = self.by_id.lock().unwrap();
+        let mut out: Vec<FoodLogEntry> = store
+            .values()
+            .filter(|e| {
+                e.user_id == user_id
+                    && from.map_or(true, |d| e.consumed_on >= d)
+                    && to.map_or(true, |d| e.consumed_on <= d)
+            })
+            .cloned()
+            .collect();
+        // Mirror the Postgres ORDER BY consumed_on DESC, created_at DESC, id DESC.
+        out.sort_by(|a, b| {
+            b.consumed_on
+                .cmp(&a.consumed_on)
+                .then(b.created_at.cmp(&a.created_at))
+                .then(b.id.cmp(&a.id))
+        });
+        let skip = (offset as usize).min(out.len());
+        let take = (limit as usize).min(out.len().saturating_sub(skip));
+        Ok(out[skip..skip + take].to_vec())
+    }
+
+    async fn count_in_range(
+        &self,
+        user_id: Uuid,
+        from: Option<NaiveDate>,
+        to: Option<NaiveDate>,
+    ) -> CoreResult<i64> {
+        let store = self.by_id.lock().unwrap();
+        let count = store
+            .values()
+            .filter(|e| {
+                e.user_id == user_id
+                    && from.map_or(true, |d| e.consumed_on >= d)
+                    && to.map_or(true, |d| e.consumed_on <= d)
+            })
+            .count();
+        Ok(count as i64)
+    }
 }

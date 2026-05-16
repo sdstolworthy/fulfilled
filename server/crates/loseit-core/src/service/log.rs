@@ -10,6 +10,7 @@ use crate::domain::{
     NutritionSnapshot, PersistedLogEntry, PersistedLogPatch, RecomputedSnapshot, ServingPreview,
 };
 use crate::repo::{FoodRepository, GoalRepository, LogRepository, ServingRepository};
+use crate::service::page::{resolve_page_params, Paginated};
 use crate::{CoreError, CoreResult};
 
 /// Hardcoded "frequent" lookback window for v1. See NEXT_STEPS open
@@ -227,6 +228,40 @@ impl LogService {
         to: NaiveDate,
     ) -> CoreResult<Vec<FoodLogEntry>> {
         self.logs.list_in_range(user, from, to).await
+    }
+
+    /// Paginated log entries for `user`, optionally filtered by date range.
+    ///
+    /// Returns a [`Paginated`] envelope with `total` set to the full match
+    /// count so callers can page through results. Validates that `from <= to`
+    /// when both are supplied, and delegates limit/offset defaulting to
+    /// [`resolve_page_params`].
+    #[tracing::instrument(skip(self))]
+    pub async fn list(
+        &self,
+        user: Uuid,
+        from: Option<NaiveDate>,
+        to: Option<NaiveDate>,
+        limit: Option<i64>,
+        offset: Option<i64>,
+    ) -> CoreResult<Paginated<FoodLogEntry>> {
+        if let (Some(f), Some(t)) = (from, to) {
+            if f > t {
+                return Err(CoreError::Validation("`from` must be <= `to`".into()));
+            }
+        }
+        let page = resolve_page_params(limit, offset)?;
+        let results = self
+            .logs
+            .list_paginated(user, from, to, page.limit, page.offset)
+            .await?;
+        let total = self.logs.count_in_range(user, from, to).await?;
+        Ok(Paginated {
+            results,
+            total,
+            limit: page.limit,
+            offset: page.offset,
+        })
     }
 
     #[tracing::instrument(skip(self))]
