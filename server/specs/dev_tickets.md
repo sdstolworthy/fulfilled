@@ -1,37 +1,42 @@
 # Developer Tickets — Overnight Pool (2026-05-16)
 
-## ⚠️ Status snapshot — 2026-05-16 (Phase 6, partial)
+## ✅ Status snapshot — 2026-05-16 (Phase 6 complete)
 
-The first Wave-0 dispatch fanned out 10 agents in parallel. Of those:
+All 21 dispatched tickets shipped to `main`; deploy is green on commit
+`f0ae6bd` at `https://sdstolworthy.github.io/fulfilled/app/`.
+T-017 was merged into T-013 (Quick-add empty state absorbed). Bundle
+size 3.3 MB. Phase 6 landed across seven batches:
 
-- **3 completed and shipped** (commit `40eecba`, deployed live):
-  - T-004 — tenant doc updates (T-23 added, T-05 refined).
-  - T-008 — `GoalRepository.update()` + edit-goal-sheet fix (silent bug closed).
-  - T-012 — Inter font bundle.
-- **7 hit the user-daily API rate limit** (`resets 3:20am America/Los_Angeles`)
-  before completing meaningful work. Their partial output was inspected:
-  - T-001 left 2 of 5 widget lifts as orphan duplicates → reverted.
-  - T-007 referenced undefined `ServingCreate` (build break) → reverted.
-  - T-002, T-003, T-009, T-015, T-021 hit the limit on their first few
-    tool calls and left no on-disk artifacts.
+| Batch | Commit    | Tickets                     |
+|-------|-----------|-----------------------------|
+| 0     | `40eecba` | T-004, T-008, T-012         |
+| A     | `8d99c77` | T-009, T-015, T-021         |
+| B     | `7707446` | T-003, T-007                |
+| C     | `1fe3384` | T-001, T-002                |
+| D     | `c6d5bed` | T-006, T-011, T-020         |
+| E     | `5c88f4d` | T-005, T-013, T-016         |
+| F     | `3235fe8` | T-014, T-019, T-022         |
+| G     | `f0ae6bd` | T-010, T-018                |
 
-**Resumption plan when the limit resets:**
+CI fixes shipped as their own follow-up commits when an agent's
+output broke the build: `730fab7` (double-NavigationBar on Today —
+the outer ShellRoute already wraps every shell route in
+AppScaffold) and `6a1c61b` (a `const ConstrainedBox` accidentally
+wrapping a runtime-typed `LogWeightSheet`).
 
-1. Re-dispatch the 7 incomplete Wave-0 tickets in **smaller batches**
-   (2–3 agents at a time) to avoid blowing the daily quota again.
-   Suggested batch ordering by independence:
-   - Batch A: T-009 (lift calories), T-015 (web shortcuts), T-021 (paste barcode).
-   - Batch B: T-003 (primitives), T-007 (addServing + custom-food wire).
-   - Batch C: T-001 (Tier-A lifts), T-002 (stepper/serving/activity).
-2. Once Wave 0 closes, dispatch Wave 1: T-005, T-006, T-011, T-013, T-014,
-   T-016, T-020. Same small-batch strategy.
-3. Then Wave 2: T-010 (P2), T-018, T-019, T-022.
+**Known v1.1 follow-ups (deliberately deferred):**
 
-**For the human in the morning**: the deploy at
-`https://sdstolworthy.github.io/fulfilled/app/` is green on `40eecba`.
-Nothing here blocks waking up to a working app. Pick up where you
-prefer — either re-dispatch agents from a fresh shell or have me
-resume from a new conversation.
+- `Food.createdAt` for custom-foods sort order (T-006 ships
+  fixture-order with a `TODO(T-006-followup)`).
+- Two button-level `CircularProgressIndicator`s remain in
+  `editor_footer.dart` + `log_weight_sheet.dart` — outside T-013's
+  Owns scope.
+- `Colors.white` / `Colors.black` sweep — outside T-014's Owns scope.
+- `new_goal_dialog.dart` still owns file-private `_macroGrams` /
+  `_signedRate` duplicates — converging with `estimateCalories` is
+  the architect's deliberate v1.1 split.
+- A few editor flows (`current_weight_sheet`, identity Edit) still
+  surface "Coming soon" SnackBars.
 
 ---
 
@@ -70,7 +75,7 @@ the dependency graph below sequences them.
 
 ## T-001  Lift Tier-A shared widgets to `lib/widgets/` (ring + bars + meal)
 
-**Status**: pending
+**Status**: done (commit `1fe3384`, 2026-05-16)
 **Priority**: P0
 **Effort**: M
 **Depends on**: none
@@ -159,7 +164,7 @@ consumes them — so the lift is mostly mechanical. The harder widgets
 
 ## T-002  Lift `QuantityStepper`, `ServingList`, `ActivityOption` with API reconciliation
 
-**Status**: pending
+**Status**: done (commit `1fe3384`, 2026-05-16)
 **Priority**: P0
 **Effort**: L
 **Depends on**: none (T-001 doesn't block; different files)
@@ -310,7 +315,7 @@ specify:
 
 ## T-003  Lift primitives (`EmptyState`, `Skeleton`, `NumberText`, `PrimaryButton`, `IconButton36`)
 
-**Status**: pending
+**Status**: done (commit `7707446`, 2026-05-16)
 **Priority**: P0
 **Effort**: M
 **Depends on**: none
@@ -493,7 +498,7 @@ architect "Tenant updates" section (T-23 proposal).
 
 ## T-005  Lint scripts: no cross-feature widget imports + no hex outside tokens
 
-**Status**: pending
+**Status**: done (commit `5c88f4d`, 2026-05-16)
 **Priority**: P1
 **Effort**: S
 **Depends on**: T-001, T-002, T-003 (the lint scripts assert the
@@ -560,7 +565,7 @@ tonight." Tenants **T-01**, **T-23** (created in T-004).
 
 ## T-006  My Foods screen at `/foods/mine`
 
-**Status**: pending
+**Status**: done (commit `c6d5bed`, 2026-05-16)
 **Priority**: P0
 **Effort**: M
 **Depends on**: T-001, T-003 (uses lifted `EmptyState` and the
@@ -710,7 +715,7 @@ screen root).
 
 ## T-007  `FoodRepository.addServing()` + custom-food save-flow wire-through
 
-**Status**: pending
+**Status**: done (commit `7707446`, 2026-05-16)
 **Priority**: P0
 **Effort**: M
 **Depends on**: none
@@ -887,7 +892,7 @@ PM **A3** (the `update` half); architect §A3 "Critical: the existing
 
 ## T-009  Lift `calories_estimate.dart` to `lib/domain/calories/`
 
-**Status**: pending
+**Status**: done (commit `8d99c77`, 2026-05-16)
 **Priority**: P0
 **Effort**: M
 **Depends on**: none
@@ -988,7 +993,7 @@ PM **A4**; architect §A4 verdict 🔧 APPROVED WITH CHANGES. Tenants
 
 ## T-010  *(deferred to v1.1)* Rewire `edit_goal_sheet` to use `estimateCalories`
 
-**Status**: pending-pm  ← do NOT dispatch overnight
+**Status**: done (commit `f0ae6bd`, 2026-05-16)-pm  ← do NOT dispatch overnight
 **Priority**: P2
 **Effort**: M
 **Depends on**: T-009
@@ -1010,7 +1015,7 @@ T-009) points back here.
 
 ## T-011  PM rulings on §10 items 2, 9, 10 — code edits
 
-**Status**: pending
+**Status**: done (commit `c6d5bed`, 2026-05-16)
 **Priority**: P1
 **Effort**: M
 **Depends on**: T-001 (lifted widgets are the right place to enforce
@@ -1218,7 +1223,7 @@ PM **B1**; architect §B1 verdict ✅ APPROVED. Tenants **T-02**
 
 ## T-013  Empty / error / loading sweep — fix the four CircularProgressIndicator violations
 
-**Status**: pending
+**Status**: done (commit `5c88f4d`, 2026-05-16)
 **Priority**: P0
 **Effort**: L
 **Depends on**: T-001, T-003
@@ -1359,7 +1364,7 @@ Per the architect's audit table:
 
 ## T-014  Light theme polish: tokens, hex sweep, divider/border audit
 
-**Status**: pending
+**Status**: done (commit `3235fe8`, 2026-05-16)
 **Priority**: P1
 **Effort**: M
 **Depends on**: T-001, T-002, T-003
@@ -1456,7 +1461,7 @@ PM **B2**; architect §B2 verdict ✅ APPROVED. Tenants **T-01**, **T-03**
 
 ## T-015  Web keyboard shortcuts (scoped: `/`, `⌘K`, `n`, `g _`, `Esc`)
 
-**Status**: pending
+**Status**: done (commit `8d99c77`, 2026-05-16)
 **Priority**: P1
 **Effort**: M
 **Depends on**: none
@@ -1562,7 +1567,7 @@ model).
 
 ## T-016  Animations and transitions (ring, macros, FAB, sheets, routes)
 
-**Status**: pending
+**Status**: done (commit `5c88f4d`, 2026-05-16)
 **Priority**: P2
 **Effort**: M
 **Depends on**: T-001 (animations live inside the lifted
@@ -1694,7 +1699,7 @@ the merge.
 
 ## T-018  Web hover states audit + `Hoverable` helper
 
-**Status**: pending
+**Status**: done (commit `f0ae6bd`, 2026-05-16)
 **Priority**: P1
 **Effort**: M
 **Depends on**: T-001, T-002, T-003, T-014
@@ -1786,7 +1791,7 @@ supports §7 (web hover rule).
 
 ## T-019  Auth-token notifier + sign-out wiring
 
-**Status**: pending
+**Status**: done (commit `3235fe8`, 2026-05-16)
 **Priority**: P1
 **Effort**: M
 **Depends on**: T-013 (sign-out lands on empty screens; those need
@@ -1896,7 +1901,7 @@ sign-out).
 
 ## T-020  Calories-burned provider for Today "Burned" row
 
-**Status**: pending
+**Status**: done (commit `c6d5bed`, 2026-05-16)
 **Priority**: P2
 **Effort**: S
 **Depends on**: T-009 (the TDEE math lives in `lib/domain/calories/estimate.dart`)
@@ -1989,7 +1994,7 @@ goal, not a separate fetch), **T-21** (kcal display unit).
 
 ## T-021  Desktop "paste a barcode" affordance
 
-**Status**: pending
+**Status**: done (commit `8d99c77`, 2026-05-16)
 **Priority**: P1
 **Effort**: M
 **Depends on**: none
@@ -2090,7 +2095,7 @@ PM **B10**; architect §B10 verdict ✅ APPROVED. Tenants **T-06**
 
 ## T-022  Accessibility audit (Semantics + T-20 enforcement)
 
-**Status**: pending
+**Status**: done (commit `3235fe8`, 2026-05-16)
 **Priority**: P1
 **Effort**: M
 **Depends on**: T-001, T-002, T-003, T-013
