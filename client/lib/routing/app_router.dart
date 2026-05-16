@@ -10,6 +10,7 @@ import '../features/goals/widgets/new_goal_dialog.dart';
 import '../features/my_foods/my_foods_screen.dart';
 import '../features/onboarding/onboarding_screen.dart';
 import '../features/profile/profile_screen.dart';
+import '../features/scan/scan_screen.dart';
 import '../features/search/search_screen.dart';
 import '../features/today/today_screen.dart';
 import '../features/weight/weight_screen.dart';
@@ -154,6 +155,14 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         builder: (_, state) => _BarcodeResolveScreen(
           barcode: state.pathParameters['barcode']!,
         ),
+      ),
+      // Outside-the-shell barcode scanner route. Non-deep-linkable in
+      // spirit per `specs/architect_barcode.md` §3.1; the only caller
+      // is `openBarcodeScanner` which `kIsWeb`-gates.
+      GoRoute(
+        name: Routes.foodScanName,
+        path: Routes.foodScanPath,
+        builder: (_, __) => const ScanScreen(),
       ),
       GoRoute(
         name: Routes.foodEditName,

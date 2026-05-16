@@ -38,6 +38,44 @@ flutter pub get
 flutter run -d chrome
 ```
 
+### Native camera-permission config (barcode scanner)
+
+The `/foods/scan` route uses `mobile_scanner` to drive the device camera.
+Both iOS and Android require an explicit permission declaration in the
+generated native scaffold. Because `ios/`, `android/`, and `web/` are
+gitignored (see `.gitignore`) we cannot commit the snippets here — add
+them locally after running `flutter create` and before launching on a
+device.
+
+**iOS — `ios/Runner/Info.plist`** (inside the top-level `<dict>`):
+
+```xml
+<key>NSCameraUsageDescription</key>
+<string>Scan barcodes on packaged foods to log them quickly.</string>
+```
+
+Apple rejects builds that request camera access without a concrete,
+human-readable description string. See `specs/dev_tickets_barcode.md`
+SC-001 and `specs/pm_barcode.md` §6 ("Permission first-run + recovery")
+for the copy contract.
+
+**Android — `android/app/src/main/AndroidManifest.xml`** (inside the
+top-level `<manifest>` element, alongside any other `<uses-permission>`
+entries):
+
+```xml
+<uses-permission android:name="android.permission.CAMERA" />
+```
+
+The `mobile_scanner` plugin's manifest merger usually adds this entry
+on its own; we add it explicitly so the dependency is auditable.
+
+CI builds web-only, so the missing native config does not block deploy.
+The barcode-scanner opener (`lib/features/scan/openers.dart`)
+short-circuits on `kIsWeb`, which makes web bundles tree-shake the
+scanner widget tree. The contract above is the runtime contract for
+device builds.
+
 > No `build_runner` step is required. The foundation is intentionally
 > codegen-free: providers are hand-written and `OutboxEntry` is a plain
 > value class. When the analyzer / freezed / riverpod_generator ecosystem

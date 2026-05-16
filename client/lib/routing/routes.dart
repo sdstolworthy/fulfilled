@@ -57,6 +57,13 @@ class Routes {
   static const String foodBarcodeName = 'foods.barcode';
   static const String foodBarcodePath = '/foods/barcode/:barcode';
 
+  /// Full-screen barcode scanner route — outside the shell, no nav chrome.
+  /// Pushed only by `openBarcodeScanner` (which short-circuits on `kIsWeb`).
+  /// See `specs/architect_barcode.md` §3.1 and `specs/dev_tickets_barcode.md`
+  /// SC-001. The route is non-deep-linkable in spirit (intra-app only).
+  static const String foodScanName = 'foods.scan';
+  static const String foodScanPath = '/foods/scan';
+
   static const String onboardingName = 'onboarding';
   static const String onboardingPath = '/onboarding/:step';
 }

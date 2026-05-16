@@ -1,7 +1,7 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../form_factor/form_factor.dart';
 import '../../../providers/search_focus_provider.dart';
 import '../../../theme/context_extensions.dart';
 
@@ -22,16 +22,18 @@ import '../../../theme/context_extensions.dart';
 /// [searchFieldFocusNodeProvider] so the `/` keyboard shortcut can
 /// focus it from anywhere.
 ///
-/// T-021 — placeholder copy swaps by form factor when the caller
-/// doesn't override [hintText]:
+/// T-021 — placeholder copy swaps by platform when the caller doesn't
+/// override [hintText]:
 ///
-/// - compact (phone / narrow web): "Search foods or scan barcode…" —
-///   the mobile camera scanner button is visible next to the field.
-/// - expanded (desktop web): "Search foods or paste a barcode…" —
-///   there is no camera scanner on web; the user types or pastes the
-///   digits and the screen surfaces a "Look up barcode …" affordance.
+/// - native mobile (iOS / Android, any width): "Search foods or scan
+///   barcode…" — the [BarcodeScanButton] is visible next to the field.
+/// - all web (desktop and mobile-web Safari): "Search foods or paste a
+///   barcode…" — there is no camera scanner on web; the user types or
+///   pastes the digits and the screen surfaces a "Look up barcode …"
+///   affordance.
 ///
-/// Medium falls back to the compact variant; only `expanded` swaps.
+/// See `specs/pm_barcode.md` §7 and `specs/architect_barcode.md` §4.3
+/// for the rule's resolution from the prior `isExpanded` predicate.
 class SearchField extends ConsumerWidget {
   const SearchField({
     required this.controller,
@@ -59,7 +61,7 @@ class SearchField extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final focusNode = ref.watch(searchFieldFocusNodeProvider);
     final resolvedHint = hintText ??
-        (context.formFactor.isExpanded
+        (kIsWeb
             ? 'Search foods or paste a barcode…'
             : 'Search foods or scan barcode…');
     return Container(

@@ -294,9 +294,7 @@ class _TopBar extends StatelessWidget {
             ),
           ),
           SizedBox(width: context.space.x2),
-          BarcodeScanButton(
-            onScan: (code) => context.push('/foods/barcode/$code'),
-          ),
+          const BarcodeScanButton(),
         ],
       ),
     );
