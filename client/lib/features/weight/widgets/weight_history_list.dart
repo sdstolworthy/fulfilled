@@ -121,8 +121,8 @@ Future<void> _openLogWeightSheet(BuildContext context) async {
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(dialogCtx.radius.r4),
       ),
-      child: const ConstrainedBox(
-        constraints: BoxConstraints(maxWidth: 480),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 480),
         child: LogWeightSheet(currentRange: range, asDialog: true),
       ),
     ),
