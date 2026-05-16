@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../domain/enums.dart';
 import '../../domain/food.dart';
 import '../../providers/food_providers.dart';
 import '../../routing/routes.dart';

@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../domain/drafts.dart';
+import '../../domain/enums.dart';
 import '../../domain/food.dart';
 import '../../domain/food_patch.dart';
 import '../../domain/nutrition.dart';
