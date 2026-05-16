@@ -5,7 +5,6 @@
 
 mod batch_repo;
 mod error;
-mod export_repo;
 mod food_repo;
 mod goal_repo;
 mod log_repo;
@@ -15,7 +14,6 @@ mod user_repo;
 mod weight_repo;
 
 pub use batch_repo::PgBatchRepository;
-pub use export_repo::PgExportJobRepository;
 pub use food_repo::PgFoodRepository;
 pub use goal_repo::PgGoalRepository;
 pub use log_repo::PgLogRepository;

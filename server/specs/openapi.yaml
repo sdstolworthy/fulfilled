@@ -126,8 +126,8 @@ paths:
       operationId: delete_me
       summary: Permanently delete the authenticated user and all their data
       description: |
-        Cascades deletion across food log entries, weights, goals, the
-        caller's custom foods, and any export jobs. Returns 204 on success.
+        Cascades deletion across food log entries, weights, goals, and the
+        caller's custom foods. Returns 204 on success.
         Note: subsequent requests with the same token will re-provision a
         fresh user row (the token still validates locally via the JWT issuer).
         This is accepted v1 behaviour.

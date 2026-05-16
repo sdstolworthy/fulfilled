@@ -1,5 +1,4 @@
 pub mod day_summary;
-pub mod export;
 pub mod food;
 pub mod food_import_batch;
 pub mod goal;
@@ -10,7 +9,6 @@ pub mod user;
 pub mod weight;
 
 pub use day_summary::{DaySummary, MealSubtotal};
-pub use export::{ExportJob, ExportStatus};
 pub use food::{
     Food, FoodDraft, FoodPatch, FoodSearchHit, FoodSource, NutriscoreGrade, NutritionPer100g,
     ServingPreview,
