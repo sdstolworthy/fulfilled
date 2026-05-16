@@ -225,7 +225,8 @@ class _WeightStepperState extends ConsumerState<WeightStepper> {
   /// Seed text for the single (kg / lb) `TextField`. Mirrors the
   /// `valueLabel` math `_buildSingle` used to inline.
   String _seedSingleText() {
-    final unit = widget.unitOverride ?? ref.read(weightUnitProvider);
+    final WeightUnit unit =
+        widget.unitOverride ?? ref.read(weightUnitProvider);
     switch (unit) {
       case WeightUnit.kg:
         return _formatOneDp(roundHalfToEvenScaled(widget.value, 1));
@@ -255,7 +256,8 @@ class _WeightStepperState extends ConsumerState<WeightStepper> {
   /// On parse failure or empty input, revert the controller to the
   /// last canonical value.
   void _commitSingleText() {
-    final unit = widget.unitOverride ?? ref.read(weightUnitProvider);
+    final WeightUnit unit =
+        widget.unitOverride ?? ref.read(weightUnitProvider);
     if (unit == WeightUnit.st) return; // wrong shape — guarded by callers.
     final raw = _singleCtrl.text.trim();
     void revert() {
