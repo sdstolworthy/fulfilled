@@ -6,6 +6,10 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../../theme/context_extensions.dart';
 import '../../widgets/icon_button_36.dart';
+import 'widgets/no_detect_hint.dart';
+import 'widgets/permission_denied.dart';
+import 'widgets/scan_torch_button.dart';
+import 'widgets/viewfinder_overlay.dart';
 
 /// Permission state machine for [ScanScreen]. SC-003 swaps in the
 /// user-facing surfaces; SC-001 ships placeholders.
@@ -163,13 +167,18 @@ class _ScanScreenState extends State<ScanScreen>
 
   @override
   Widget build(BuildContext context) {
+    final denied = _permission == _PermissionState.denied;
     return Scaffold(
-      backgroundColor: context.colors.ink,
+      // When the camera surface is hidden behind a denied state, swap
+      // the dark `ink` backdrop for the standard `bg` so the EmptyState
+      // reads on a light page rather than over an empty black void.
+      backgroundColor:
+          denied ? context.colors.bg : context.colors.ink,
       body: Semantics(
         label: 'Scan a food barcode',
         container: true,
-        child: _permission == _PermissionState.denied
-            ? _buildPermissionDeniedPlaceholder(context)
+        child: denied
+            ? const PermissionDenied()
             : _buildCameraStack(context),
       ),
     );
@@ -190,10 +199,9 @@ class _ScanScreenState extends State<ScanScreen>
             onDetect: _onDetect,
           ),
         ),
-        // SC-002 fills this slot with `ViewfinderOverlay`. SC-001
-        // ships the placeholder so the swap is a one-line diff.
-        const Positioned.fill(child: SizedBox.expand()),
-        // Top bar: close (left), torch slot (right, SC-003 fills).
+        // SC-002 fills this slot with `ViewfinderOverlay`.
+        const Positioned.fill(child: ViewfinderOverlay()),
+        // Top bar: close (left), torch (right). SC-003 wires the torch.
         SafeArea(
           child: Padding(
             padding: const EdgeInsets.symmetric(
@@ -209,63 +217,25 @@ class _ScanScreenState extends State<ScanScreen>
                   color: context.colors.surface,
                 ),
                 const Spacer(),
-                // SC-003 fills the torch slot.
-                const SizedBox.shrink(),
+                // SC-003: torch toggle. The button hides itself when
+                // the controller reports `TorchState.unavailable`, so
+                // we mount it unconditionally and let the leaf decide.
+                ScanTorchButton(controller: _controller),
               ],
             ),
           ),
         ),
-      ],
-    );
-  }
-
-  /// Placeholder for the permission-denied surface. SC-003 swaps in the
-  /// real `PermissionDenied` widget; SC-001 ships a minimal, screen-
-  /// reader-readable fallback so the route is never blank.
-  Widget _buildPermissionDeniedPlaceholder(BuildContext context) {
-    final colors = context.colors;
-    final text = context.text;
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            Icon(
-              Icons.no_photography_outlined,
-              size: 40,
-              color: colors.surface,
-            ),
-            const SizedBox(height: 12),
-            Text(
-              'Camera access is off',
-              textAlign: TextAlign.center,
-              style: text.title.copyWith(color: colors.surface),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Open Settings → Privacy → Camera → Fulfilled, '
-              'then return to the app.',
-              textAlign: TextAlign.center,
-              style: text.body.copyWith(color: colors.surface),
-            ),
-            const SizedBox(height: 16),
-            // Back affordance — the only escape from this placeholder
-            // until SC-003 wires "Try again".
-            Semantics(
-              button: true,
-              label: 'Close',
-              child: TextButton(
-                onPressed: () => Navigator.of(context).pop(null),
-                style: TextButton.styleFrom(
-                  foregroundColor: colors.surface,
-                ),
-                child: const Text('Close'),
-              ),
-            ),
-          ],
+        // SC-003: 10-second no-detect hint. The widget owns its own
+        // timer; we only mount it. `IgnorePointer` inside the leaf
+        // means it occupies the bottom of the stack without stealing
+        // taps before the band is visible.
+        const Positioned(
+          left: 0,
+          right: 0,
+          bottom: 0,
+          child: NoDetectHint(),
         ),
-      ),
+      ],
     );
   }
 
