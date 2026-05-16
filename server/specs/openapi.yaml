@@ -266,7 +266,7 @@ paths:
           description: Search query string.
         - in: query
           name: limit
-          schema: { type: integer, format: int64, minimum: 1 }
+          schema: { type: integer, format: int64, minimum: 0 }
           description: Page size. Server applies a cap if exceeded.
         - in: query
           name: offset
@@ -277,7 +277,7 @@ paths:
           description: Search page.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/FoodSearchPage" }
+              schema: { $ref: "#/components/schemas/PaginatedFoodSearchHits" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
@@ -1004,17 +1004,6 @@ components:
             - type: "null"
         calories_per_serving:
           $ref: "#/components/schemas/NullableDecimal"
-
-    FoodSearchPage:
-      type: object
-      required: [results, total, limit, offset]
-      properties:
-        results:
-          type: array
-          items: { $ref: "#/components/schemas/FoodSearchHit" }
-        total: { type: integer, format: int64 }
-        limit: { type: integer, format: int64 }
-        offset: { type: integer, format: int64 }
 
     Paginated:
       type: object

@@ -105,7 +105,7 @@ impl FoodService {
     ///
     /// Validation:
     /// * `q` is trimmed; empty after trim is treated as `None`.
-    /// * If `q` is provided and exceeds 200 characters after trim, returns
+    /// * If `q` is provided and exceeds 200 bytes after trim, returns
     ///   `CoreError::Validation`.
     #[tracing::instrument(skip(self))]
     pub async fn list_mine(
@@ -115,17 +115,16 @@ impl FoodService {
         limit: Option<i64>,
         offset: Option<i64>,
     ) -> CoreResult<Paginated<FoodSearchHit>> {
-        let q_opt: Option<&str> = match q {
+        let q_opt = match q {
             Some(s) => {
                 let trimmed = s.trim();
                 if trimmed.is_empty() {
                     None
+                } else if trimmed.len() > 200 {
+                    return Err(CoreError::Validation(
+                        "q must be <= 200 bytes".into(),
+                    ));
                 } else {
-                    if trimmed.chars().count() > 200 {
-                        return Err(CoreError::Validation(
-                            "q must be <= 200 characters".into(),
-                        ));
-                    }
                     Some(trimmed)
                 }
             }
