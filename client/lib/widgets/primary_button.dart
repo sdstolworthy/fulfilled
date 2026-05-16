@@ -157,10 +157,10 @@ class PrimaryButton extends StatelessWidget {
                   // The user-visible ink lives on the inner pill;
                   // mute the slop's splash so taps don't paint two
                   // overlapping highlights.
-                  splashColor: const Color(0x00000000),
-                  highlightColor: const Color(0x00000000),
-                  hoverColor: const Color(0x00000000),
-                  focusColor: const Color(0x00000000),
+                  splashColor: Colors.transparent,
+                  highlightColor: Colors.transparent,
+                  hoverColor: Colors.transparent,
+                  focusColor: Colors.transparent,
                 ),
               ),
             ),
