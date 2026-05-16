@@ -83,6 +83,11 @@ class DayViewCompact extends ConsumerWidget {
               entriesAsync: entriesAsync,
               onAddTap: (Meal _) =>
                   context.push(Routes.foodsSearchPath),
+              // LU-005: tapping a logged row opens the LogEntrySheet in
+              // edit mode. The handler guards on pending-sync (T-22)
+              // and fetches the full Food before opening — see
+              // `editLogEntry` for the gates.
+              onEntryTap: (entry) => editLogEntry(ref, context, entry),
             ),
           ),
         ],
@@ -191,12 +196,14 @@ class _MealsSliver extends StatelessWidget {
     required this.summaryAsync,
     required this.entriesAsync,
     required this.onAddTap,
+    required this.onEntryTap,
   });
 
   final DateTime date;
   final AsyncValue<DaySummary> summaryAsync;
   final AsyncValue<List<LogEntry>> entriesAsync;
   final void Function(Meal meal) onAddTap;
+  final void Function(LogEntry entry) onEntryTap;
 
   @override
   Widget build(BuildContext context) {
@@ -233,6 +240,7 @@ class _MealsSliver extends StatelessWidget {
               subtotal: subtotal,
               entries: byMeal[meal] ?? const <LogEntry>[],
               onAddTap: () => onAddTap(meal),
+              onEntryTap: onEntryTap,
             ),
           );
         },

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../domain/drafts.dart';
 import '../domain/enums.dart';
+import 'profile_providers.dart';
 
 /// Draft-state providers for the two multi-step forms:
 ///
@@ -94,6 +95,11 @@ class OnboardingDraftNotifier extends StateNotifier<OnboardingDraft> {
   void setTargetWeightKg(Decimal? v) =>
       state = state.copyWith(targetWeightKg: v);
 
+  /// Set the user-chosen display unit for the onboarding step 2 weight
+  /// row. Wires into `onboardingWeightUnitProvider` (LU-006) — the
+  /// chooser segment tap calls this directly.
+  void setWeightUnit(WeightUnit v) => state = state.copyWith(weightUnit: v);
+
   /// Restore the empty draft. Call this on successful submit — see file
   /// docstring.
   void reset() => state = const OnboardingDraft();
@@ -102,4 +108,23 @@ class OnboardingDraftNotifier extends StateNotifier<OnboardingDraft> {
 final onboardingDraftProvider =
     StateNotifierProvider<OnboardingDraftNotifier, OnboardingDraft>((ref) {
   return OnboardingDraftNotifier();
+});
+
+/// Active weight unit during onboarding (screen 09 step 2).
+///
+/// Reads the draft first — once the user taps a segment in step 2's
+/// chooser the draft carries an explicit [WeightUnit]. Until then it
+/// falls back to [defaultWeightUnitForLocale] so US locale onboarders
+/// see `lb` without a manual tap. After the final "Get started" submit
+/// `meProvider` invalidates and the global [weightUnitProvider] takes
+/// over (architect §3.11).
+///
+/// The architect spec named this with a leading underscore. It is
+/// exported (no underscore) because step 2's widget — owned by a
+/// different file — needs to `ref.watch` it. Tests pin this provider
+/// directly via [ProviderContainer.overrides] when they need to assert
+/// the locale-fallback path independent of the platform dispatcher.
+final onboardingWeightUnitProvider = Provider<WeightUnit>((ref) {
+  final draft = ref.watch(onboardingDraftProvider);
+  return draft.weightUnit ?? ref.watch(localeDefaultWeightUnitProvider);
 });

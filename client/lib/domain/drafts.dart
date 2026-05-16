@@ -180,6 +180,7 @@ class OnboardingDraft {
     this.direction,
     this.rateKgPerWeek,
     this.targetWeightKg,
+    this.weightUnit,
   });
 
   final int currentStep;
@@ -196,6 +197,14 @@ class OnboardingDraft {
   final Decimal? rateKgPerWeek;
   final Decimal? targetWeightKg;
 
+  /// User-chosen display unit during onboarding. `null` means "no
+  /// explicit selection yet — fall back to
+  /// `defaultWeightUnitForLocale()` at read time". Set by step 2's
+  /// chooser the moment the user taps a segment (LU-008); read by
+  /// `onboardingWeightUnitProvider` (LU-006) and persisted at final
+  /// submit time alongside the rest of the profile patch.
+  final WeightUnit? weightUnit;
+
   OnboardingDraft copyWith({
     int? currentStep,
     Sex? sex,
@@ -206,6 +215,7 @@ class OnboardingDraft {
     GoalDirection? direction,
     Decimal? rateKgPerWeek,
     Decimal? targetWeightKg,
+    WeightUnit? weightUnit,
   }) =>
       OnboardingDraft(
         currentStep: currentStep ?? this.currentStep,
@@ -217,6 +227,7 @@ class OnboardingDraft {
         direction: direction ?? this.direction,
         rateKgPerWeek: rateKgPerWeek ?? this.rateKgPerWeek,
         targetWeightKg: targetWeightKg ?? this.targetWeightKg,
+        weightUnit: weightUnit ?? this.weightUnit,
       );
 
   bool get isStep2Complete =>
@@ -242,7 +253,8 @@ class OnboardingDraft {
           other.activityLevel == activityLevel &&
           other.direction == direction &&
           other.rateKgPerWeek == rateKgPerWeek &&
-          other.targetWeightKg == targetWeightKg;
+          other.targetWeightKg == targetWeightKg &&
+          other.weightUnit == weightUnit;
 
   @override
   int get hashCode => Object.hash(
@@ -255,5 +267,6 @@ class OnboardingDraft {
         direction,
         rateKgPerWeek,
         targetWeightKg,
+        weightUnit,
       );
 }

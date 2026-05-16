@@ -90,6 +90,12 @@ class DayViewExpanded extends ConsumerWidget {
                       date: date,
                       summaryAsync: summaryAsync,
                       entriesAsync: entriesAsync,
+                      // LU-005: tap-to-edit. The pending-sync guard
+                      // inside `editLogEntry` is a no-op on expanded
+                      // (no outbox), but routing through the same
+                      // helper keeps both day views feature-parity.
+                      onEntryTap: (entry) =>
+                          editLogEntry(ref, context, entry),
                     ),
                   ),
                   SizedBox(width: context.space.x6),
@@ -276,10 +282,12 @@ class _MealGrid extends StatelessWidget {
     required this.date,
     required this.summaryAsync,
     required this.entriesAsync,
+    required this.onEntryTap,
   });
   final DateTime date;
   final AsyncValue<DaySummary> summaryAsync;
   final AsyncValue<List<LogEntry>> entriesAsync;
+  final void Function(LogEntry entry) onEntryTap;
 
   @override
   Widget build(BuildContext context) {
@@ -307,6 +315,7 @@ class _MealGrid extends StatelessWidget {
             subtotal: summary.byMeal[meal] ?? MealSubtotal.empty(meal),
             entries: byMeal[meal] ?? const <LogEntry>[],
             onAddTap: () => context.push(Routes.foodsSearchPath),
+            onEntryTap: onEntryTap,
             dense: true,
           ),
       ],

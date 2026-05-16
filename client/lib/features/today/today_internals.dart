@@ -1,11 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
+import '../../domain/food.dart';
 import '../../domain/log_entry.dart';
 import '../../domain/meal.dart';
+import '../../providers/food_providers.dart';
+import '../../providers/repository_providers.dart';
 import '../../routing/routes.dart';
 import '../../theme/context_extensions.dart';
+import '../log_entry/log_entry_sheet.dart';
 
 /// Shared helpers for the compact + expanded day views. Lives inside the
 /// feature folder because nothing here is used by another screen.
@@ -56,6 +61,72 @@ void navigateDay(BuildContext context, DateTime current, int delta) {
   final m = target.month.toString().padLeft(2, '0');
   final d = target.day.toString().padLeft(2, '0');
   context.go('${Routes.todayPath}/$y-$m-$d');
+}
+
+/// Tap-to-edit handler for a logged entry row on the day view.
+///
+/// LU-005 — wires `MealSection.onEntryTap` on both compact and expanded
+/// to the `LogEntrySheet` in edit mode. Three gates apply in order:
+///
+/// 1. **Pending-sync guard (T-22).** On compact, `LogRepository
+///    .isPendingSync` consults the outbox and returns `true` for entries
+///    whose POST hasn't acked. Editing a not-yet-created entry is
+///    meaningless and the row's existing "Retry / Discard" affordance
+///    is the right interaction for that state. We surface a SnackBar
+///    `"Still syncing — edit when sync finishes"` and bail. On
+///    medium/expanded the predicate always returns `false` (no outbox).
+/// 2. **Food fetch.** The sheet body needs a full `Food` (servings +
+///    nutrition); the day-view only has a denormalized name on the
+///    entry. We `await ref.read(foodDetailProvider(entry.foodId)
+///    .future)`. On error — most likely `FoodNotFoundError` — surface a
+///    SnackBar `"Couldn't load this food — try again"` and bail. The
+///    cache is usually warm here (Today views recent foods), so the
+///    await typically completes in the same frame.
+/// 3. **Open the sheet.** `showLogEntrySheet(context, food: food,
+///    existing: entry)` — the sheet pre-seeds quantity/serving/meal
+///    /date/note from `existing` and PATCHes on submit. Return value is
+///    discarded; the sheet handled invalidation.
+///
+/// Lives here so `day_view_compact.dart` and `day_view_expanded.dart`
+/// don't duplicate the same handler verbatim — architect §2.1 prefers
+/// factoring.
+Future<void> editLogEntry(
+  WidgetRef ref,
+  BuildContext context,
+  LogEntry entry,
+) async {
+  final messenger = ScaffoldMessenger.maybeOf(context);
+
+  // Gate 1: pending-sync. Always false on medium/expanded (no outbox).
+  final repo = ref.read(logRepositoryProvider);
+  if (repo.isPendingSync(entry.id)) {
+    messenger?.showSnackBar(
+      const SnackBar(
+        content: Text('Still syncing — edit when sync finishes'),
+      ),
+    );
+    return;
+  }
+
+  // Gate 2: food fetch. `foodDetailProvider` is a `FutureProvider.family`;
+  // `.future` resolves to the cached value when warm.
+  final Food food;
+  try {
+    food = await ref.read(foodDetailProvider(entry.foodId).future);
+  } catch (_) {
+    messenger?.showSnackBar(
+      const SnackBar(
+        content: Text("Couldn't load this food — try again"),
+      ),
+    );
+    return;
+  }
+
+  if (!context.mounted) return;
+
+  // Gate 3: open the sheet in edit mode. Discard the return — the sheet
+  // itself invalidates `daySummaryProvider` / `logEntriesProvider`.
+  await showLogEntrySheet(context, food: food, existing: entry);
 }
 
 /// A flat skeleton block sized to a final widget's height. T-08 — render a

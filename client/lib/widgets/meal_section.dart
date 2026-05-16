@@ -159,47 +159,62 @@ class _EntryRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = context.colors;
 
-    return InkWell(
-      onTap: onTap,
-      // T-018 / §7: rows tint to `line2` on hover; never accent, never
-      // elevation. Pin Material's hover paint to the token so the
-      // primitive matches `Hoverable`.
-      hoverColor: colors.line2,
-      child: Container(
-        decoration: BoxDecoration(
-          border: Border(top: BorderSide(color: colors.line2)),
-        ),
-        padding: EdgeInsets.symmetric(
-          horizontal: context.space.x4,
-          vertical: dense ? context.space.x2 + 1 : context.space.x2 + 2,
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: <Widget>[
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: <Widget>[
-                  Text(
-                    entry.foodName,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: context.text.body,
-                  ),
-                  SizedBox(height: context.space.x05),
-                  Text(
-                    _metaLine(entry),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: context.text.meta,
-                  ),
-                ],
-              ),
+    // LU-005 / T-20: announce the row as a tappable "edit" target so
+    // screen readers don't read the food name + serving + kcal as three
+    // independent strings. `ExcludeSemantics` collapses the inner Text
+    // nodes — the merged label below is the single announcement.
+    final servingPart = entry.servingName ?? '';
+    final semanticsLabel =
+        '${entry.foodName}, $servingPart, ${formatKcal(entry.kcal)} '
+        'kilocalories, edit';
+
+    return Semantics(
+      button: true,
+      label: semanticsLabel,
+      child: ExcludeSemantics(
+        child: InkWell(
+          onTap: onTap,
+          // T-018 / §7: rows tint to `line2` on hover; never accent, never
+          // elevation. Pin Material's hover paint to the token so the
+          // primitive matches `Hoverable`.
+          hoverColor: colors.line2,
+          child: Container(
+            decoration: BoxDecoration(
+              border: Border(top: BorderSide(color: colors.line2)),
             ),
-            SizedBox(width: context.space.x3),
-            _KcalCell(entry: entry, dense: dense),
-          ],
+            padding: EdgeInsets.symmetric(
+              horizontal: context.space.x4,
+              vertical: dense ? context.space.x2 + 1 : context.space.x2 + 2,
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: <Widget>[
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: <Widget>[
+                      Text(
+                        entry.foodName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: context.text.body,
+                      ),
+                      SizedBox(height: context.space.x05),
+                      Text(
+                        _metaLine(entry),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: context.text.meta,
+                      ),
+                    ],
+                  ),
+                ),
+                SizedBox(width: context.space.x3),
+                _KcalCell(entry: entry, dense: dense),
+              ],
+            ),
+          ),
         ),
       ),
     );
