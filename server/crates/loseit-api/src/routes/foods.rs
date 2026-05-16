@@ -34,13 +34,13 @@ use loseit_core::domain::{
     Food, FoodDraft, FoodPatch, FoodSearchHit, FoodSource, NutriscoreGrade, NutritionPer100g,
     Serving, ServingDraft, ServingPatch, ServingPreview, ServingSource,
 };
-use loseit_core::service::SearchPage;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::auth::AuthenticatedUser;
 use crate::error::ApiError;
+use crate::routes::pagination::PaginatedResponse;
 use crate::server::AppState;
 
 pub fn router() -> Router<AppState> {
@@ -216,25 +216,6 @@ impl From<FoodSearchHit> for FoodSearchHitResponse {
     }
 }
 
-#[derive(Serialize)]
-struct SearchResponse {
-    results: Vec<FoodSearchHitResponse>,
-    total: i64,
-    limit: i64,
-    offset: i64,
-}
-
-impl From<SearchPage> for SearchResponse {
-    fn from(p: SearchPage) -> Self {
-        Self {
-            results: p.results.into_iter().map(Into::into).collect(),
-            total: p.total,
-            limit: p.limit,
-            offset: p.offset,
-        }
-    }
-}
-
 // -- Query params ------------------------------------------------------------
 
 #[derive(Deserialize)]
@@ -358,10 +339,10 @@ async fn search(
     State(state): State<AppState>,
     AuthenticatedUser(user): AuthenticatedUser,
     Query(q): Query<SearchQuery>,
-) -> Result<Json<SearchResponse>, ApiError> {
+) -> Result<Json<PaginatedResponse<FoodSearchHitResponse>>, ApiError> {
     // Service is the source of truth for validation rules: blank query →
     // `Validation`, limit cap, default offset. The handler just translates
-    // the result.
+    // the result via the generic `From<Paginated<T>>` adapter.
     let page = state.foods.search(user.id, &q.q, q.limit, q.offset).await?;
     Ok(Json(page.into()))
 }

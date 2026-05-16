@@ -8,13 +8,8 @@ use crate::domain::{
     ServingSource,
 };
 use crate::repo::{FoodRepository, ServingRepository};
+use crate::service::page::{resolve_page_params, Paginated};
 use crate::{CoreError, CoreResult};
-
-/// Maximum page size the search endpoint will honor. Anything larger is
-/// silently capped so callers can pass `limit=50` without explicit clamps.
-pub const SEARCH_MAX_LIMIT: i64 = 50;
-/// Default page size when the caller omits `limit`.
-pub const SEARCH_DEFAULT_LIMIT: i64 = 20;
 
 /// Business logic for foods and food search. Holds a `FoodRepository` and
 /// a `ServingRepository` because both detail lookup and custom-food
@@ -66,9 +61,10 @@ impl FoodService {
     /// Search foods visible to `viewer`. Validation:
     ///
     /// * `q` is trimmed and must be non-empty; otherwise `Validation`.
-    /// * `limit` is clamped into `[1, SEARCH_MAX_LIMIT]`. `None` becomes
-    ///   [`SEARCH_DEFAULT_LIMIT`].
-    /// * `offset` defaults to 0 and is clamped to non-negative.
+    /// * `limit` / `offset` flow through [`resolve_page_params`], which is
+    ///   the single source of truth for the unified pagination contract
+    ///   (`DEFAULT_PAGE_LIMIT=100`, silent clamp at `MAX_PAGE_LIMIT=500`,
+    ///   400 on negative values).
     ///
     /// The repo performs the actual lookup (`search`) plus a separate
     /// `count(*)` query (`search_count`) so `total` reflects the full match
@@ -80,25 +76,25 @@ impl FoodService {
         q: &str,
         limit: Option<i64>,
         offset: Option<i64>,
-    ) -> CoreResult<SearchPage> {
+    ) -> CoreResult<Paginated<FoodSearchHit>> {
         let trimmed = q.trim();
         if trimmed.is_empty() {
             return Err(CoreError::Validation("query is required".into()));
         }
 
-        let limit = limit
-            .unwrap_or(SEARCH_DEFAULT_LIMIT)
-            .clamp(1, SEARCH_MAX_LIMIT);
-        let offset = offset.unwrap_or(0).max(0);
+        let page = resolve_page_params(limit, offset)?;
 
-        let results = self.foods.search(viewer, trimmed, limit, offset).await?;
+        let results = self
+            .foods
+            .search(viewer, trimmed, page.limit, page.offset)
+            .await?;
         let total = self.foods.search_count(viewer, trimmed).await?;
 
-        Ok(SearchPage {
+        Ok(Paginated {
             results,
             total,
-            limit,
-            offset,
+            limit: page.limit,
+            offset: page.offset,
         })
     }
 
@@ -191,12 +187,4 @@ fn validate_nutrition(n: &NutritionPer100g) -> CoreResult<()> {
         }
     }
     Ok(())
-}
-
-#[derive(Debug, Clone)]
-pub struct SearchPage {
-    pub results: Vec<FoodSearchHit>,
-    pub total: i64,
-    pub limit: i64,
-    pub offset: i64,
 }

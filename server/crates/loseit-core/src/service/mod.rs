@@ -12,7 +12,7 @@ pub mod serving;
 pub mod user;
 pub mod weight;
 
-pub use food::{FoodService, SearchPage};
+pub use food::FoodService;
 pub use goal::GoalService;
 pub use ingest::{FoodRecordSource, IngestService, OffFoodRecord};
 pub use log::{LogService, FREQUENT_WINDOW_DAYS};
