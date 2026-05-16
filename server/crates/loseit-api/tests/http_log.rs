@@ -66,6 +66,10 @@ where
     let goals_concrete = Arc::new(InMemoryGoalRepository::new());
 
     foods_concrete.set_serving_repo(servings_concrete.clone());
+    // Wire sentinel filter unconditionally so recent/frequent always exclude
+    // the quick-add sentinel when it exists. The wiring is harmless for tests
+    // that never call quick_add (no sentinel rows → nothing to filter).
+    logs_concrete.set_food_repo_for_sentinel_filter(foods_concrete.clone());
 
     let alice = users_concrete.create(&test_identity()).await.unwrap();
 
@@ -1019,56 +1023,10 @@ async fn test_recent_foods_respects_limit() {
 // T08 — POST /log/quick_add.
 // =============================================================================
 
-/// Like `build_test_app_with` but also wires the sentinel filter on the log
-/// repo so `recent_food_ids` / `frequent_food_ids` exclude the quick-add
-/// sentinel. Required when tests assert the sentinel doesn't leak into
-/// recent/frequent.
-async fn build_test_app_with_sentinel_filter<F>(setup: F) -> (axum::Router, Uuid)
-where
-    F: FnOnce(
-        &Arc<InMemoryFoodRepository>,
-        &Arc<InMemoryServingRepository>,
-        &Arc<InMemoryLogRepository>,
-        &Arc<InMemoryGoalRepository>,
-        Uuid,
-    ) -> SeedFuture,
-{
-    let users_concrete = Arc::new(InMemoryUserRepository::new());
-    let foods_concrete = Arc::new(InMemoryFoodRepository::new());
-    let servings_concrete = Arc::new(InMemoryServingRepository::new());
-    let logs_concrete = Arc::new(InMemoryLogRepository::new());
-    let goals_concrete = Arc::new(InMemoryGoalRepository::new());
-
-    foods_concrete.set_serving_repo(servings_concrete.clone());
-    logs_concrete.set_food_repo_for_sentinel_filter(foods_concrete.clone());
-
-    let alice = users_concrete.create(&test_identity()).await.unwrap();
-
-    setup(
-        &foods_concrete,
-        &servings_concrete,
-        &logs_concrete,
-        &goals_concrete,
-        alice.id,
-    )
-    .await;
-
-    let users: Arc<dyn UserRepository> = users_concrete;
-    let weights: Arc<dyn WeightRepository> = Arc::new(InMemoryWeightRepository::new());
-    let goals: Arc<dyn GoalRepository> = goals_concrete;
-    let foods: Arc<dyn FoodRepository> = foods_concrete;
-    let servings: Arc<dyn ServingRepository> = servings_concrete;
-    let logs: Arc<dyn LogRepository> = logs_concrete;
-    let authn: Arc<dyn Authenticator> =
-        Arc::new(FakeAuthenticator::new(TEST_TOKEN, test_identity()));
-    let state = AppState::from_ports(users, weights, goals, foods, servings, logs, authn);
-    (router(state), alice.id)
-}
-
 #[tokio::test]
 async fn quick_add_creates_entry_with_only_calories() {
     let (app, _alice) =
-        build_test_app_with_sentinel_filter(|_f, _s, _l, _g, _u| Box::pin(async move {})).await;
+        build_test_app_with(|_f, _s, _l, _g, _u| Box::pin(async move {})).await;
 
     let body = serde_json::json!({
         "calories_kcal": "250",
@@ -1081,8 +1039,11 @@ async fn quick_add_creates_entry_with_only_calories() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
     let body = read_json(resp.into_body()).await;
-    // quantity == calories_kcal, stored as NUMERIC(8,3) → "250.000" may vary
-    // by store; grams_total = 250 * 100 = 25000.00.
+    // quantity == calories_kcal. The in-memory store round-trips the Decimal
+    // parsed from the wire ("250") without rescaling, so the serialized value
+    // preserves the input precision (NUMERIC columns in Postgres would store
+    // it with scale=0 as-is for an integer input).
+    assert_eq!(body["quantity"], "250");
     assert_eq!(body["calories_kcal"], "250.00");
     assert_eq!(body["grams_total"], "25000.00");
     assert_eq!(body["meal"], "snack");
@@ -1103,7 +1064,7 @@ async fn quick_add_creates_entry_with_only_calories() {
 async fn quick_add_is_repeatable_for_same_user() {
     // Second call returns 201 with a *different* id but the same food_id.
     let (app, _alice) =
-        build_test_app_with_sentinel_filter(|_f, _s, _l, _g, _u| Box::pin(async move {})).await;
+        build_test_app_with(|_f, _s, _l, _g, _u| Box::pin(async move {})).await;
 
     let body = serde_json::json!({
         "calories_kcal": "100",
@@ -1134,7 +1095,7 @@ async fn quick_add_is_repeatable_for_same_user() {
 #[tokio::test]
 async fn quick_add_400_on_zero_calories() {
     let (app, _alice) =
-        build_test_app_with_sentinel_filter(|_f, _s, _l, _g, _u| Box::pin(async move {})).await;
+        build_test_app_with(|_f, _s, _l, _g, _u| Box::pin(async move {})).await;
 
     let body = serde_json::json!({
         "calories_kcal": "0",
@@ -1151,7 +1112,7 @@ async fn quick_add_400_on_zero_calories() {
 #[tokio::test]
 async fn quick_add_400_on_negative_calories() {
     let (app, _alice) =
-        build_test_app_with_sentinel_filter(|_f, _s, _l, _g, _u| Box::pin(async move {})).await;
+        build_test_app_with(|_f, _s, _l, _g, _u| Box::pin(async move {})).await;
 
     let body = serde_json::json!({
         "calories_kcal": "-50",
@@ -1167,11 +1128,15 @@ async fn quick_add_400_on_negative_calories() {
 
 #[tokio::test]
 async fn quick_add_400_on_max_calories_overflow() {
+    // 9_999 is the first value that should reject with the calories-specific
+    // message. Values < 10_000 that reach the grams_total guard instead would
+    // give a generic message; the bound is intentionally set below 10_000 so
+    // callers always see the calories error.
     let (app, _alice) =
-        build_test_app_with_sentinel_filter(|_f, _s, _l, _g, _u| Box::pin(async move {})).await;
+        build_test_app_with(|_f, _s, _l, _g, _u| Box::pin(async move {})).await;
 
     let body = serde_json::json!({
-        "calories_kcal": "200000",
+        "calories_kcal": "9999",
         "meal": "snack",
         "consumed_on": "2024-01-15",
     });
@@ -1180,12 +1145,17 @@ async fn quick_add_400_on_max_calories_overflow() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body = read_json(resp.into_body()).await;
+    assert!(
+        body["message"].as_str().unwrap_or("").contains("calories_kcal must be less than 9999"),
+        "expected calories-specific error, got: {body}"
+    );
 }
 
 #[tokio::test]
 async fn quick_add_400_on_invalid_meal() {
     let (app, _alice) =
-        build_test_app_with_sentinel_filter(|_f, _s, _l, _g, _u| Box::pin(async move {})).await;
+        build_test_app_with(|_f, _s, _l, _g, _u| Box::pin(async move {})).await;
 
     let body = serde_json::json!({
         "calories_kcal": "300",
@@ -1204,7 +1174,7 @@ async fn quick_add_does_not_appear_in_food_search() {
     // After quick_add, searching for "quick" or the sentinel name should
     // return an empty result.
     let (app, _alice) =
-        build_test_app_with_sentinel_filter(|_f, _s, _l, _g, _u| Box::pin(async move {})).await;
+        build_test_app_with(|_f, _s, _l, _g, _u| Box::pin(async move {})).await;
 
     // Trigger quick_add to provision the sentinel food.
     let body = serde_json::json!({

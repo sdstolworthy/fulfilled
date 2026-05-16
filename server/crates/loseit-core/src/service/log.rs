@@ -150,15 +150,18 @@ impl LogService {
         consumed_on: NaiveDate,
         note: Option<String>,
     ) -> CoreResult<FoodLogEntry> {
-        // Validation: must be strictly positive, < 100_000.
+        // Validation: must be strictly positive, < 9_999.
+        // The upper bound is set below 10_000 so the explicit calories error
+        // fires before the grams_total guard (grams_total = calories * 100,
+        // so grams_total >= 1_000_000 at calories >= 10_000).
         if calories_kcal <= Decimal::ZERO {
             return Err(CoreError::Validation(
                 "calories_kcal must be positive".into(),
             ));
         }
-        if calories_kcal >= Decimal::from(100_000) {
+        if calories_kcal >= Decimal::from(9_999) {
             return Err(CoreError::Validation(
-                "calories_kcal exceeds maximum allowed value".into(),
+                "calories_kcal must be less than 9999".into(),
             ));
         }
 
@@ -482,8 +485,8 @@ impl LogService {
 }
 
 /// Round + pad a Decimal to exactly two fractional digits. This matches the
-/// `NUMERIC(8,2)` / `NUMERIC(10,2)` columns the snapshot lands in, so the
-/// in-memory value always serializes the same way Postgres would render it.
+/// `NUMERIC(8,2)` columns the snapshot lands in, so the in-memory value
+/// always serializes the same way Postgres would render it.
 fn to_numeric_8_2(value: Decimal) -> Decimal {
     let mut v = value.round_dp(2);
     v.rescale(2);

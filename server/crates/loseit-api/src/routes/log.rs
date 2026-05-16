@@ -3,6 +3,7 @@
 //! Routes:
 //!
 //! * `POST   /log`               — create a log entry.
+//! * `POST   /log/quick_add`     — log raw calories without choosing a food.
 //! * `GET    /log?from=&to=`     — list entries in a date range.
 //! * `PATCH  /log/:id`           — partial update; `food_id` is immutable.
 //! * `DELETE /log/:id`           — remove an entry.
