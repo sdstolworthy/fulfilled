@@ -271,6 +271,106 @@ impl LogService {
         self.logs.delete(user, id).await
     }
 
+    /// Copy every entry on `from_date` (optionally filtered by `meal`) onto
+    /// `to_date`, **re-snapshotting** each from the current food + serving.
+    ///
+    /// The re-snapshot is the entire reason this is a server endpoint and
+    /// not a client loop: if the user edited a custom food between the two
+    /// dates, the destination entries reflect the *new* nutrition, not the
+    /// source's frozen snapshot.
+    ///
+    /// Entries whose food is no longer visible to `user`, whose serving was
+    /// deleted, or whose computed `grams_total` would overflow the
+    /// `NUMERIC(8,2)` column are silently skipped — the response contains
+    /// only the entries that were successfully inserted. Skips are logged at
+    /// `tracing::info` so production has a paper trail; the wire envelope
+    /// (`{ copied: [...] }`) is future-proofed so a `skipped` field can be
+    /// added later without breaking existing clients.
+    ///
+    /// Both `from_date == to_date` (duplicate onto the same day) and
+    /// `from_date > to_date` (backward copy) are legitimate. Pre-existing
+    /// entries on `to_date` are *not* replaced — the copy coexists with
+    /// them.
+    #[tracing::instrument(skip(self))]
+    pub async fn copy_day(
+        &self,
+        user: Uuid,
+        from_date: NaiveDate,
+        to_date: NaiveDate,
+        meal: Option<Meal>,
+    ) -> CoreResult<Vec<FoodLogEntry>> {
+        let source = self.logs.list_for_day(user, from_date).await?;
+
+        let mut persisted: Vec<PersistedLogEntry> = Vec::with_capacity(source.len());
+        for e in source.iter().filter(|e| meal.map_or(true, |m| e.meal == m)) {
+            // Re-resolve food. find_by_id returns None for "deleted or
+            // cross-tenant" — both indistinguishable here, both skip.
+            let Some(food) = self.foods.find_by_id(user, e.food_id).await? else {
+                tracing::info!(
+                    entry_id = %e.id,
+                    food_id = %e.food_id,
+                    "copy_day: skipping entry — food not visible",
+                );
+                continue;
+            };
+
+            // Without a serving id there's no way to recompute grams_total,
+            // so we can't construct a fresh snapshot. v1 always populates
+            // serving_id, but the column is nullable for forward-compat —
+            // skip rather than guess.
+            let Some(serving_id) = e.serving_id else {
+                tracing::info!(
+                    entry_id = %e.id,
+                    "copy_day: skipping entry — no serving_id on source",
+                );
+                continue;
+            };
+            let Some(serving) = self.servings.find_by_id(serving_id).await? else {
+                tracing::info!(
+                    entry_id = %e.id,
+                    serving_id = %serving_id,
+                    "copy_day: skipping entry — serving deleted",
+                );
+                continue;
+            };
+            if serving.food_id != food.id {
+                // Defensive: a serving reparented to a different food would
+                // produce a wrong snapshot. Skip rather than 500.
+                tracing::info!(
+                    entry_id = %e.id,
+                    serving_food = %serving.food_id,
+                    entry_food = %food.id,
+                    "copy_day: skipping entry — serving.food_id mismatch",
+                );
+                continue;
+            }
+
+            let grams_total = to_numeric_8_2(serving.grams * e.quantity);
+            // Same overflow guard as `create` — silently skip rather than
+            // fail the whole batch.
+            if grams_total >= Decimal::new(100_000_000, 2) {
+                tracing::info!(
+                    entry_id = %e.id,
+                    "copy_day: skipping entry — grams_total overflow",
+                );
+                continue;
+            }
+            let snapshot = Self::compute_snapshot(&food, grams_total);
+            persisted.push(PersistedLogEntry {
+                food_id: food.id,
+                serving_id: Some(serving.id),
+                consumed_on: to_date,
+                meal: e.meal,
+                quantity: e.quantity,
+                grams_total,
+                snapshot,
+                note: e.note.clone(),
+            });
+        }
+
+        self.logs.create_many(user, &persisted).await
+    }
+
     #[tracing::instrument(skip(self))]
     pub async fn list_in_range(
         &self,

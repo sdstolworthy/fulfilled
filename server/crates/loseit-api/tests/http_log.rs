@@ -17,7 +17,7 @@ use chrono::{NaiveDate, Utc};
 use loseit_api::{router, AppState};
 use loseit_core::auth::Authenticator;
 use loseit_core::domain::{
-    FoodDraft, GoalDraft, Meal, NutritionPer100g, NutritionSnapshot, PersistedLogEntry,
+    FoodDraft, FoodPatch, GoalDraft, Meal, NutritionPer100g, NutritionSnapshot, PersistedLogEntry,
     ServingDraft, ServingSource, UserIdentity,
 };
 use loseit_core::repo::{
@@ -1426,4 +1426,649 @@ async fn test_list_orders_newest_consumed_first_then_newest_created_at() {
     assert_eq!(results[0]["consumed_on"], "2026-01-03");
     assert_eq!(results[1]["consumed_on"], "2026-01-02");
     assert_eq!(results[2]["consumed_on"], "2026-01-01");
+}
+
+// =============================================================================
+// T10 — POST /log/copy.
+// =============================================================================
+
+#[tokio::test]
+async fn copy_day_recomputes_snapshot_from_current_food_not_source_snapshot() {
+    // Seed alice's custom at 50 kcal/100g, log on day 1 (snapshot frozen at 50),
+    // bump the food to 100 kcal/100g, copy day 1 → day 2 and assert day 2's
+    // snapshot uses the *new* per-100g value.
+    use std::sync::OnceLock;
+    let captured: Arc<OnceLock<(Uuid, Uuid, Arc<InMemoryFoodRepository>)>> =
+        Arc::new(OnceLock::new());
+    let captured_for_seed = captured.clone();
+    let (app, alice) = build_test_app_with(move |foods, servings, _logs, _goals, alice| {
+        let foods = foods.clone();
+        let servings = servings.clone();
+        let captured = captured_for_seed.clone();
+        Box::pin(async move {
+            let (food_id, serving_id) = seed_food_with_serving(
+                &foods,
+                &servings,
+                alice,
+                "Mystery Stew",
+                Decimal::from(50),
+                Decimal::from(100),
+            )
+            .await;
+            captured
+                .set((food_id, serving_id, foods.clone()))
+                .ok()
+                .expect("OnceLock not set yet");
+        })
+    })
+    .await;
+    let (food_id, serving_id, foods) = captured.get().unwrap().clone();
+
+    // Create the day-1 entry while the food is still at 50 kcal/100g.
+    let body = serde_json::json!({
+        "food_id": food_id,
+        "serving_id": serving_id,
+        "consumed_on": "2026-05-15",
+        "meal": "breakfast",
+        "quantity": "1",
+    });
+    let resp = app
+        .clone()
+        .oneshot(authed_json_request("POST", "/api/v1/log", body))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let body = read_json(resp.into_body()).await;
+    assert_eq!(body["calories_kcal"], "50.00");
+
+    // Bump the food's per-100g calories to 100. The day-1 entry's frozen
+    // snapshot stays at 50, but copy_day should re-snapshot from the *current*
+    // value.
+    foods
+        .update_custom(
+            alice,
+            food_id,
+            &FoodPatch {
+                nutrition: Some(NutritionPer100g {
+                    energy_kcal: Some(Decimal::from(100)),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+    // Copy day 1 → day 2.
+    let copy = serde_json::json!({
+        "from_date": "2026-05-15",
+        "to_date": "2026-05-16",
+    });
+    let resp = app
+        .oneshot(authed_json_request("POST", "/api/v1/log/copy", copy))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let body = read_json(resp.into_body()).await;
+    let copied = body["copied"].as_array().expect("copied array");
+    assert_eq!(copied.len(), 1);
+    // 100 kcal / 100 g × 100 g serving × quantity 1 = 100 kcal — the *new*
+    // value, not the day-1 frozen 50.
+    assert_eq!(copied[0]["calories_kcal"], "100.00");
+    assert_eq!(copied[0]["consumed_on"], "2026-05-16");
+}
+
+#[tokio::test]
+async fn copy_day_filters_by_meal() {
+    // Two entries on the source day (breakfast + lunch). Copy with
+    // meal=breakfast should produce exactly one entry on the destination.
+    use std::sync::OnceLock;
+    let captured: Arc<OnceLock<(Uuid, Uuid)>> = Arc::new(OnceLock::new());
+    let captured_for_seed = captured.clone();
+    let (app, _alice) = build_test_app_with(move |foods, servings, _logs, _goals, alice| {
+        let foods = foods.clone();
+        let servings = servings.clone();
+        let captured = captured_for_seed.clone();
+        Box::pin(async move {
+            let (food_id, serving_id) = seed_food_with_serving(
+                &foods,
+                &servings,
+                alice,
+                "Cereal",
+                Decimal::from(120),
+                Decimal::from(50),
+            )
+            .await;
+            captured.set((food_id, serving_id)).unwrap();
+        })
+    })
+    .await;
+    let (food_id, serving_id) = *captured.get().unwrap();
+
+    for meal in &["breakfast", "lunch"] {
+        let body = serde_json::json!({
+            "food_id": food_id,
+            "serving_id": serving_id,
+            "consumed_on": "2026-05-15",
+            "meal": meal,
+            "quantity": "1",
+        });
+        let resp = app
+            .clone()
+            .oneshot(authed_json_request("POST", "/api/v1/log", body))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+    }
+
+    let copy = serde_json::json!({
+        "from_date": "2026-05-15",
+        "to_date": "2026-05-16",
+        "meal": "breakfast",
+    });
+    let resp = app
+        .clone()
+        .oneshot(authed_json_request("POST", "/api/v1/log/copy", copy))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let body = read_json(resp.into_body()).await;
+    let copied = body["copied"].as_array().expect("copied array");
+    assert_eq!(copied.len(), 1);
+    assert_eq!(copied[0]["meal"], "breakfast");
+    assert_eq!(copied[0]["consumed_on"], "2026-05-16");
+
+    // Day 2 must hold exactly one entry (the breakfast copy), confirming the
+    // lunch entry was filtered out and *not* copied.
+    let resp = app
+        .oneshot(authed_request(
+            "GET",
+            "/api/v1/log?from=2026-05-16&to=2026-05-16",
+        ))
+        .await
+        .unwrap();
+    let body = read_json(resp.into_body()).await;
+    let results = body["results"].as_array().expect("results");
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0]["meal"], "breakfast");
+}
+
+#[tokio::test]
+async fn copy_day_allows_same_day_copy_duplicating_entries() {
+    // `from_date == to_date` is explicitly permitted — entries get duplicated
+    // onto the same day rather than rejected.
+    use std::sync::OnceLock;
+    let captured: Arc<OnceLock<(Uuid, Uuid)>> = Arc::new(OnceLock::new());
+    let captured_for_seed = captured.clone();
+    let (app, _alice) = build_test_app_with(move |foods, servings, _logs, _goals, alice| {
+        let foods = foods.clone();
+        let servings = servings.clone();
+        let captured = captured_for_seed.clone();
+        Box::pin(async move {
+            let (food_id, serving_id) = seed_food_with_serving(
+                &foods,
+                &servings,
+                alice,
+                "Sandwich",
+                Decimal::from(250),
+                Decimal::from(100),
+            )
+            .await;
+            captured.set((food_id, serving_id)).unwrap();
+        })
+    })
+    .await;
+    let (food_id, serving_id) = *captured.get().unwrap();
+
+    let body = serde_json::json!({
+        "food_id": food_id,
+        "serving_id": serving_id,
+        "consumed_on": "2026-05-15",
+        "meal": "lunch",
+        "quantity": "1",
+    });
+    let resp = app
+        .clone()
+        .oneshot(authed_json_request("POST", "/api/v1/log", body))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    let copy = serde_json::json!({
+        "from_date": "2026-05-15",
+        "to_date": "2026-05-15",
+    });
+    let resp = app
+        .clone()
+        .oneshot(authed_json_request("POST", "/api/v1/log/copy", copy))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let body = read_json(resp.into_body()).await;
+    assert_eq!(body["copied"].as_array().unwrap().len(), 1);
+
+    // The day now has two entries — the original + the copy.
+    let resp = app
+        .oneshot(authed_request(
+            "GET",
+            "/api/v1/log?from=2026-05-15&to=2026-05-15",
+        ))
+        .await
+        .unwrap();
+    let body = read_json(resp.into_body()).await;
+    assert_eq!(body["total"], 2);
+}
+
+#[tokio::test]
+async fn copy_day_allows_backward_copy() {
+    // `from_date > to_date` is legitimate (unlike GET /log's range filter).
+    use std::sync::OnceLock;
+    let captured: Arc<OnceLock<(Uuid, Uuid)>> = Arc::new(OnceLock::new());
+    let captured_for_seed = captured.clone();
+    let (app, _alice) = build_test_app_with(move |foods, servings, _logs, _goals, alice| {
+        let foods = foods.clone();
+        let servings = servings.clone();
+        let captured = captured_for_seed.clone();
+        Box::pin(async move {
+            let (food_id, serving_id) = seed_food_with_serving(
+                &foods,
+                &servings,
+                alice,
+                "Salad",
+                Decimal::from(80),
+                Decimal::from(200),
+            )
+            .await;
+            captured.set((food_id, serving_id)).unwrap();
+        })
+    })
+    .await;
+    let (food_id, serving_id) = *captured.get().unwrap();
+
+    let body = serde_json::json!({
+        "food_id": food_id,
+        "serving_id": serving_id,
+        "consumed_on": "2026-05-20",
+        "meal": "dinner",
+        "quantity": "1",
+    });
+    let resp = app
+        .clone()
+        .oneshot(authed_json_request("POST", "/api/v1/log", body))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    // Backwards: source is 2026-05-20, destination is 2026-05-10.
+    let copy = serde_json::json!({
+        "from_date": "2026-05-20",
+        "to_date": "2026-05-10",
+    });
+    let resp = app
+        .oneshot(authed_json_request("POST", "/api/v1/log/copy", copy))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let body = read_json(resp.into_body()).await;
+    let copied = body["copied"].as_array().expect("copied array");
+    assert_eq!(copied.len(), 1);
+    assert_eq!(copied[0]["consumed_on"], "2026-05-10");
+}
+
+#[tokio::test]
+async fn copy_day_empty_source_returns_empty_copied_array() {
+    // No entries on the source day → 201 with `copied: []`.
+    let (app, _alice) = build_test_app_with(|_f, _s, _l, _g, _u| Box::pin(async move {})).await;
+
+    let copy = serde_json::json!({
+        "from_date": "2026-05-15",
+        "to_date": "2026-05-16",
+    });
+    let resp = app
+        .oneshot(authed_json_request("POST", "/api/v1/log/copy", copy))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let body = read_json(resp.into_body()).await;
+    assert!(body["copied"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn copy_day_skips_entries_with_deleted_serving() {
+    // Seed a food with a default serving (can't be deleted) plus a second
+    // non-default serving. Log against the non-default serving on day 1, then
+    // delete that serving. Copying day 1 → day 2 must silently skip the entry.
+    use std::sync::OnceLock;
+    let captured: Arc<OnceLock<(Uuid, Uuid, Arc<InMemoryServingRepository>)>> =
+        Arc::new(OnceLock::new());
+    let captured_for_seed = captured.clone();
+    let (app, _alice) = build_test_app_with(move |foods, servings, _logs, _goals, alice| {
+        let foods = foods.clone();
+        let servings = servings.clone();
+        let captured = captured_for_seed.clone();
+        Box::pin(async move {
+            let (food_id, _default_serving_id) = seed_food_with_serving(
+                &foods,
+                &servings,
+                alice,
+                "Pancakes",
+                Decimal::from(200),
+                Decimal::from(100),
+            )
+            .await;
+            // Second, non-default serving — deletable via the public API.
+            let extra = servings
+                .create(
+                    food_id,
+                    &ServingDraft {
+                        label: "big stack".into(),
+                        grams: Decimal::from(250),
+                        is_default: false,
+                        source: ServingSource::User,
+                        sort_order: 1,
+                    },
+                )
+                .await
+                .unwrap();
+            captured
+                .set((food_id, extra.id, servings.clone()))
+                .ok()
+                .expect("OnceLock not set yet");
+        })
+    })
+    .await;
+    let (food_id, extra_serving_id, servings) = captured.get().unwrap().clone();
+
+    // Log the day-1 entry against the (deletable) non-default serving.
+    let body = serde_json::json!({
+        "food_id": food_id,
+        "serving_id": extra_serving_id,
+        "consumed_on": "2026-05-15",
+        "meal": "breakfast",
+        "quantity": "1",
+    });
+    let resp = app
+        .clone()
+        .oneshot(authed_json_request("POST", "/api/v1/log", body))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    // Delete the serving the entry references.
+    servings.delete(extra_serving_id).await.unwrap();
+
+    let copy = serde_json::json!({
+        "from_date": "2026-05-15",
+        "to_date": "2026-05-16",
+    });
+    let resp = app
+        .oneshot(authed_json_request("POST", "/api/v1/log/copy", copy))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let body = read_json(resp.into_body()).await;
+    // Entry is silently skipped → empty copied array.
+    assert!(body["copied"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn copy_day_response_includes_only_inserted_entries() {
+    // Two entries on the source day:
+    //   1. Alice's own food + serving — copyable.
+    //   2. Bob's custom food, written into Alice's log via the repo back-door
+    //      (production wouldn't allow this, but we use it to simulate a food
+    //      that has become invisible/deleted from Alice's perspective).
+    // Expect: response contains exactly one entry (the copyable one); the
+    // skipped one is absent without erroring.
+    use std::sync::OnceLock;
+    let bob = Uuid::new_v4();
+    let captured: Arc<OnceLock<(Uuid, Uuid)>> = Arc::new(OnceLock::new());
+    let captured_for_seed = captured.clone();
+    let (app, _alice) = build_test_app_with(move |foods, servings, logs, _goals, alice| {
+        let foods = foods.clone();
+        let servings = servings.clone();
+        let logs = logs.clone();
+        let captured = captured_for_seed.clone();
+        Box::pin(async move {
+            // Alice's own food — copyable.
+            let (alice_food, alice_serving) = seed_food_with_serving(
+                &foods,
+                &servings,
+                alice,
+                "Alice's Food",
+                Decimal::from(200),
+                Decimal::from(100),
+            )
+            .await;
+            // Bob's food — invisible to alice.
+            let (bob_food, bob_serving) = seed_food_with_serving(
+                &foods,
+                &servings,
+                bob,
+                "Bob's Food",
+                Decimal::from(200),
+                Decimal::from(100),
+            )
+            .await;
+            captured.set((alice_food, alice_serving)).unwrap();
+
+            // Seed both entries onto day 1, owned by alice. The bob-food
+            // entry exists in alice's log but its food is unreachable through
+            // FoodRepository::find_by_id(alice, …).
+            for (food_id, serving_id) in [(alice_food, alice_serving), (bob_food, bob_serving)] {
+                let entry = PersistedLogEntry {
+                    food_id,
+                    serving_id: Some(serving_id),
+                    consumed_on: NaiveDate::from_ymd_opt(2026, 5, 15).unwrap(),
+                    meal: Meal::Lunch,
+                    quantity: Decimal::from(1),
+                    grams_total: Decimal::from(100),
+                    snapshot: NutritionSnapshot {
+                        calories_kcal: Decimal::from(200),
+                        protein_g: None,
+                        carbs_g: None,
+                        fat_g: None,
+                        fiber_g: None,
+                        sugar_g: None,
+                        sodium_mg: None,
+                        saturated_fat_g: None,
+                    },
+                    note: None,
+                };
+                logs.create(alice, &entry).await.unwrap();
+            }
+        })
+    })
+    .await;
+    let (alice_food, alice_serving) = *captured.get().unwrap();
+
+    let copy = serde_json::json!({
+        "from_date": "2026-05-15",
+        "to_date": "2026-05-16",
+    });
+    let resp = app
+        .oneshot(authed_json_request("POST", "/api/v1/log/copy", copy))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let body = read_json(resp.into_body()).await;
+    let copied = body["copied"].as_array().expect("copied array");
+    assert_eq!(copied.len(), 1);
+    assert_eq!(copied[0]["food_id"], alice_food.to_string());
+    assert_eq!(copied[0]["serving_id"], alice_serving.to_string());
+}
+
+#[tokio::test]
+async fn copy_day_coexists_with_existing_destination_entries() {
+    // Pre-existing entries on the destination day must NOT be replaced —
+    // copy_day appends.
+    use std::sync::OnceLock;
+    let captured: Arc<OnceLock<(Uuid, Uuid)>> = Arc::new(OnceLock::new());
+    let captured_for_seed = captured.clone();
+    let (app, _alice) = build_test_app_with(move |foods, servings, _logs, _goals, alice| {
+        let foods = foods.clone();
+        let servings = servings.clone();
+        let captured = captured_for_seed.clone();
+        Box::pin(async move {
+            let (food_id, serving_id) = seed_food_with_serving(
+                &foods,
+                &servings,
+                alice,
+                "Rice Bowl",
+                Decimal::from(150),
+                Decimal::from(100),
+            )
+            .await;
+            captured.set((food_id, serving_id)).unwrap();
+        })
+    })
+    .await;
+    let (food_id, serving_id) = *captured.get().unwrap();
+
+    // One entry on each of two days.
+    for day in &["2026-05-15", "2026-05-16"] {
+        let body = serde_json::json!({
+            "food_id": food_id,
+            "serving_id": serving_id,
+            "consumed_on": day,
+            "meal": "lunch",
+            "quantity": "1",
+        });
+        let resp = app
+            .clone()
+            .oneshot(authed_json_request("POST", "/api/v1/log", body))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+    }
+
+    let copy = serde_json::json!({
+        "from_date": "2026-05-15",
+        "to_date": "2026-05-16",
+    });
+    let resp = app
+        .clone()
+        .oneshot(authed_json_request("POST", "/api/v1/log/copy", copy))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let body = read_json(resp.into_body()).await;
+    assert_eq!(body["copied"].as_array().unwrap().len(), 1);
+
+    // Day 2 now has 2 entries: the pre-existing one + the copy.
+    let resp = app
+        .oneshot(authed_request(
+            "GET",
+            "/api/v1/log?from=2026-05-16&to=2026-05-16",
+        ))
+        .await
+        .unwrap();
+    let body = read_json(resp.into_body()).await;
+    assert_eq!(body["total"], 2);
+}
+
+#[tokio::test]
+async fn copy_day_three_entries_preserve_input_order() {
+    // Three distinct foods logged on day 1 in a known created_at order. The
+    // copy response must preserve that input order (T09's create_many uses
+    // WITH ORDINALITY for exactly this guarantee).
+    use std::sync::OnceLock;
+    type ThreePairs = ((Uuid, Uuid), (Uuid, Uuid), (Uuid, Uuid));
+    let captured: Arc<OnceLock<ThreePairs>> = Arc::new(OnceLock::new());
+    let captured_for_seed = captured.clone();
+    let (app, _alice) = build_test_app_with(move |foods, servings, _logs, _goals, alice| {
+        let foods = foods.clone();
+        let servings = servings.clone();
+        let captured = captured_for_seed.clone();
+        Box::pin(async move {
+            let pair_a = seed_food_with_serving(
+                &foods,
+                &servings,
+                alice,
+                "Food A",
+                Decimal::from(100),
+                Decimal::from(100),
+            )
+            .await;
+            let pair_b = seed_food_with_serving(
+                &foods,
+                &servings,
+                alice,
+                "Food B",
+                Decimal::from(100),
+                Decimal::from(100),
+            )
+            .await;
+            let pair_c = seed_food_with_serving(
+                &foods,
+                &servings,
+                alice,
+                "Food C",
+                Decimal::from(100),
+                Decimal::from(100),
+            )
+            .await;
+            captured.set((pair_a, pair_b, pair_c)).unwrap();
+        })
+    })
+    .await;
+    let ((food_a, serving_a), (food_b, serving_b), (food_c, serving_c)) = *captured.get().unwrap();
+
+    // POST in A, B, C order — each gets a strictly later created_at, so the
+    // source-day iteration order is A → B → C.
+    for (fid, sid) in [
+        (food_a, serving_a),
+        (food_b, serving_b),
+        (food_c, serving_c),
+    ] {
+        let post = serde_json::json!({
+            "food_id": fid,
+            "serving_id": sid,
+            "consumed_on": "2026-05-15",
+            "meal": "snack",
+            "quantity": "1",
+        });
+        let resp = app
+            .clone()
+            .oneshot(authed_json_request("POST", "/api/v1/log", post))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        // Strict gap so created_at ordering is unambiguous.
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+
+    let copy = serde_json::json!({
+        "from_date": "2026-05-15",
+        "to_date": "2026-05-16",
+    });
+    let resp = app
+        .oneshot(authed_json_request("POST", "/api/v1/log/copy", copy))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let body = read_json(resp.into_body()).await;
+    let copied = body["copied"].as_array().expect("copied array");
+    assert_eq!(copied.len(), 3);
+    assert_eq!(copied[0]["food_id"], food_a.to_string());
+    assert_eq!(copied[1]["food_id"], food_b.to_string());
+    assert_eq!(copied[2]["food_id"], food_c.to_string());
+}
+
+#[tokio::test]
+async fn copy_day_400_on_invalid_meal() {
+    // An unknown meal must surface as 400, not be silently treated as
+    // "no filter."
+    let (app, _alice) = build_test_app_with(|_f, _s, _l, _g, _u| Box::pin(async move {})).await;
+
+    let copy = serde_json::json!({
+        "from_date": "2026-05-15",
+        "to_date": "2026-05-16",
+        "meal": "elevenses",
+    });
+    let resp = app
+        .oneshot(authed_json_request("POST", "/api/v1/log/copy", copy))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }

@@ -632,6 +632,40 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /log/copy:
+    post:
+      tags: [Log]
+      operationId: copy_log_day
+      summary: Copy a day's log entries to another day
+      description: |
+        Re-snapshots every entry in `from_date` (optionally filtered by
+        `meal`) onto `to_date`. Snapshots are recomputed from the *current*
+        food, so edits to a custom food between the two dates are
+        reflected in the copied entries.
+
+        Entries whose food is no longer visible to the caller, or whose
+        serving has been deleted, are silently skipped. `from_date ==
+        to_date` and `from_date > to_date` (backward copy) are both
+        permitted. If `to_date` already has entries, they coexist with the
+        new ones — nothing is replaced.
+
+        The response is wrapped (`{ copied: [...] }`) rather than a bare
+        array so future fields (e.g. `skipped`) can be added without
+        breaking the wire shape.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CopyDayBody" }
+      responses:
+        "201":
+          description: Created. Body contains the inserted entries, in input order.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CopyDayResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /log/{id}:
     patch:
       tags: [Log]
@@ -1033,6 +1067,26 @@ components:
         meal: { $ref: "#/components/schemas/Meal" }
         consumed_on: { type: string, format: date }
         note: { type: string }
+
+    CopyDayBody:
+      type: object
+      required: [from_date, to_date]
+      properties:
+        from_date: { type: string, format: date }
+        to_date: { type: string, format: date }
+        meal:
+          oneOf:
+            - $ref: "#/components/schemas/Meal"
+            - type: "null"
+          description: If present, only entries with this meal are copied.
+
+    CopyDayResponse:
+      type: object
+      required: [copied]
+      properties:
+        copied:
+          type: array
+          items: { $ref: "#/components/schemas/LogEntry" }
 
     FoodPatch:
       type: object

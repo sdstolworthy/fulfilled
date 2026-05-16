@@ -42,6 +42,10 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/log", post(create).get(list))
         .route("/log/quick_add", post(quick_add))
+        // `/log/copy` must register *before* `/log/:id` — axum's matchit-based
+        // router treats `copy` as a path param under the wildcard otherwise,
+        // and DELETE /log/copy would silently reach the entry handler.
+        .route("/log/copy", post(copy_day))
         .route("/log/:id", axum::routing::patch(patch).delete(remove))
         .route("/days/:date/summary", get(day_summary))
 }
@@ -100,6 +104,24 @@ where
     // `default` attribute).
     let v: Option<String> = Option::deserialize(deserializer)?;
     Ok(Some(v))
+}
+
+/// Body for `POST /log/copy`. `meal` is optional — when present, only entries
+/// matching that meal are copied. `from_date > to_date` is intentionally
+/// permitted (backward copy is legitimate), unlike the GET-list range filter.
+#[derive(Debug, Deserialize)]
+struct CopyDayBody {
+    from_date: NaiveDate,
+    to_date: NaiveDate,
+    #[serde(default)]
+    meal: Option<String>,
+}
+
+/// Wrapped response so future fields (e.g. `skipped`) can be added without
+/// breaking the wire shape.
+#[derive(Serialize)]
+struct CopyDayResponse {
+    copied: Vec<LogEntryResponse>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -324,4 +346,25 @@ async fn day_summary(
 ) -> Result<Json<DaySummaryResponse>, ApiError> {
     let summary = state.logs.day_summary(user.id, date).await?;
     Ok(Json(summary.into()))
+}
+
+async fn copy_day(
+    State(state): State<AppState>,
+    AuthenticatedUser(user): AuthenticatedUser,
+    Json(body): Json<CopyDayBody>,
+) -> Result<(StatusCode, Json<CopyDayResponse>), ApiError> {
+    // Parse the optional meal *eagerly* — an unknown value becomes 400 rather
+    // than being silently dropped, which would otherwise look like a
+    // successful no-filter copy.
+    let meal = body.meal.as_deref().map(parse_meal).transpose()?;
+    let copied = state
+        .logs
+        .copy_day(user.id, body.from_date, body.to_date, meal)
+        .await?;
+    Ok((
+        StatusCode::CREATED,
+        Json(CopyDayResponse {
+            copied: copied.into_iter().map(Into::into).collect(),
+        }),
+    ))
 }
