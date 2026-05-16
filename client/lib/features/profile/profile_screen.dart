@@ -168,7 +168,8 @@ class _ProfileBody extends ConsumerWidget {
               label: 'Current weight',
               value: user.currentWeightKg == null
                   ? 'Set'
-                  : '${formatWeightKg(user.currentWeightKg!)} kg',
+                  : formatWeightWithUnit(
+                      user.currentWeightKg!, user.weightUnit),
               onTap: () => showCurrentWeightSheet(
                 context,
                 initial: user.currentWeightKg,

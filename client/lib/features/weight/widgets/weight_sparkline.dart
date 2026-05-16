@@ -9,6 +9,7 @@ import '../../../domain/enums.dart';
 import '../../../domain/units/weight.dart';
 import '../../../domain/weight.dart';
 import '../../../providers/goal_providers.dart';
+import '../../../providers/profile_providers.dart';
 import '../../../providers/weight_providers.dart';
 import '../../../theme/context_extensions.dart';
 import '../../../theme/tokens.dart';
@@ -46,6 +47,7 @@ class WeightSparklineCard extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final seriesAsync = ref.watch(weightSeriesProvider(range));
     final goalAsync = ref.watch(activeGoalProvider);
+    final unit = ref.watch(weightUnitProvider);
 
     final goalTarget = goalAsync.maybeWhen(
       data: (g) => g.targetWeightKg,
@@ -85,12 +87,14 @@ class WeightSparklineCard extends ConsumerWidget {
                 data: (points) => _ChartBody(
                   points: points,
                   goalKg: goalTarget,
+                  unit: unit,
                   onLogWeight: onLogWeight,
                 ),
                 loading: () => const _ChartSkeleton(),
                 error: (_, __) => _ChartBody(
                   points: const <WeightSeriesPoint>[],
                   goalKg: goalTarget,
+                  unit: unit,
                   onLogWeight: onLogWeight,
                 ),
               ),
@@ -209,17 +213,23 @@ class _ChartBody extends StatelessWidget {
   const _ChartBody({
     required this.points,
     required this.goalKg,
+    required this.unit,
     required this.onLogWeight,
   });
 
   final List<WeightSeriesPoint> points;
   final Decimal? goalKg;
+  final WeightUnit unit;
   final VoidCallback onLogWeight;
 
   @override
   Widget build(BuildContext context) {
     if (points.isEmpty) {
-      return _EmptyChart(goalKg: goalKg, onLogWeight: onLogWeight);
+      return _EmptyChart(
+        goalKg: goalKg,
+        unit: unit,
+        onLogWeight: onLogWeight,
+      );
     }
 
     final colors = context.colors;
@@ -230,6 +240,7 @@ class _ChartBody extends StatelessWidget {
         painter: _SparklinePainter(
           points: points,
           goalKg: goalKg,
+          unit: unit,
           colors: colors,
         ),
       ),
@@ -238,9 +249,14 @@ class _ChartBody extends StatelessWidget {
 }
 
 class _EmptyChart extends StatelessWidget {
-  const _EmptyChart({required this.goalKg, required this.onLogWeight});
+  const _EmptyChart({
+    required this.goalKg,
+    required this.unit,
+    required this.onLogWeight,
+  });
 
   final Decimal? goalKg;
+  final WeightUnit unit;
   final VoidCallback onLogWeight;
 
   @override
@@ -253,6 +269,7 @@ class _EmptyChart extends StatelessWidget {
           child: CustomPaint(
             painter: _EmptySparklinePainter(
               goalKg: goalKg,
+              unit: unit,
               colors: context.colors,
             ),
           ),
@@ -353,33 +370,77 @@ class _SparklinePainter extends CustomPainter {
   _SparklinePainter({
     required this.points,
     required this.goalKg,
+    required this.unit,
     required this.colors,
   });
 
   final List<WeightSeriesPoint> points;
   final Decimal? goalKg;
+  final WeightUnit unit;
   final AppColors colors;
+
+  /// Convert a canonical kg into the y-axis display value. For kg the
+  /// axis is kg; for lb / st the axis is linear in pounds — the visible
+  /// glyph at each tick still renders via `formatWeight(canonical_kg,
+  /// unit)`, which produces the composite under stone.
+  ///
+  /// The conversion routes through the public `parseWeightToKg` seam
+  /// (the inverse of `formatWeight`), so this painter never inlines the
+  /// kg-per-lb constant. Architect §3.13 / §3.14: only `weight.dart`
+  /// knows the avoirdupois constant.
+  double _displayValue(Decimal kg) {
+    switch (unit) {
+      case WeightUnit.kg:
+        return kg.toDouble();
+      case WeightUnit.lb:
+      case WeightUnit.st:
+        // kg → lb. `parseWeightToKg('1', WeightUnit.lb)` is 1 lb in kg;
+        // dividing by that converts kg → lb without inlining a literal.
+        final lbInKg = parseWeightToKg('1', WeightUnit.lb);
+        return (kg / lbInKg).toDouble();
+    }
+  }
+
+  /// Inverse of [_displayValue] — pixel-space y mapping consumes display
+  /// values, but the goal / tick labels start from a canonical kg
+  /// `Decimal`. The painter rounds tick positions to a uniform interval
+  /// in display space and carries the corresponding kg back through
+  /// `Decimal` for the label, using the same public seam.
+  Decimal _kgFromDisplay(double display) {
+    switch (unit) {
+      case WeightUnit.kg:
+        return Decimal.parse(display.toStringAsFixed(4));
+      case WeightUnit.lb:
+      case WeightUnit.st:
+        // display is in pounds → kg via `parseWeightToKg`. The string
+        // round-trip is the same float-safety dance as the formatter:
+        // only the already-rounded value crosses into `Decimal`.
+        return parseWeightToKg(display.toStringAsFixed(4), WeightUnit.lb);
+    }
+  }
 
   @override
   void paint(Canvas canvas, Size size) {
     if (points.isEmpty) return;
 
-    // Compute y-axis bounds. Include the goal so the dashed line is
-    // visible even when weights are well above target.
-    double minVal = points.first.weightKg.toDouble();
+    // Compute y-axis bounds *in the display unit*. Stone runs in total
+    // pounds, kg in kilograms, lb in pounds — pre-converting at painter
+    // setup keeps the tick math obvious (architect §3.14).
+    double minVal = _displayValue(points.first.weightKg);
     double maxVal = minVal;
     for (final p in points) {
-      final v = p.weightKg.toDouble();
+      final v = _displayValue(p.weightKg);
       if (v < minVal) minVal = v;
       if (v > maxVal) maxVal = v;
-      final ma = p.movingAvg7d?.toDouble();
-      if (ma != null) {
+      final maKg = p.movingAvg7d;
+      if (maKg != null) {
+        final ma = _displayValue(maKg);
         if (ma < minVal) minVal = ma;
         if (ma > maxVal) maxVal = ma;
       }
     }
     if (goalKg != null) {
-      final g = goalKg!.toDouble();
+      final g = _displayValue(goalKg!);
       if (g < minVal) minVal = g;
       if (g > maxVal) maxVal = g;
     }
@@ -398,7 +459,10 @@ class _SparklinePainter extends CustomPainter {
     double yFor(double v) =>
         chartBottom - ((v - minVal) / (maxVal - minVal)) * chartHeight;
 
-    // ── Gridlines (4 horizontal). Matches mock at y=20,60,100,140. ──
+    // ── Gridlines + tick labels (4 horizontal). Tick values are
+    // computed in the display unit; the label round-trips back through
+    // `formatWeightWithUnit(canonical_kg, unit)` so stone renders as a
+    // composite (`'12 st 7 lb'`).
     final gridPaint = Paint()
       ..color = colors.line2
       ..strokeWidth = 1;
@@ -406,11 +470,28 @@ class _SparklinePainter extends CustomPainter {
     for (var r = 0; r < rows; r++) {
       final y = chartTop + (chartHeight / (rows - 1)) * r;
       canvas.drawLine(Offset(0, y), Offset(size.width, y), gridPaint);
+      // Top row = maxVal, bottom row = minVal — invert the index so the
+      // label at the top edge is the biggest weight.
+      final tickValue = maxVal - (maxVal - minVal) * (r / (rows - 1));
+      final tickKg = _kgFromDisplay(tickValue);
+      final tp = TextPainter(
+        text: TextSpan(
+          text: formatWeightWithUnit(tickKg, unit),
+          style: TextStyle(
+            fontFamily: 'Inter',
+            fontSize: 9,
+            color: colors.ink3,
+            fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      tp.paint(canvas, Offset(2, y - tp.height - 1));
     }
 
     // ── Dashed goal line ────────────────────────────────────────────────
     if (goalKg != null) {
-      final goalY = yFor(goalKg!.toDouble());
+      final goalY = yFor(_displayValue(goalKg!));
       _drawDashedLine(
         canvas,
         Offset(0, goalY),
@@ -421,10 +502,10 @@ class _SparklinePainter extends CustomPainter {
         dashWidth: 3,
         gapWidth: 4,
       );
-      // "GOAL nn.n" label, right-aligned just above the line.
+      // "GOAL <weight>" label, right-aligned just above the line.
       final tp = TextPainter(
         text: TextSpan(
-          text: 'GOAL ${formatWeightKg(goalKg!)}',
+          text: 'GOAL ${formatWeightWithUnit(goalKg!, unit)}',
           style: TextStyle(
             fontFamily: 'Inter',
             fontSize: 9,
@@ -442,7 +523,7 @@ class _SparklinePainter extends CustomPainter {
     final actualPath = Path();
     for (var i = 0; i < points.length; i++) {
       final x = xFor(i);
-      final y = yFor(points[i].weightKg.toDouble());
+      final y = yFor(_displayValue(points[i].weightKg));
       if (i == 0) {
         actualPath.moveTo(x, y);
       } else {
@@ -479,9 +560,9 @@ class _SparklinePainter extends CustomPainter {
     // ── 7-day moving-avg dashed line — suffix where movingAvg7d != null ─
     final maPoints = <Offset>[];
     for (var i = 0; i < points.length; i++) {
-      final ma = points[i].movingAvg7d?.toDouble();
-      if (ma == null) continue;
-      maPoints.add(Offset(xFor(i), yFor(ma)));
+      final maKg = points[i].movingAvg7d;
+      if (maKg == null) continue;
+      maPoints.add(Offset(xFor(i), yFor(_displayValue(maKg))));
     }
     if (maPoints.length >= 2) {
       final dashPaint = Paint()
@@ -502,7 +583,7 @@ class _SparklinePainter extends CustomPainter {
     for (var i = 0; i < points.length; i++) {
       final isLast = i == points.length - 1;
       if (!isLast && i % stride != 0) continue;
-      final c = Offset(xFor(i), yFor(points[i].weightKg.toDouble()));
+      final c = Offset(xFor(i), yFor(_displayValue(points[i].weightKg)));
       final radius = isLast ? 3.4 : 2.6;
       canvas.drawCircle(
         c,
@@ -546,6 +627,7 @@ class _SparklinePainter extends CustomPainter {
   bool shouldRepaint(covariant _SparklinePainter old) {
     if (old.points.length != points.length) return true;
     if (old.goalKg != goalKg) return true;
+    if (old.unit != unit) return true;
     for (var i = 0; i < points.length; i++) {
       if (old.points[i] != points[i]) return true;
     }
@@ -554,9 +636,14 @@ class _SparklinePainter extends CustomPainter {
 }
 
 class _EmptySparklinePainter extends CustomPainter {
-  _EmptySparklinePainter({required this.goalKg, required this.colors});
+  _EmptySparklinePainter({
+    required this.goalKg,
+    required this.unit,
+    required this.colors,
+  });
 
   final Decimal? goalKg;
+  final WeightUnit unit;
   final AppColors colors;
 
   @override
@@ -585,7 +672,7 @@ class _EmptySparklinePainter extends CustomPainter {
       );
       final tp = TextPainter(
         text: TextSpan(
-          text: 'GOAL ${formatWeightKg(goalKg!)}',
+          text: 'GOAL ${formatWeightWithUnit(goalKg!, unit)}',
           style: TextStyle(
             fontFamily: 'Inter',
             fontSize: 9,
@@ -619,5 +706,5 @@ class _EmptySparklinePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _EmptySparklinePainter old) =>
-      old.goalKg != goalKg;
+      old.goalKg != goalKg || old.unit != unit;
 }

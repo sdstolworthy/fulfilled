@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../domain/enums.dart';
 import '../../domain/goal.dart';
+import '../../domain/locale_defaults.dart';
 import '../../domain/user.dart';
 import '../../providers/draft_providers.dart';
 import '../../providers/repository_providers.dart';
@@ -86,12 +87,16 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
       final profile = ref.read(profileRepositoryProvider);
       final goals = ref.read(goalRepositoryProvider);
 
-      // PATCH /me with the profile bits.
+      // PATCH /me with the profile bits. LU-008: include the chosen
+      // display unit so the server persists it on `User.weight_unit`.
+      // Fall back to the locale default when the user never tapped a
+      // segment (matches `onboardingWeightUnitProvider`'s fallback).
       await profile.update(UserPatch(
         sex: draft.sex,
         birthDate: draft.birthDate,
         heightCm: draft.heightCm,
         activityLevel: draft.activityLevel,
+        weightUnit: draft.weightUnit ?? defaultWeightUnitForLocale(),
       ));
 
       // Compute the daily target client-side per architecture §9 — the

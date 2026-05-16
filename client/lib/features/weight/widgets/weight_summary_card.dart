@@ -2,10 +2,12 @@ import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../domain/enums.dart';
 import '../../../domain/goal.dart';
 import '../../../domain/units/weight.dart';
 import '../../../domain/weight.dart';
 import '../../../providers/goal_providers.dart';
+import '../../../providers/profile_providers.dart';
 import '../../../providers/weight_providers.dart';
 import '../../../theme/context_extensions.dart';
 
@@ -40,6 +42,7 @@ class WeightSummaryCard extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final historyAsync = ref.watch(weightHistoryProvider);
     final goalAsync = ref.watch(activeGoalProvider);
+    final unit = ref.watch(weightUnitProvider);
 
     return Padding(
       padding: EdgeInsets.fromLTRB(
@@ -56,6 +59,7 @@ class WeightSummaryCard extends ConsumerWidget {
               data: (g) => g,
               orElse: () => null,
             ),
+            unit: unit,
           ),
           loading: () => const _SummarySkeleton(),
           error: (_, __) => const _SummarySkeleton(),
@@ -85,15 +89,16 @@ class _Card extends StatelessWidget {
 }
 
 class _Body extends StatelessWidget {
-  const _Body({required this.history, required this.goal});
+  const _Body({required this.history, required this.goal, required this.unit});
 
   final List<WeightEntry> history;
   final Goal? goal;
+  final WeightUnit unit;
 
   @override
   Widget build(BuildContext context) {
     if (history.isEmpty) {
-      return _EmptyHero(goal: goal);
+      return _EmptyHero(goal: goal, unit: unit);
     }
     // history is newest-first per repository contract.
     final now = history.first;
@@ -111,9 +116,9 @@ class _Body extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
                   Semantics(
-                    label: 'Current weight ${formatWeightKg(now.weightKg)} '
-                        'kilograms',
-                    child: _NowReadout(weightKg: now.weightKg),
+                    label: 'Current weight ${formatWeight(now.weightKg, unit)} '
+                        '${unit.longLabel}',
+                    child: _NowReadout(weightKg: now.weightKg, unit: unit),
                   ),
                   SizedBox(height: context.space.x05),
                   Text(
@@ -123,7 +128,7 @@ class _Body extends StatelessWidget {
                 ],
               ),
             ),
-            if (monthDelta != null) _DeltaPill(deltaKg: monthDelta),
+            if (monthDelta != null) _DeltaPill(deltaKg: monthDelta, unit: unit),
           ],
         ),
         SizedBox(height: context.space.x3),
@@ -135,18 +140,21 @@ class _Body extends StatelessWidget {
               child: _Stat(
                 label: 'START',
                 weightKg: goal?.startWeightKg,
+                unit: unit,
               ),
             ),
             Expanded(
               child: _Stat(
                 label: 'GOAL',
                 weightKg: goal?.targetWeightKg,
+                unit: unit,
               ),
             ),
             Expanded(
               child: _Stat(
                 label: 'AVG / WK',
                 weightKg: avgWeeklyKg,
+                unit: unit,
                 signed: true,
               ),
             ),
@@ -210,24 +218,34 @@ class _Body extends StatelessWidget {
 }
 
 class _NowReadout extends StatelessWidget {
-  const _NowReadout({required this.weightKg});
+  const _NowReadout({required this.weightKg, required this.unit});
 
   final Decimal weightKg;
+  final WeightUnit unit;
 
   @override
   Widget build(BuildContext context) {
+    // Stone case inlines its units ("12 st 7 lb"), so we collapse the
+    // separate suffix `Text`. For kg / lb we keep the two-`Text` split
+    // (architect §3.13 row).
+    if (unit == WeightUnit.st) {
+      return Text(
+        formatWeight(weightKg, unit),
+        style: context.text.heroNumeric,
+      );
+    }
     return Row(
       crossAxisAlignment: CrossAxisAlignment.baseline,
       textBaseline: TextBaseline.alphabetic,
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
         Text(
-          formatWeightKg(weightKg),
+          formatWeight(weightKg, unit),
           style: context.text.heroNumeric,
         ),
         SizedBox(width: context.space.x1),
         Text(
-          'kg',
+          unit.shortLabel,
           style: context.text.body.copyWith(color: context.colors.ink2),
         ),
       ],
@@ -236,9 +254,10 @@ class _NowReadout extends StatelessWidget {
 }
 
 class _DeltaPill extends StatelessWidget {
-  const _DeltaPill({required this.deltaKg});
+  const _DeltaPill({required this.deltaKg, required this.unit});
 
   final Decimal deltaKg;
+  final WeightUnit unit;
 
   @override
   Widget build(BuildContext context) {
@@ -247,7 +266,7 @@ class _DeltaPill extends StatelessWidget {
     final magnitude = deltaKg.abs();
 
     final sign = isZero ? '' : (negative ? '−' : '+');
-    final label = '$sign${formatWeightKg(magnitude)} kg this month';
+    final label = '$sign${formatWeightWithUnit(magnitude, unit)} this month';
 
     final iconData = isZero
         ? Icons.horizontal_rule
@@ -288,11 +307,13 @@ class _Stat extends StatelessWidget {
   const _Stat({
     required this.label,
     required this.weightKg,
+    required this.unit,
     this.signed = false,
   });
 
   final String label;
   final Decimal? weightKg;
+  final WeightUnit unit;
   final bool signed;
 
   @override
@@ -302,8 +323,12 @@ class _Stat extends StatelessWidget {
         ? '—'
         : (signed
             ? '${value < Decimal.zero ? '−' : (value > Decimal.zero ? '+' : '')}'
-                '${formatWeightKg(value.abs())}'
-            : formatWeightKg(value));
+                '${formatWeight(value.abs(), unit)}'
+            : formatWeight(value, unit));
+
+    // Stone case inlines its units ("12 st 7 lb"); drop the separate
+    // suffix `Text` so the visual doesn't read "12 st 7 lb st".
+    final showSuffix = value != null && unit != WeightUnit.st;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -318,10 +343,10 @@ class _Stat extends StatelessWidget {
           textBaseline: TextBaseline.alphabetic,
           children: <Widget>[
             Text(formatted, style: context.text.bodyStrongNumeric),
-            if (value != null) ...<Widget>[
+            if (showSuffix) ...<Widget>[
               SizedBox(width: context.space.x05),
               Text(
-                'kg',
+                unit.shortLabel,
                 style: context.text.meta
                     .copyWith(color: context.colors.ink2, fontSize: 11),
               ),
@@ -334,11 +359,16 @@ class _Stat extends StatelessWidget {
 }
 
 class _EmptyHero extends StatelessWidget {
-  const _EmptyHero({required this.goal});
+  const _EmptyHero({required this.goal, required this.unit});
   final Goal? goal;
+  final WeightUnit unit;
 
   @override
   Widget build(BuildContext context) {
+    // Empty hero — there's no numeric value yet, so render an em-dash.
+    // The suffix follows the active unit so the chrome doesn't lie
+    // ("— kg" vs "— lb"); stone has no separate suffix since the
+    // composite would normally inline its own units.
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
@@ -347,11 +377,13 @@ class _EmptyHero extends StatelessWidget {
           textBaseline: TextBaseline.alphabetic,
           children: <Widget>[
             Text('—', style: context.text.heroNumeric),
-            SizedBox(width: context.space.x1),
-            Text(
-              'kg',
-              style: context.text.body.copyWith(color: context.colors.ink2),
-            ),
+            if (unit != WeightUnit.st) ...<Widget>[
+              SizedBox(width: context.space.x1),
+              Text(
+                unit.shortLabel,
+                style: context.text.body.copyWith(color: context.colors.ink2),
+              ),
+            ],
           ],
         ),
         SizedBox(height: context.space.x05),
@@ -364,9 +396,28 @@ class _EmptyHero extends StatelessWidget {
         SizedBox(height: context.space.x3),
         Row(
           children: <Widget>[
-            Expanded(child: _Stat(label: 'START', weightKg: goal?.startWeightKg)),
-            Expanded(child: _Stat(label: 'GOAL', weightKg: goal?.targetWeightKg)),
-            const Expanded(child: _Stat(label: 'AVG / WK', weightKg: null, signed: true)),
+            Expanded(
+              child: _Stat(
+                label: 'START',
+                weightKg: goal?.startWeightKg,
+                unit: unit,
+              ),
+            ),
+            Expanded(
+              child: _Stat(
+                label: 'GOAL',
+                weightKg: goal?.targetWeightKg,
+                unit: unit,
+              ),
+            ),
+            Expanded(
+              child: _Stat(
+                label: 'AVG / WK',
+                weightKg: null,
+                unit: unit,
+                signed: true,
+              ),
+            ),
           ],
         ),
       ],

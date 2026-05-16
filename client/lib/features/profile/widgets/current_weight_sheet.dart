@@ -7,6 +7,7 @@ import '../../../providers/profile_providers.dart';
 import '../../../providers/repository_providers.dart';
 import '../../../providers/weight_providers.dart';
 import '../../../theme/context_extensions.dart';
+import '../../../widgets/weight_stepper.dart';
 import 'editor_footer.dart';
 import 'editor_host.dart';
 
@@ -44,10 +45,8 @@ class CurrentWeightSheet extends ConsumerStatefulWidget {
 class _CurrentWeightSheetState extends ConsumerState<CurrentWeightSheet> {
   static final Decimal _min = Decimal.fromInt(30);
   static final Decimal _max = Decimal.fromInt(300);
-  static final Decimal _step = Decimal.parse('0.1');
 
   late Decimal _kg;
-  late TextEditingController _controller;
   bool _saving = false;
   String? _error;
 
@@ -56,45 +55,6 @@ class _CurrentWeightSheetState extends ConsumerState<CurrentWeightSheet> {
     super.initState();
     _kg = (widget.initial ?? Decimal.parse('70')).round(scale: 1);
     if (_kg < _min || _kg > _max) _kg = Decimal.parse('70');
-    _controller = TextEditingController(text: _format(_kg));
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  String _format(Decimal v) => formatWeightKg(v);
-
-  void _setKg(Decimal next) {
-    final clamped = next.round(scale: 1);
-    if (clamped < _min || clamped > _max) return;
-    setState(() {
-      _kg = clamped;
-      _controller.text = _format(clamped);
-      _controller.selection = TextSelection.fromPosition(
-        TextPosition(offset: _controller.text.length),
-      );
-      _error = null;
-    });
-  }
-
-  void _onFieldChanged(String raw) {
-    final trimmed = raw.trim().replaceAll(',', '.');
-    final parsed = Decimal.tryParse(trimmed);
-    if (parsed == null) {
-      setState(() => _error = 'Enter a number');
-      return;
-    }
-    if (parsed < _min || parsed > _max) {
-      setState(() => _error = 'Weight must be 30–300 kg');
-      return;
-    }
-    setState(() {
-      _kg = parsed.round(scale: 1);
-      _error = null;
-    });
   }
 
   Future<void> _save() async {
@@ -121,10 +81,14 @@ class _CurrentWeightSheetState extends ConsumerState<CurrentWeightSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final colors = context.colors;
+    final unit = ref.watch(weightUnitProvider);
     final space = context.space;
     final canSave = _error == null && !_saving;
 
+    // The display label below the stepper mirrors the canonical kg in
+    // the active unit. The stepper itself owns the input; this is the
+    // "value confirmation" affordance the previous TextField provided
+    // for free.
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -134,74 +98,49 @@ class _CurrentWeightSheetState extends ConsumerState<CurrentWeightSheet> {
             horizontal: space.x5,
             vertical: space.x3,
           ),
-          child: Row(
-            children: <Widget>[
-              _StepperButton(
-                icon: Icons.remove,
-                onTap: _kg > _min ? () => _setKg(_kg - _step) : null,
-              ),
-              SizedBox(width: space.x3),
-              Expanded(
-                child: TextField(
-                  key: const Key('weight-field'),
-                  controller: _controller,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
-                  textAlign: TextAlign.center,
-                  style: context.text.heroNumeric,
-                  decoration: InputDecoration(
-                    suffixText: 'kg',
-                    suffixStyle: context.text.body.copyWith(color: colors.ink2),
-                    errorText: _error,
-                  ),
-                  onChanged: _onFieldChanged,
-                ),
-              ),
-              SizedBox(width: space.x3),
-              _StepperButton(
-                icon: Icons.add,
-                onTap: _kg < _max ? () => _setKg(_kg + _step) : null,
-              ),
-            ],
+          child: WeightStepper(
+            key: const Key('weight-field'),
+            value: _kg,
+            minKg: _min,
+            maxKg: _max,
+            hasError: _error != null,
+            semanticsLabel: 'Current weight',
+            onChanged: (next) {
+              final clamped = next.round(scale: 1);
+              if (clamped < _min || clamped > _max) {
+                setState(() => _error = 'Weight must be 30–300 kg');
+                return;
+              }
+              setState(() {
+                _kg = clamped;
+                _error = null;
+              });
+            },
           ),
         ),
+        if (_error != null)
+          Padding(
+            padding: EdgeInsets.symmetric(horizontal: space.x5),
+            child: Text(
+              _error!,
+              style: context.text.meta.copyWith(
+                color: context.colors.danger,
+              ),
+            ),
+          )
+        else
+          Padding(
+            padding: EdgeInsets.symmetric(horizontal: space.x5),
+            child: Text(
+              formatWeightWithUnit(_kg, unit),
+              style: context.text.meta.copyWith(color: context.colors.ink2),
+            ),
+          ),
         EditorFooter(
           onSave: canSave ? _save : null,
           saving: _saving,
         ),
       ],
-    );
-  }
-}
-
-class _StepperButton extends StatelessWidget {
-  const _StepperButton({required this.icon, required this.onTap});
-
-  final IconData icon;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = context.colors;
-    final enabled = onTap != null;
-    return SizedBox(
-      width: 48,
-      height: 48,
-      child: Material(
-        color: enabled ? colors.accentSoft : colors.line2,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(context.radius.rPill),
-        ),
-        child: InkWell(
-          customBorder: const CircleBorder(),
-          onTap: onTap,
-          child: Icon(
-            icon,
-            size: 22,
-            color: enabled ? colors.accent : colors.ink3,
-          ),
-        ),
-      ),
     );
   }
 }

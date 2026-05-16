@@ -6,7 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
-import 'package:fulfilled/widgets/quantity_stepper.dart';
+import 'package:fulfilled/widgets/weight_stepper.dart';
 
 import '../../../domain/enums.dart';
 import '../../../domain/units/weight.dart';
@@ -36,7 +36,7 @@ import '../../../theme/context_extensions.dart';
 ///   - Shows a `SnackBar` success and closes the sheet/dialog.
 ///
 /// Tenants: T-07 stepper, T-11 errors inline (no modal alerts), T-17
-/// Decimal math, T-21 weight via `formatWeightKg`.
+/// Decimal math, T-21 weight via `formatWeight` / `formatWeightWithUnit`.
 class LogWeightSheet extends ConsumerStatefulWidget {
   const LogWeightSheet({
     required this.currentRange,
@@ -123,11 +123,15 @@ class _LogWeightSheetState extends ConsumerState<LogWeightSheet> {
       ref.invalidate(meProvider);
 
       if (!mounted) return;
+      // Read the active unit at toast time so the message reflects what
+      // the user is looking at (T-21). The provider is read once — the
+      // sheet is already popping, no need to subscribe.
+      final unit = ref.read(weightUnitProvider);
       Navigator.of(context).pop();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            'Logged ${formatWeightKg(_weightKg)} kg for '
+            'Logged ${formatWeightWithUnit(_weightKg, unit)} for '
             '${DateFormat('MMM d').format(_date)}',
           ),
           backgroundColor: context.colors.accent,
@@ -283,14 +287,12 @@ class _Body extends StatelessWidget {
           ],
         ),
         SizedBox(height: context.space.x3),
-        QuantityStepper(
+        WeightStepper(
           value: weightKg,
-          onChanged: onWeightChanged,
-          step: Decimal.parse('0.1'),
-          min: Decimal.parse('20'),
-          max: Decimal.parse('300'),
-          unitSuffix: 'kg',
-          semanticsLabel: 'Weight in kilograms',
+          onChanged: (next) => onWeightChanged(next),
+          minKg: Decimal.parse('20'),
+          maxKg: Decimal.parse('300'),
+          semanticsLabel: 'Weight',
         ),
         SizedBox(height: context.space.x3),
         _QuickChips(
@@ -334,14 +336,15 @@ class _Body extends StatelessWidget {
   }
 }
 
-class _QuickChips extends StatelessWidget {
+class _QuickChips extends ConsumerWidget {
   const _QuickChips({required this.weightKg, required this.onPick});
 
   final Decimal weightKg;
   final ValueChanged<int> onPick; // tenths
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final unit = ref.watch(weightUnitProvider);
     // Five offsets centered on the current value: -1.0 / -0.5 / cur /
     // +0.5 / +1.0. Tap to snap.
     final cur = (weightKg * Decimal.fromInt(10)).toBigInt().toInt();
@@ -353,6 +356,7 @@ class _QuickChips extends StatelessWidget {
           _Chip(
             tenths: cur + offsets[i],
             isCenter: offsets[i] == 0,
+            unit: unit,
             onTap: () => onPick(cur + offsets[i]),
           ),
           if (i < offsets.length - 1) SizedBox(width: context.space.x2),
@@ -366,11 +370,13 @@ class _Chip extends StatelessWidget {
   const _Chip({
     required this.tenths,
     required this.isCenter,
+    required this.unit,
     required this.onTap,
   });
 
   final int tenths;
   final bool isCenter;
+  final WeightUnit unit;
   final VoidCallback onTap;
 
   @override
@@ -393,7 +399,7 @@ class _Chip extends StatelessWidget {
           borderRadius: BorderRadius.circular(context.radius.rPill),
         ),
         child: Text(
-          formatWeightKg(v),
+          formatWeightWithUnit(v, unit),
           style: context.text.metaNumeric.copyWith(
             color: isCenter ? context.colors.surface : context.colors.ink,
             fontWeight: FontWeight.w600,

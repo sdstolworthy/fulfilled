@@ -36,8 +36,8 @@ import 'widgets/weight_summary_card.dart';
 ///     weight deltas use `Decimal` subtraction in the summary card.
 ///   - T-19 `CustomPainter` only — no chart deps (see
 ///     `weight_sparkline.dart`).
-///   - T-21 weight rendered via `formatWeightKg` from
-///     `lib/domain/units/weight.dart`.
+///   - T-21 weight rendered via `formatWeight` / `formatWeightWithUnit`
+///     from `lib/domain/units/weight.dart`.
 ///
 /// **Active-goal handling.** `activeGoalProvider` throws
 /// `GoalNotFoundError` when no goal exists; we catch that in the summary

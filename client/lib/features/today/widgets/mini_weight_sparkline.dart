@@ -1,6 +1,7 @@
 import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
 
+import '../../../domain/enums.dart';
 import '../../../domain/units/weight.dart';
 import '../../../domain/weight.dart';
 import '../../../theme/context_extensions.dart';
@@ -16,12 +17,26 @@ import '../../../theme/context_extensions.dart';
 ///
 /// T-19: no SVG; the chart is a `CustomPainter` cubic path. Decimal math
 /// happens upstream — this widget only ever consumes doubles for pixel
-/// placement, after [formatWeightKg] has rendered the header number.
+/// placement, after [formatWeight] has rendered the header number.
+///
+/// **Unit handling.** The active [WeightUnit] arrives as a constructor
+/// param — the screen-level Consumer reads `weightUnitProvider`. This
+/// widget itself does not subscribe so it stays embeddable in tests and
+/// in surfaces that drive the unit from a non-default provider.
 class MiniWeightSparkline extends StatelessWidget {
-  const MiniWeightSparkline({required this.points, super.key});
+  const MiniWeightSparkline({
+    required this.points,
+    required this.unit,
+    super.key,
+  });
 
   /// Ascending-by-date series. Empty list ⇒ empty state.
   final List<WeightSeriesPoint> points;
+
+  /// Active display unit for the header and delta. The painter itself
+  /// is unit-agnostic — pixel placement is normalised against
+  /// [WeightSeriesPoint.weightKg], not against the displayed number.
+  final WeightUnit unit;
 
   @override
   Widget build(BuildContext context) {
@@ -51,7 +66,7 @@ class MiniWeightSparkline extends StatelessWidget {
               ),
             )
           else ...<Widget>[
-            _Header(points: points),
+            _Header(points: points, unit: unit),
             SizedBox(height: context.space.x2),
             SizedBox(
               height: 64,
@@ -72,8 +87,9 @@ class MiniWeightSparkline extends StatelessWidget {
 }
 
 class _Header extends StatelessWidget {
-  const _Header({required this.points});
+  const _Header({required this.points, required this.unit});
   final List<WeightSeriesPoint> points;
+  final WeightUnit unit;
 
   @override
   Widget build(BuildContext context) {
@@ -82,26 +98,37 @@ class _Header extends StatelessWidget {
     final first = points.first.weightKg;
     final delta = latest - first;
 
+    // Stone collapses to the composite ("12 st 7 lb") which already
+    // inlines its units — render a single `Text` and drop the separate
+    // suffix (architect §3.13 row). kg / lb keep the two-`Text` split.
+    final Widget headerNumber;
+    if (unit == WeightUnit.st) {
+      headerNumber = Text(
+        formatWeight(latest, unit),
+        style: context.text.titleNumeric.copyWith(fontSize: 22),
+      );
+    } else {
+      headerNumber = Row(
+        crossAxisAlignment: CrossAxisAlignment.baseline,
+        textBaseline: TextBaseline.alphabetic,
+        children: <Widget>[
+          Text(
+            formatWeight(latest, unit),
+            style: context.text.titleNumeric.copyWith(fontSize: 22),
+          ),
+          SizedBox(width: context.space.x1),
+          Text(
+            unit.shortLabel,
+            style: context.text.meta.copyWith(color: colors.ink2),
+          ),
+        ],
+      );
+    }
+
     return Row(
       crossAxisAlignment: CrossAxisAlignment.end,
       children: <Widget>[
-        Expanded(
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.baseline,
-            textBaseline: TextBaseline.alphabetic,
-            children: <Widget>[
-              Text(
-                formatWeightKg(latest),
-                style: context.text.titleNumeric.copyWith(fontSize: 22),
-              ),
-              SizedBox(width: context.space.x1),
-              Text(
-                'kg',
-                style: context.text.meta.copyWith(color: colors.ink2),
-              ),
-            ],
-          ),
-        ),
+        Expanded(child: headerNumber),
         Text(
           _deltaLabel(delta),
           style: context.text.metaNumeric.copyWith(
@@ -115,13 +142,19 @@ class _Header extends StatelessWidget {
   }
 
   String _deltaLabel(Decimal delta) {
-    if (delta == Decimal.zero) return '±0.0 kg';
-    final magnitude = formatWeightKg(delta.abs());
-    // Use a U+2212 minus / U+2212 ; ASCII + sign for positives so the glyph
+    if (delta == Decimal.zero) {
+      // Architect §3.13 row: the `±0.0 kg` zero case collapses to
+      // `±0 st` under stone (the composite would inline its own units
+      // and `±0 st 0 lb` reads worse than `±0 st`). Keep the existing
+      // shape for kg / lb.
+      return unit == WeightUnit.st ? '±0 st' : '±0.0 ${unit.shortLabel}';
+    }
+    final magnitude = formatWeightWithUnit(delta.abs(), unit);
+    // Use a U+2212 minus glyph; ASCII + sign for positives so the glyph
     // is visually crisp at small size. The accent color signals "good"
     // for either direction in the mock; the consumer of the screen can
     // colorize differently when goal direction lands.
-    return delta < Decimal.zero ? '−$magnitude kg' : '+$magnitude kg';
+    return delta < Decimal.zero ? '−$magnitude' : '+$magnitude';
   }
 }
 

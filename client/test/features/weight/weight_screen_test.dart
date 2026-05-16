@@ -12,6 +12,7 @@ import 'package:fulfilled/features/weight/widgets/weight_history_list.dart';
 import 'package:fulfilled/features/weight/widgets/weight_sparkline.dart';
 import 'package:fulfilled/features/weight/widgets/weight_summary_card.dart';
 import 'package:fulfilled/providers/goal_providers.dart';
+import 'package:fulfilled/providers/profile_providers.dart';
 import 'package:fulfilled/providers/weight_providers.dart';
 import 'package:fulfilled/routing/app_router.dart';
 import 'package:fulfilled/theme/theme_data.dart';
@@ -320,6 +321,87 @@ void main() {
     expect(emptyState, findsOneWidget);
     expect(find.text('No weight logged yet'), findsOneWidget);
     expect(find.text('Log your first weight'), findsOneWidget);
+  });
+
+  // LU-009 — the sweep through `formatWeight` + `formatWeightWithUnit`
+  // means both the hero card and the recent-entries list rebuild against
+  // `weightUnitProvider`. Overriding it to lb must swap the rendered
+  // glyphs without mutating the underlying canonical kg series.
+  testWidgets(
+      'renders weight in lb when weightUnitProvider is overridden to lb '
+      '(WeightSummaryCard)', (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      _harness(
+        overrides: <Override>[
+          activeGoalProvider.overrideWith((_) async => _activeGoal()),
+          weightHistoryProvider.overrideWith((_) async => _historySeed()),
+          for (final r in WeightRange.values)
+            weightSeriesProvider(r).overrideWith((_) async => _seriesFor(r)),
+          weightUnitProvider.overrideWith((_) => WeightUnit.lb),
+        ],
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // _historySeed()[0] is 80.0 kg → 176.4 lb (half-to-even at 1dp).
+    final summary = find.byType(WeightSummaryCard);
+    expect(summary, findsOneWidget);
+    expect(
+      find.descendant(of: summary, matching: find.text('176.4')),
+      findsOneWidget,
+      reason: '80.0 kg renders as 176.4 lb under weightUnit=lb',
+    );
+    // The hero suffix should read `lb`, not `kg`.
+    expect(
+      find.descendant(of: summary, matching: find.text('lb')),
+      findsWidgets,
+    );
+    // And explicitly no `kg` glyph leaks under lb.
+    expect(
+      find.descendant(of: summary, matching: find.text('kg')),
+      findsNothing,
+    );
+  });
+
+  testWidgets(
+      'renders weight in lb when weightUnitProvider is overridden to lb '
+      '(WeightHistoryList)', (tester) async {
+    tester.view.physicalSize = const Size(390, 1500);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      _harness(
+        overrides: <Override>[
+          activeGoalProvider.overrideWith((_) async => _activeGoal()),
+          weightHistoryProvider.overrideWith((_) async => _historySeed()),
+          for (final r in WeightRange.values)
+            weightSeriesProvider(r).overrideWith((_) async => _seriesFor(r)),
+          weightUnitProvider.overrideWith((_) => WeightUnit.lb),
+        ],
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // _historySeed()[0] is 80.0 kg → 176.4 lb. The row renders
+    // "176.4 lb" as a single Text via `formatWeightWithUnit`.
+    final list = find.byType(WeightHistoryList);
+    expect(list, findsOneWidget);
+    expect(
+      find.descendant(of: list, matching: find.text('176.4 lb')),
+      findsOneWidget,
+    );
+    // No kg-suffixed weights should appear in the list under lb.
+    expect(
+      find.descendant(of: list, matching: find.textContaining(' kg')),
+      findsNothing,
+    );
   });
 
   testWidgets(

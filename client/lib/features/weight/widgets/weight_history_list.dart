@@ -7,6 +7,7 @@ import '../../../domain/enums.dart';
 import '../../../domain/units/weight.dart';
 import '../../../domain/weight.dart';
 import '../../../form_factor/form_factor.dart';
+import '../../../providers/profile_providers.dart';
 import '../../../providers/weight_providers.dart';
 import '../../../theme/context_extensions.dart';
 import '../../../widgets/empty_state.dart';
@@ -24,13 +25,14 @@ import 'log_weight_sheet.dart';
 /// Tenants: T-02 tabular figures, T-08 skeleton when loading (lifted
 /// `Skeleton` primitive — T-23 shared widgets), T-11 errors render an
 /// `EmptyState` + a SnackBar shim (not modal), T-17 Decimal math, T-21
-/// weight rendered via `formatWeightKg`.
+/// weight rendered via `formatWeight` / `formatWeightWithUnit`.
 class WeightHistoryList extends ConsumerWidget {
   const WeightHistoryList({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final historyAsync = ref.watch(weightHistoryProvider);
+    final unit = ref.watch(weightUnitProvider);
 
     // T-11 — SnackBar fires on transition into the error state so the
     // user notices even if scrolled away from the inline EmptyState.
@@ -49,7 +51,7 @@ class WeightHistoryList extends ConsumerWidget {
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: context.space.x5),
       child: historyAsync.when(
-        data: (entries) => _List(entries: entries),
+        data: (entries) => _List(entries: entries, unit: unit),
         loading: () => const _Skeleton(),
         error: (_, __) => _Error(
           onRetry: () => ref.invalidate(weightHistoryProvider),
@@ -60,9 +62,10 @@ class WeightHistoryList extends ConsumerWidget {
 }
 
 class _List extends StatelessWidget {
-  const _List({required this.entries});
+  const _List({required this.entries, required this.unit});
 
   final List<WeightEntry> entries;
+  final WeightUnit unit;
 
   @override
   Widget build(BuildContext context) {
@@ -90,6 +93,7 @@ class _List extends StatelessWidget {
               entry: entries[i],
               previous: i + 1 < entries.length ? entries[i + 1] : null,
               isLast: i == entries.length - 1,
+              unit: unit,
             ),
         ],
       ),
@@ -155,11 +159,13 @@ class _Row extends StatelessWidget {
     required this.entry,
     required this.previous,
     required this.isLast,
+    required this.unit,
   });
 
   final WeightEntry entry;
   final WeightEntry? previous;
   final bool isLast;
+  final WeightUnit unit;
 
   @override
   Widget build(BuildContext context) {
@@ -223,11 +229,11 @@ class _Row extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.end,
               children: <Widget>[
                 Text(
-                  '${formatWeightKg(entry.weightKg)} kg',
+                  formatWeightWithUnit(entry.weightKg, unit),
                   style: context.text.bodyStrongNumeric,
                 ),
                 SizedBox(height: context.space.x05),
-                if (delta != null) _DeltaText(delta: delta),
+                if (delta != null) _DeltaText(delta: delta, unit: unit),
               ],
             ),
           ],
@@ -245,7 +251,7 @@ class _Row extends StatelessWidget {
     final parts = <String>[
       dayLabel,
       subtitle,
-      '${formatWeightKg(weightKg)} kilograms',
+      '${formatWeight(weightKg, unit)} ${unit.longLabel}',
     ];
     if (delta != null && delta != Decimal.zero) {
       final losing = delta < Decimal.zero;
@@ -253,7 +259,8 @@ class _Row extends StatelessWidget {
       // "down 0.4 kilograms" / "up 0.4 kilograms" — direction words so a
       // screen-reader user gets the signal sighted users get from color.
       parts.add(
-        '${losing ? 'down' : 'up'} ${formatWeightKg(magnitude)} kilograms',
+        '${losing ? 'down' : 'up'} ${formatWeight(magnitude, unit)} '
+        '${unit.longLabel}',
       );
     }
     return parts.join(', ');
@@ -274,9 +281,10 @@ class _Row extends StatelessWidget {
 }
 
 class _DeltaText extends StatelessWidget {
-  const _DeltaText({required this.delta});
+  const _DeltaText({required this.delta, required this.unit});
 
   final Decimal delta;
+  final WeightUnit unit;
 
   @override
   Widget build(BuildContext context) {
@@ -287,7 +295,7 @@ class _DeltaText extends StatelessWidget {
         : (negative ? context.colors.accent : context.colors.danger);
     final magnitude = delta.abs();
     final sign = isZero ? '±' : (negative ? '−' : '+');
-    final label = '$sign${formatWeightKg(magnitude)}';
+    final label = '$sign${formatWeight(magnitude, unit)}';
 
     return Text(
       label,

@@ -4,10 +4,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import 'package:fulfilled/widgets/activity_option.dart';
+import 'package:fulfilled/widgets/weight_stepper.dart';
 
 import '../../../domain/drafts.dart';
 import '../../../domain/enums.dart';
-import '../../../domain/units/weight.dart';
 import '../../../providers/draft_providers.dart';
 import '../../../theme/context_extensions.dart';
 import 'segmented_select.dart';
@@ -17,9 +17,17 @@ import 'segmented_select.dart';
 /// mutates the `onboardingDraftProvider` notifier directly so the screen
 /// root re-reads the draft for navigation decisions without prop-drilling.
 ///
-/// T-17: height and weight are `Decimal` end-to-end. The visible string
-/// goes through the units helpers (`formatWeightKg` for weight; we mirror
-/// for height since no `formatHeightCm` exists yet — flagged inline).
+/// T-17: height and weight are `Decimal` end-to-end. Height keeps the
+/// local `_formatHeightCm` helper (no `formatHeightCm` exists yet —
+/// flagged inline). Weight delegates display + stepping to the lifted
+/// [WeightStepper] (LU-007), which renders the active unit's number +
+/// suffix from canonical kg.
+///
+/// LU-008: above the weight row the user picks a [WeightUnit] via a
+/// three-up [SegmentedSelect]. The selected unit comes from
+/// [onboardingWeightUnitProvider] — locale default on first build,
+/// user-chosen the moment a segment is tapped. The chosen unit lands on
+/// `UserPatch.weightUnit` at final submit (onboarding_screen.dart).
 ///
 /// T-02: the steppers and the visible cm/kg numbers use tabular figures
 /// via `bodyNumeric` so a single-tap up/down doesn't jitter horizontally.
@@ -30,6 +38,15 @@ class Step2AboutYou extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final draft = ref.watch(onboardingDraftProvider);
     final notifier = ref.read(onboardingDraftProvider.notifier);
+    final activeUnit = ref.watch(onboardingWeightUnitProvider);
+
+    // WeightStepper takes a non-nullable canonical kg. Seed an empty
+    // draft with a sensible adult midpoint (70 kg). Tapping +/- in any
+    // active unit then writes the canonical kg back through
+    // `setCurrentWeightKg`, matching the height column's "tap to seed"
+    // affordance.
+    final weightSeedKg =
+        draft.currentWeightKg ?? Decimal.parse('70');
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -48,6 +65,20 @@ class Step2AboutYou extends ConsumerWidget {
         _BirthDateField(
           value: draft.birthDate,
           onChanged: notifier.setBirthDate,
+        ),
+        SizedBox(height: context.space.x3),
+        _FieldLabel('Weight unit'),
+        SizedBox(height: context.space.x2),
+        SegmentedSelect<WeightUnit>(
+          key: const Key('onboarding-weight-unit-chooser'),
+          options: const <WeightUnit>[
+            WeightUnit.kg,
+            WeightUnit.lb,
+            WeightUnit.st,
+          ],
+          labelBuilder: _weightUnitLabel,
+          selected: activeUnit,
+          onChanged: notifier.setWeightUnit,
         ),
         SizedBox(height: context.space.x3),
         Row(
@@ -80,18 +111,13 @@ class Step2AboutYou extends ConsumerWidget {
                 children: <Widget>[
                   _FieldLabel('Weight'),
                   SizedBox(height: context.space.x2),
-                  _NumberStepper(
-                    valueLabel: _formatWeightKgLabel(draft.currentWeightKg),
-                    onIncrement: () => notifier.setCurrentWeightKg(
-                      _stepDecimal(draft.currentWeightKg, _d('0.5'),
-                          min: _d('30')),
-                    ),
-                    onDecrement: () => notifier.setCurrentWeightKg(
-                      _stepDecimal(draft.currentWeightKg, _d('-0.5'),
-                          min: _d('30')),
-                    ),
-                    semanticsLabel:
-                        'Weight ${_formatWeightKgLabel(draft.currentWeightKg)}',
+                  WeightStepper(
+                    key: const Key('onboarding-weight-stepper'),
+                    value: weightSeedKg,
+                    unitOverride: activeUnit,
+                    minKg: _d('30'),
+                    onChanged: notifier.setCurrentWeightKg,
+                    semanticsLabel: 'Weight',
                   ),
                 ],
               ),
@@ -338,9 +364,16 @@ String _formatHeightCm(Decimal? value) {
   return '$rounded cm';
 }
 
-/// Format a weight as `"80.2 kg"` — reuses the foundation `formatWeightKg`
-/// so the kg formatter behaviour stays single-sourced (T-21).
-String _formatWeightKgLabel(Decimal? value) {
-  if (value == null) return '— kg';
-  return '${formatWeightKg(value)} kg';
+/// Human label for the weight-unit segmented chooser. Renders the long
+/// form (`"Kilograms (kg)"`) so the picker is self-explanatory the
+/// first time a user sees it — the architect's call (§3.11).
+String _weightUnitLabel(WeightUnit unit) {
+  switch (unit) {
+    case WeightUnit.kg:
+      return 'Kilograms (kg)';
+    case WeightUnit.lb:
+      return 'Pounds (lb)';
+    case WeightUnit.st:
+      return 'Stones (st)';
+  }
 }

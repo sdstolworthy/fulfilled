@@ -13,6 +13,7 @@ import '../../domain/meal.dart';
 import '../../domain/weight.dart';
 import '../../providers/food_providers.dart';
 import '../../providers/log_providers.dart';
+import '../../providers/profile_providers.dart';
 import '../../providers/weight_providers.dart';
 import '../../routing/routes.dart';
 import '../../theme/context_extensions.dart';
@@ -45,6 +46,7 @@ class DayViewExpanded extends ConsumerWidget {
     final recentsAsync = ref.watch(recentFoodsProvider);
     final frequentsAsync = ref.watch(frequentFoodsProvider);
     final weightAsync = ref.watch(weightSeriesProvider(WeightRange.oneMonth));
+    final weightUnit = ref.watch(weightUnitProvider);
 
     // The outer `ShellRoute` already wraps this widget in `AppScaffold`
     // (which is what renders the sidebar nav on expanded). Wrapping again
@@ -106,6 +108,7 @@ class DayViewExpanded extends ConsumerWidget {
                       recentsAsync: recentsAsync,
                       frequentsAsync: frequentsAsync,
                       weightAsync: weightAsync,
+                      weightUnit: weightUnit,
                     ),
                   ),
                 ],
@@ -354,12 +357,14 @@ class _RightRail extends StatelessWidget {
     required this.recentsAsync,
     required this.frequentsAsync,
     required this.weightAsync,
+    required this.weightUnit,
   });
 
   final AsyncValue<DaySummary> summaryAsync;
   final AsyncValue<List<Food>> recentsAsync;
   final AsyncValue<List<Food>> frequentsAsync;
   final AsyncValue<List<WeightSeriesPoint>> weightAsync;
+  final WeightUnit weightUnit;
 
   @override
   Widget build(BuildContext context) {
@@ -381,7 +386,7 @@ class _RightRail extends StatelessWidget {
         ),
         SizedBox(height: context.space.x4),
         weightAsync.when(
-          data: (pts) => MiniWeightSparkline(points: pts),
+          data: (pts) => MiniWeightSparkline(points: pts, unit: weightUnit),
           loading: () => const TodaySkeleton(
             height: 140,
             semanticsLabel: 'Loading weight chart',
