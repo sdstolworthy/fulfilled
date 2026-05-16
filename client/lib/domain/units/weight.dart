@@ -23,7 +23,6 @@ import '../enums.dart';
 /// **Locale-aware separators.** `intl`'s `NumberFormat.decimalPatternDigits`
 /// renders `70.5` in en-US and `70,5` in de-DE. The stone composite is
 /// integer-only so the separator never appears.
-library;
 
 /// Exact international avoirdupois pound — 1 lb = 0.45359237 kg.
 final Decimal _kgPerLb = Decimal.parse('0.45359237');
