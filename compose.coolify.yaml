@@ -1,0 +1,81 @@
+# Coolify-targeted Docker Compose for the LoseIt application.
+#
+# Point Coolify at this file (Coolify v4 → "Docker Compose" deployment type,
+# compose path `compose.coolify.yaml`). Two services are deployed:
+#
+#   api  — Rust HTTP server (loseit-api), built from ./server/Dockerfile.
+#   web  — Flutter web client, built from ./client/Dockerfile and served by
+#          nginx. The Flutter build embeds API_BASE_URL at compile time
+#          (Dart `String.fromEnvironment`), so changing API_BASE_URL triggers
+#          a rebuild on next deploy.
+#
+# Postgres is external: set DATABASE_URL in Coolify's environment variables.
+# See COOLIFY.md for the env-var checklist and OIDC swap procedure.
+
+services:
+  api:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    expose:
+      - "8080"
+    environment:
+      # Coolify substitutes SERVICE_FQDN_API_8080 with the public FQDN
+      # Coolify assigned to this service at deploy time. The variable is
+      # consulted by the proxy; the application itself does not read it.
+      SERVICE_FQDN_API_8080: ""
+
+      # --- Required from Coolify's UI (external Postgres) -----------------
+      DATABASE_URL: ${DATABASE_URL}
+
+      # --- Bind / migrations / logging ------------------------------------
+      LOSEIT_BIND: 0.0.0.0:8080
+      LOSEIT_RUN_MIGRATIONS: "true"
+      RUST_ENV: ${RUST_ENV:-staging}
+      RUST_LOG: ${RUST_LOG:-info,tower_http=info,sqlx=warn}
+
+      # --- Auth: dev-bypass defaults; OIDC vars take over when set --------
+      # While DEV_AUTH_BYPASS=true the server skips JWKS and accepts the
+      # static DEV_AUTH_TOKEN. To switch to real OIDC, set DEV_AUTH_BYPASS=
+      # false in Coolify and provide the four OIDC_* vars below.
+      DEV_AUTH_BYPASS: ${DEV_AUTH_BYPASS:-true}
+      DEV_AUTH_TOKEN: ${DEV_AUTH_TOKEN:-dev-token}
+      DEV_AUTH_ISSUER: ${DEV_AUTH_ISSUER:-dev}
+      DEV_AUTH_USER_ID: ${DEV_AUTH_USER_ID:-dev-user}
+      DEV_AUTH_EMAIL: ${DEV_AUTH_EMAIL:-dev@example.com}
+      DEV_AUTH_DISPLAY_NAME: ${DEV_AUTH_DISPLAY_NAME:-Dev User}
+
+      OIDC_ISSUER: ${OIDC_ISSUER:-}
+      OIDC_AUDIENCE: ${OIDC_AUDIENCE:-}
+      OIDC_JWKS_URL: ${OIDC_JWKS_URL:-}
+      OIDC_JWKS_CACHE_TTL_SECS: ${OIDC_JWKS_CACHE_TTL_SECS:-600}
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/api/v1/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+      args:
+        # The Flutter app reads API_BASE_URL at *compile* time via
+        # `String.fromEnvironment`, so this is a build-arg, not a runtime
+        # env. Coolify will rebuild the web service whenever this changes.
+        # Set this in Coolify's UI to the api service's public URL plus
+        # `/api/v1`, e.g. https://api.example.com/api/v1.
+        API_BASE_URL: ${API_BASE_URL:-/api/v1}
+    expose:
+      - "80"
+    environment:
+      SERVICE_FQDN_WEB_80: ""
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost/health.txt || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+    restart: unless-stopped
