@@ -62,7 +62,11 @@ Decimal _d(String v) => Decimal.parse(v);
 
 const String mockUserId = 'u_sam_reyes';
 
-User buildSeedUser({int customFoodCount = 0, Decimal? currentWeightKg}) {
+User buildSeedUser({
+  int customFoodCount = 0,
+  Decimal? currentWeightKg,
+  WeightUnit weightUnit = WeightUnit.kg,
+}) {
   return User(
     id: mockUserId,
     displayName: 'Sam Reyes',
@@ -75,6 +79,7 @@ User buildSeedUser({int customFoodCount = 0, Decimal? currentWeightKg}) {
     customFoodCount: customFoodCount,
     createdAt: DateTime(2026, 1, 5, 9, 0),
     updatedAt: DateTime(2026, 5, 12, 8, 30),
+    weightUnit: weightUnit,
   );
 }
 

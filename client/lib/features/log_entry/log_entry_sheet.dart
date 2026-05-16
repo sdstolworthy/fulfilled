@@ -40,19 +40,34 @@ final quantityProvider = StateProvider<Decimal>((ref) => Decimal.one);
 /// a centered `Dialog` capped at 480 px wide. Either path returns the
 /// resulting `LogEntry?` — `null` if the user dismissed without saving.
 ///
-/// On compact, the returned `LogEntry` is an **optimistic** value
-/// constructed from the form state; the real entry is created when the
-/// outbox flushes against the server.
+/// **Modes.**
+/// - `existing == null` → create mode (today's behaviour). On compact,
+///   the returned `LogEntry` is an **optimistic** value constructed from
+///   the form state; the real entry is created when the outbox flushes.
+/// - `existing != null` → edit mode. The form pre-seeds from the entry.
+///   The header gets an "(editing)" suffix; the CTA reads "Save changes".
+///   Submit routes through `LogRepository.update` on every form factor
+///   (edits are not queued — architect §2.5). The returned `LogEntry`
+///   is the server response.
+///
+/// `defaultMeal` is **ignored** in edit mode: the entry's own meal wins.
+/// PMgr called this out so dev agents don't burn time chasing the case.
 Future<LogEntry?> showLogEntrySheet(
   BuildContext context, {
   required Food food,
   Meal? defaultMeal,
+  LogEntry? existing,
 }) {
   final isCompact = FormFactor.of(context).isCompact;
   // Capture the parent container so the nested ProviderScope can lift
   // the real LogRepository.create into the outbox notifier — the
   // foundation's `logPostFnProvider` is a throwing stub by default.
   final parent = ProviderScope.containerOf(context, listen: false);
+  // Quantity seed: edit mode hydrates from the entry; create mode
+  // starts at 1. Architect §2.2 specifies the override seed is the
+  // only place quantity-from-entry is read — the body never reads the
+  // entry directly to populate the stepper.
+  final Decimal quantitySeed = existing?.quantity ?? Decimal.one;
 
   Widget contents({
     required ScrollController? scrollController,
@@ -63,8 +78,9 @@ Future<LogEntry?> showLogEntrySheet(
       overrides: <Override>[
         // Re-seed so each sheet gets a fresh quantity (otherwise the
         // last-used value would leak across sheets via the top-level
-        // provider's container cache).
-        quantityProvider.overrideWith((ref) => Decimal.one),
+        // provider's container cache). In edit mode the seed is the
+        // existing entry's quantity.
+        quantityProvider.overrideWith((ref) => quantitySeed),
         // Wire the real POST into the mobile outbox. Without this
         // override, `LogOutboxNotifier` throws `UnimplementedError`
         // when it tries to flush.
@@ -80,6 +96,7 @@ Future<LogEntry?> showLogEntrySheet(
       child: LogEntrySheetBody(
         food: food,
         defaultMeal: defaultMeal,
+        existing: existing,
         scrollController: scrollController,
         showGrabber: showGrabber,
         onSubmit: (logCreate) async {
@@ -179,13 +196,26 @@ class LogEntrySheetBody extends ConsumerStatefulWidget {
     super.key,
     required this.food,
     required this.onSubmit,
+    this.existing,
     this.defaultMeal,
     this.scrollController,
     this.showGrabber = true,
   });
 
   final Food food;
+
+  /// The entry being edited. When non-null the sheet is in **edit mode**
+  /// (header suffix, "Save changes" CTA, submit routes through
+  /// `LogRepository.update`). When null the sheet is in **create mode**
+  /// — today's behaviour. Architect §2.3.
+  final LogEntry? existing;
+
+  /// Pre-selected meal for create mode. **Ignored when [existing] is
+  /// non-null** — the existing entry's meal wins. Architect §2.2 spells
+  /// out the precedence; PMgr surfaces it in LU-002 so dev agents don't
+  /// chase the ignored-case bug.
   final Meal? defaultMeal;
+
   final ValueChanged<LogCreate> onSubmit;
   final ScrollController? scrollController;
   final bool showGrabber;
@@ -201,20 +231,44 @@ class _LogEntrySheetBodyState extends ConsumerState<LogEntrySheetBody> {
   final TextEditingController _noteCtrl = TextEditingController();
   bool _submitting = false;
 
+  /// True iff the sheet was opened to edit an existing entry. The
+  /// header suffix, CTA label, save-button enablement and submit branch
+  /// all read this — architect §2.3.
+  bool get _isEditing => widget.existing != null;
+
   @override
   void initState() {
     super.initState();
-    _meal = widget.defaultMeal ?? mealForLocalTime(DateTime.now());
+    final ex = widget.existing;
+    // Precedence: `existing.meal` > `defaultMeal` > local-time fallback.
+    // `defaultMeal` is documented as ignored in edit mode; this `??`
+    // chain implements that without an explicit branch.
+    _meal = ex?.meal ?? widget.defaultMeal ?? mealForLocalTime(DateTime.now());
+    final seedServingId = ex?.servingId ?? widget.food.defaultServingId;
     _serving = widget.food.servings.firstWhere(
-      (s) => s.id == widget.food.defaultServingId,
+      (s) => s.id == seedServingId,
       orElse: () => widget.food.servings.first,
     );
-    final now = DateTime.now();
-    _date = DateTime(now.year, now.month, now.day);
+    final seedDate = ex?.consumedOn ?? DateTime.now();
+    _date = DateTime(seedDate.year, seedDate.month, seedDate.day);
+    _noteCtrl.text = ex?.note ?? '';
+    // Re-render save-button enablement as the user types in the note.
+    // (Quantity / serving / meal / date all already trigger `setState`
+    // when they change; the note field is a raw TextField, so we wire
+    // its controller here.)
+    _noteCtrl.addListener(_onFormChanged);
+  }
+
+  void _onFormChanged() {
+    // The save button's `onPressed` is a function of the form state vs.
+    // the seed; rebuild to recompute it. Cheap — no provider work.
+    if (!mounted) return;
+    setState(() {});
   }
 
   @override
   void dispose() {
+    _noteCtrl.removeListener(_onFormChanged);
     _noteCtrl.dispose();
     super.dispose();
   }
@@ -232,8 +286,74 @@ class _LogEntrySheetBodyState extends ConsumerState<LogEntrySheetBody> {
     );
   }
 
+  /// Build the sparse [LogPatch] from current form state vs.
+  /// `widget.existing!`. Only emits fields that differ from the seed.
+  ///
+  /// Note semantics — architect §2.4 / PM "Open question 2":
+  /// - When the trimmed note is non-empty and differs from the seed,
+  ///   emit `note`.
+  /// - When the trimmed note is empty **and** the seed had a non-empty
+  ///   note, emit `clearNote: true` (server reads `note: null`).
+  /// - When the trimmed note is empty **and** the seed was already
+  ///   empty/null, omit both `note` and `clearNote` (sparse).
+  LogPatch _buildLogPatch() {
+    assert(_isEditing, '_buildLogPatch called outside edit mode');
+    final ex = widget.existing!;
+    final quantity = ref.read(quantityProvider);
+    final newNote = _noteCtrl.text.trim();
+    final hasNote = newNote.isNotEmpty;
+    final originalNote = ex.note;
+    final originalHasNote = originalNote != null && originalNote.isNotEmpty;
+
+    // Only emit `note` when the user typed something that differs from
+    // the seed. (Re-emitting an unchanged note is wire noise.)
+    final String? notePatch =
+        hasNote && newNote != originalNote ? newNote : null;
+    // `clearNote` fires only when the user blanked a previously-non-null
+    // note. If both seed and current are empty, the patch is sparse.
+    final bool clearNote = !hasNote && originalHasNote;
+
+    return LogPatch(
+      servingId: _serving.id != ex.servingId ? _serving.id : null,
+      consumedOn: !_sameDay(_date, ex.consumedOn) ? _date : null,
+      meal: _meal != ex.meal ? _meal : null,
+      quantity: quantity != ex.quantity ? quantity : null,
+      note: notePatch,
+      clearNote: clearNote,
+    );
+  }
+
+  /// True iff every field in the form matches the seed entry. Drives
+  /// the "Save changes" enablement guard in edit mode — prevents the
+  /// user firing a no-op PATCH.
+  bool _isUnchanged() {
+    if (!_isEditing) return false;
+    final ex = widget.existing!;
+    final quantity = ref.read(quantityProvider);
+    final newNote = _noteCtrl.text.trim();
+    final originalNote = ex.note ?? '';
+    return _serving.id == ex.servingId &&
+        _sameDay(_date, ex.consumedOn) &&
+        _meal == ex.meal &&
+        quantity == ex.quantity &&
+        newNote == originalNote;
+  }
+
+  /// Y/M/D equality. Used by `_buildLogPatch` and the old-date
+  /// invalidation branch in `_onEditPressed`.
+  bool _sameDay(DateTime a, DateTime b) =>
+      a.year == b.year && a.month == b.month && a.day == b.day;
+
   Future<void> _onSavePressed() async {
     if (_submitting) return;
+    if (_isEditing) {
+      await _onEditPressed();
+    } else {
+      await _onCreatePressed();
+    }
+  }
+
+  Future<void> _onCreatePressed() async {
     setState(() => _submitting = true);
     final logCreate = _buildLogCreate();
     // Fire the test seam first so callers can observe the constructed
@@ -290,6 +410,55 @@ class _LogEntrySheetBodyState extends ConsumerState<LogEntrySheetBody> {
       setState(() => _submitting = false);
       messenger?.showSnackBar(
         SnackBar(content: Text('Could not save: $e')),
+      );
+    }
+  }
+
+  /// Edit-mode submit. Per architect §2.5 / PM "edits don't queue":
+  /// PATCH on every form factor, sheet stays open until the server
+  /// returns, failure surfaces inline (T-11). Defence-in-depth note:
+  /// even if a caller somehow opens this sheet for a pending-sync
+  /// entry, save still goes through `update` (never the outbox).
+  Future<void> _onEditPressed() async {
+    setState(() => _submitting = true);
+    final patch = _buildLogPatch();
+    // Fire the test seam — same as create-mode, so tests can observe
+    // the constructed `LogCreate` shadow even in edit mode if needed.
+    widget.onSubmit(_buildLogCreate());
+
+    // No-op guard: if nothing changed, just pop without a network call.
+    // The CTA enablement guard should have prevented this, but it's
+    // cheap to re-check at submit time.
+    if (patch.isEmpty) {
+      if (!mounted) return;
+      Navigator.of(context).pop<LogEntry?>(widget.existing);
+      return;
+    }
+
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    final repo = ref.read(logRepositoryProvider);
+    final originalDate = widget.existing!.consumedOn;
+    final newDate = _date;
+
+    try {
+      final updated = await repo.update(widget.existing!.id, patch);
+      if (!mounted) return;
+      ref
+        ..invalidate(daySummaryProvider(newDate))
+        ..invalidate(logEntriesProvider(newDate))
+        ..invalidate(recentFoodsProvider)
+        ..invalidate(frequentFoodsProvider);
+      if (!_sameDay(originalDate, newDate)) {
+        ref
+          ..invalidate(daySummaryProvider(originalDate))
+          ..invalidate(logEntriesProvider(originalDate));
+      }
+      Navigator.of(context).pop<LogEntry?>(updated);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _submitting = false);
+      messenger?.showSnackBar(
+        SnackBar(content: Text('Could not save changes: $e')),
       );
     }
   }
@@ -359,7 +528,7 @@ class _LogEntrySheetBodyState extends ConsumerState<LogEntrySheetBody> {
                 ),
               ),
             ),
-          _Header(food: widget.food),
+          _Header(food: widget.food, editing: _isEditing),
           Expanded(
             child: SingleChildScrollView(
               controller: widget.scrollController,
@@ -429,6 +598,11 @@ class _LogEntrySheetBodyState extends ConsumerState<LogEntrySheetBody> {
           ),
           _Footer(
             submitting: _submitting,
+            // In edit mode disable until the form differs from the
+            // seed — prevents firing a no-op PATCH. Create mode is
+            // always enabled (today's behaviour).
+            disabled: _isEditing && _isUnchanged(),
+            label: _isEditing ? 'Save changes' : 'Save to log',
             onSave: _onSavePressed,
           ),
         ],
@@ -438,8 +612,13 @@ class _LogEntrySheetBodyState extends ConsumerState<LogEntrySheetBody> {
 }
 
 class _Header extends StatelessWidget {
-  const _Header({required this.food});
+  const _Header({required this.food, this.editing = false});
   final Food food;
+
+  /// In edit mode the header appends a small `(editing)` suffix in
+  /// `text.meta` / `ink2` style below the food name. Architect §2.3 —
+  /// no new tokens, no `IconButton36`, just one extra `Text`.
+  final bool editing;
 
   @override
   Widget build(BuildContext context) {
@@ -475,6 +654,14 @@ class _Header extends StatelessWidget {
                   food.name,
                   style: context.text.title.copyWith(fontSize: 20),
                 ),
+                if (editing) ...<Widget>[
+                  SizedBox(height: space.x05),
+                  Text(
+                    '(editing)',
+                    key: const Key('log_entry_header_editing_suffix'),
+                    style: context.text.meta.copyWith(color: colors.ink2),
+                  ),
+                ],
               ],
             ),
           ),
@@ -666,10 +853,24 @@ class _NoteField extends StatelessWidget {
 /// Sticky bottom CTA. T-12: lives inside a `BottomAppBar`-shaped footer
 /// with a top divider; NOT floating.
 class _Footer extends StatelessWidget {
-  const _Footer({required this.submitting, required this.onSave});
+  const _Footer({
+    required this.submitting,
+    required this.onSave,
+    required this.label,
+    this.disabled = false,
+  });
 
   final bool submitting;
   final VoidCallback onSave;
+
+  /// CTA label. "Save to log" in create mode; "Save changes" in edit
+  /// mode. Promoted to a constructor param per architect §2.3.
+  final String label;
+
+  /// External enablement gate. Edit mode passes `_isEditing &&
+  /// _isUnchanged()` so the button greys out for no-op PATCH attempts.
+  /// Create mode passes `false` (today's behaviour).
+  final bool disabled;
 
   @override
   Widget build(BuildContext context) {
@@ -694,7 +895,7 @@ class _Footer extends StatelessWidget {
         width: double.infinity,
         child: FilledButton(
           key: const Key('log_entry_save_button'),
-          onPressed: submitting ? null : onSave,
+          onPressed: (submitting || disabled) ? null : onSave,
           style: FilledButton.styleFrom(
             backgroundColor: colors.accent,
             foregroundColor: colors.surface,
@@ -704,9 +905,7 @@ class _Footer extends StatelessWidget {
             ),
             textStyle: context.text.bodyStrong.copyWith(fontSize: 16),
           ),
-          child: submitting
-              ? const _SaveButtonSkeleton()
-              : const Text('Save to log'),
+          child: submitting ? const _SaveButtonSkeleton() : Text(label),
         ),
       ),
     );

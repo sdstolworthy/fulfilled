@@ -24,6 +24,7 @@ class User {
     this.currentWeightKg,
     this.activityLevel,
     this.customFoodCount = 0,
+    this.weightUnit = WeightUnit.kg,
   });
 
   final String id;
@@ -38,6 +39,11 @@ class User {
   final DateTime createdAt;
   final DateTime updatedAt;
 
+  /// The user's preferred display unit for weights. Server default is
+  /// `kg`; pre-backend window `fromJson` falls back to `kg` when the wire
+  /// omits the field (architect §3.1, §3.3, §4.2).
+  final WeightUnit weightUnit;
+
   User copyWith({
     String? id,
     String? displayName,
@@ -50,6 +56,7 @@ class User {
     int? customFoodCount,
     DateTime? createdAt,
     DateTime? updatedAt,
+    WeightUnit? weightUnit,
   }) =>
       User(
         id: id ?? this.id,
@@ -63,6 +70,7 @@ class User {
         customFoodCount: customFoodCount ?? this.customFoodCount,
         createdAt: createdAt ?? this.createdAt,
         updatedAt: updatedAt ?? this.updatedAt,
+        weightUnit: weightUnit ?? this.weightUnit,
       );
 
   factory User.fromJson(Map<String, dynamic> json) {
@@ -87,6 +95,12 @@ class User {
       customFoodCount: (json['custom_food_count'] as num?)?.toInt() ?? 0,
       createdAt: DateTime.parse(json['created_at'] as String),
       updatedAt: DateTime.parse(json['updated_at'] as String),
+      // Pre-backend window: tolerate a missing `weight_unit` key and
+      // default to `kg`. Once the Rust migration lands the server emits
+      // the field for every user (architect §3.1, §4.2).
+      weightUnit: json['weight_unit'] == null
+          ? WeightUnit.kg
+          : WeightUnit.fromWire(json['weight_unit'] as String),
     );
   }
 
@@ -104,6 +118,7 @@ class User {
         'custom_food_count': customFoodCount,
         'created_at': createdAt.toIso8601String(),
         'updated_at': updatedAt.toIso8601String(),
+        'weight_unit': weightUnit.wire,
       };
 
   @override
@@ -120,7 +135,8 @@ class User {
           other.activityLevel == activityLevel &&
           other.customFoodCount == customFoodCount &&
           other.createdAt == createdAt &&
-          other.updatedAt == updatedAt;
+          other.updatedAt == updatedAt &&
+          other.weightUnit == weightUnit;
 
   @override
   int get hashCode => Object.hash(
@@ -135,6 +151,7 @@ class User {
         customFoodCount,
         createdAt,
         updatedAt,
+        weightUnit,
       );
 }
 
@@ -148,6 +165,7 @@ class UserPatch {
     this.birthDate,
     this.heightCm,
     this.activityLevel,
+    this.weightUnit,
   });
 
   final String? displayName;
@@ -156,6 +174,10 @@ class UserPatch {
   final DateTime? birthDate;
   final Decimal? heightCm;
   final ActivityLevel? activityLevel;
+
+  /// Sparse update to `User.weight_unit`. Emits the wire key only when
+  /// non-null so the patch stays minimal (architect §3.3).
+  final WeightUnit? weightUnit;
 
   Map<String, dynamic> toJson() => <String, dynamic>{
         if (displayName != null) 'display_name': displayName,
@@ -166,5 +188,6 @@ class UserPatch {
               '${birthDate!.year.toString().padLeft(4, '0')}-${birthDate!.month.toString().padLeft(2, '0')}-${birthDate!.day.toString().padLeft(2, '0')}',
         if (heightCm != null) 'height_cm': heightCm.toString(),
         if (activityLevel != null) 'activity_level': activityLevel!.wire,
+        if (weightUnit != null) 'weight_unit': weightUnit!.wire,
       };
 }
