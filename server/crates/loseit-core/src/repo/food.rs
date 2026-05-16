@@ -88,4 +88,20 @@ pub trait FoodRepository: Send + Sync + 'static {
         viewer: Uuid,
         barcodes: &[&str],
     ) -> CoreResult<HashMap<String, Uuid>>;
+
+    /// Paginated list of the caller's user-custom foods. Excludes the
+    /// `__quick_add__` sentinel. If `q` is `Some(s)`, filters to foods
+    /// whose name or brands contain `s` (case-insensitive). Results are
+    /// ordered `created_at DESC, id DESC` for stable pagination.
+    async fn list_mine(
+        &self,
+        owner: Uuid,
+        q: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> CoreResult<Vec<FoodSearchHit>>;
+
+    /// Count of user-custom foods matching the same predicates as
+    /// `list_mine`, irrespective of pagination parameters.
+    async fn count_mine(&self, owner: Uuid, q: Option<&str>) -> CoreResult<i64>;
 }

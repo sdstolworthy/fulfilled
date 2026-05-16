@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use chrono::{Duration, NaiveDate, Utc};
 use loseit_core::domain::{
-    FoodDraft, Meal, NutritionPer100g, NutritionSnapshot, PersistedLogEntry,
+    FoodDraft, FoodSource, Meal, NutritionPer100g, NutritionSnapshot, PersistedLogEntry,
 };
 use loseit_core::repo::{FoodRepository, LogRepository, ServingRepository};
 use loseit_core::CoreError;
@@ -195,4 +195,187 @@ async fn test_in_memory_food_repo_delete_conflict_when_log_repo_has_entries() {
         }
         other => panic!("expected Conflict, got {other:?}"),
     }
+}
+
+// ── list_mine / count_mine tests ──────────────────────────────────────────────
+
+fn draft_with_brands(name: &str, brands: &str) -> FoodDraft {
+    FoodDraft {
+        name: name.to_string(),
+        brands: Some(brands.to_string()),
+        barcode: None,
+        categories_tags: Vec::new(),
+        nutrition: NutritionPer100g::default(),
+        nutriscore_grade: None,
+    }
+}
+
+#[tokio::test]
+async fn list_mine_returns_only_user_owned_foods() {
+    use loseit_core::repo::{OffFoodUpsert, SystemServing};
+
+    let repo = InMemoryFoodRepository::new();
+    let alice = Uuid::new_v4();
+    let bob = Uuid::new_v4();
+
+    // Alice's custom food.
+    repo.create_custom(alice, &sample_draft("Alice's bar"))
+        .await
+        .expect("create");
+
+    // An OFF food (visible to everyone but must NOT appear in list_mine).
+    let batch = Uuid::new_v4();
+    repo.upsert_off_batch(
+        batch,
+        &[OffFoodUpsert {
+            draft: FoodDraft {
+                name: "Banana".to_string(),
+                brands: None,
+                barcode: Some("0000000000001".to_string()),
+                categories_tags: Vec::new(),
+                nutrition: NutritionPer100g::default(),
+                nutriscore_grade: None,
+            },
+            quality_score: 50,
+            off_serving: None,
+            system_100g_serving: SystemServing {
+                label: "100g".to_string(),
+                grams: Decimal::from(100),
+            },
+        }],
+    )
+    .await
+    .expect("upsert_off_batch");
+
+    // Bob's custom food.
+    repo.create_custom(bob, &sample_draft("Bob's shake"))
+        .await
+        .expect("create");
+
+    let hits = repo.list_mine(alice, None, 50, 0).await.expect("list_mine");
+    assert_eq!(hits.len(), 1, "Alice should see only her one custom food");
+    assert_eq!(hits[0].name, "Alice's bar");
+    assert_eq!(hits[0].source, FoodSource::User);
+}
+
+#[tokio::test]
+async fn list_mine_filters_by_q_case_insensitive() {
+    let repo = InMemoryFoodRepository::new();
+    let alice = Uuid::new_v4();
+
+    // Name match.
+    repo.create_custom(alice, &sample_draft("Chocolate Brownie"))
+        .await
+        .expect("create");
+    // Brand match only.
+    repo.create_custom(alice, &draft_with_brands("Protein Cookie", "MuscleCraft"))
+        .await
+        .expect("create");
+    // No match.
+    repo.create_custom(alice, &sample_draft("Plain Oatmeal"))
+        .await
+        .expect("create");
+
+    // Case-insensitive name match.
+    let hits = repo
+        .list_mine(alice, Some("CHOCO"), 50, 0)
+        .await
+        .expect("list_mine");
+    assert_eq!(hits.len(), 1, "should match 'Chocolate Brownie' by name");
+    assert_eq!(hits[0].name, "Chocolate Brownie");
+
+    // Case-insensitive brand match.
+    let hits = repo
+        .list_mine(alice, Some("musclecraft"), 50, 0)
+        .await
+        .expect("list_mine by brand");
+    assert_eq!(hits.len(), 1, "should match by brand");
+    assert_eq!(hits[0].name, "Protein Cookie");
+
+    // No q → all three returned.
+    let hits = repo.list_mine(alice, None, 50, 0).await.expect("all");
+    assert_eq!(hits.len(), 3);
+}
+
+#[tokio::test]
+async fn list_mine_paginates() {
+    let repo = InMemoryFoodRepository::new();
+    let alice = Uuid::new_v4();
+
+    // Insert 5 foods with deliberate delays to ensure distinct created_at.
+    // Since the in-memory repo uses Utc::now() at creation time and these
+    // are synchronous inserts in a tight loop, UUIDs may be created in the
+    // same instant. We rely on the secondary sort key (id DESC) for
+    // stability — both sorts are deterministic.
+    let mut names = Vec::new();
+    for i in 0..5i32 {
+        let name = format!("food_{i:02}");
+        repo.create_custom(alice, &sample_draft(&name))
+            .await
+            .expect("create");
+        names.push(name);
+    }
+
+    // Ask for all 5 to determine the stable order.
+    let all = repo.list_mine(alice, None, 50, 0).await.expect("all");
+    assert_eq!(all.len(), 5);
+
+    // Page 2 (0-indexed): limit=2, offset=2 → items at position 2 and 3.
+    let page = repo.list_mine(alice, None, 2, 2).await.expect("page");
+    assert_eq!(page.len(), 2);
+    assert_eq!(page[0].name, all[2].name);
+    assert_eq!(page[1].name, all[3].name);
+}
+
+#[tokio::test]
+async fn list_mine_excludes_quick_add_sentinel() {
+    let repo = InMemoryFoodRepository::new();
+    let alice = Uuid::new_v4();
+
+    // Insert a sentinel directly via create_custom (name matches the filter).
+    repo.create_custom(
+        alice,
+        &FoodDraft {
+            name: "__quick_add__".to_string(),
+            brands: None,
+            barcode: None,
+            categories_tags: Vec::new(),
+            nutrition: NutritionPer100g::default(),
+            nutriscore_grade: None,
+        },
+    )
+    .await
+    .expect("create sentinel");
+
+    // Insert a normal food.
+    repo.create_custom(alice, &sample_draft("Real Food"))
+        .await
+        .expect("create");
+
+    let hits = repo.list_mine(alice, None, 50, 0).await.expect("list_mine");
+    assert_eq!(hits.len(), 1, "sentinel must be excluded");
+    assert_eq!(hits[0].name, "Real Food");
+
+    let count = repo.count_mine(alice, None).await.expect("count");
+    assert_eq!(count, 1, "count_mine must also exclude sentinel");
+}
+
+#[tokio::test]
+async fn count_mine_matches_list_mine_total_independent_of_pagination() {
+    let repo = InMemoryFoodRepository::new();
+    let alice = Uuid::new_v4();
+
+    for i in 0..5i32 {
+        repo.create_custom(alice, &sample_draft(&format!("food_{i}")))
+            .await
+            .expect("create");
+    }
+
+    // list_mine with limit=2 returns 2 rows...
+    let page = repo.list_mine(alice, None, 2, 0).await.expect("page");
+    assert_eq!(page.len(), 2);
+
+    // ...but count_mine returns the full 5.
+    let total = repo.count_mine(alice, None).await.expect("count");
+    assert_eq!(total, 5, "count_mine must be independent of pagination");
 }

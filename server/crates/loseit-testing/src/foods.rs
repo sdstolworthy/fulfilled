@@ -229,6 +229,87 @@ impl FoodRepository for InMemoryFoodRepository {
         Ok(())
     }
 
+    async fn list_mine(
+        &self,
+        owner: Uuid,
+        q: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> CoreResult<Vec<FoodSearchHit>> {
+        let needle = q.map(|s| s.to_lowercase());
+        let mut matches: Vec<Food> = {
+            let store = self.by_id.lock().unwrap();
+            store
+                .values()
+                .filter(|f| {
+                    f.source == FoodSource::User
+                        && f.owner_user_id == Some(owner)
+                        && f.name != "__quick_add__"
+                })
+                .filter(|f| match &needle {
+                    None => true,
+                    Some(n) => {
+                        f.name.to_lowercase().contains(n.as_str())
+                            || f.brands
+                                .as_deref()
+                                .unwrap_or("")
+                                .to_lowercase()
+                                .contains(n.as_str())
+                    }
+                })
+                .cloned()
+                .collect()
+        };
+        // Sort: created_at DESC, id DESC (stable pagination key).
+        matches.sort_by(|a, b| {
+            b.created_at
+                .cmp(&a.created_at)
+                .then_with(|| b.id.cmp(&a.id))
+        });
+
+        let servings_guard = self.servings.lock().unwrap().clone();
+        let skip = offset.max(0) as usize;
+        let take = limit.max(0) as usize;
+        let mut out: Vec<FoodSearchHit> = Vec::new();
+        for food in matches.into_iter().skip(skip).take(take) {
+            let default_serving = match &servings_guard {
+                Some(repo) => repo
+                    .list_for_food(food.id)
+                    .await?
+                    .into_iter()
+                    .find(|s| s.is_default),
+                None => None,
+            };
+            out.push(hit_from(&food, default_serving));
+        }
+        Ok(out)
+    }
+
+    async fn count_mine(&self, owner: Uuid, q: Option<&str>) -> CoreResult<i64> {
+        let needle = q.map(|s| s.to_lowercase());
+        let store = self.by_id.lock().unwrap();
+        let n = store
+            .values()
+            .filter(|f| {
+                f.source == FoodSource::User
+                    && f.owner_user_id == Some(owner)
+                    && f.name != "__quick_add__"
+            })
+            .filter(|f| match &needle {
+                None => true,
+                Some(n) => {
+                    f.name.to_lowercase().contains(n.as_str())
+                        || f.brands
+                            .as_deref()
+                            .unwrap_or("")
+                            .to_lowercase()
+                            .contains(n.as_str())
+                }
+            })
+            .count();
+        Ok(n as i64)
+    }
+
     async fn find_ids_by_barcodes(
         &self,
         viewer: Uuid,

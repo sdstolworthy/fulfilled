@@ -452,6 +452,96 @@ impl FoodRepository for PgFoodRepository {
         })
     }
 
+    async fn list_mine(
+        &self,
+        owner: Uuid,
+        q: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> CoreResult<Vec<FoodSearchHit>> {
+        // Uses foods_owner_idx (on owner_user_id) + ordering by created_at DESC, id DESC.
+        // $2::text IS NULL is the canonical sqlx-friendly optional-filter pattern.
+        let sql = "SELECT \
+                    f.id, f.source::text AS source, f.name, f.brands, f.barcode, \
+                    f.energy_kcal_100g, \
+                    s.id AS default_serving_id, \
+                    s.label AS default_serving_label, \
+                    s.grams AS default_serving_grams \
+                   FROM foods f \
+                   LEFT JOIN servings s ON s.food_id = f.id AND s.is_default \
+                   WHERE f.owner_user_id = $1 \
+                     AND f.source = 'user' \
+                     AND ($2::text IS NULL OR f.name ILIKE '%' || $2 || '%' OR coalesce(f.brands,'') ILIKE '%' || $2 || '%') \
+                     AND f.name <> '__quick_add__' \
+                   ORDER BY f.created_at DESC, f.id DESC \
+                   LIMIT $3 OFFSET $4";
+
+        let rows = sqlx::query(sql)
+            .bind(owner)
+            .bind(q)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx)?;
+
+        let mut hits = Vec::with_capacity(rows.len());
+        for row in rows {
+            let id: Uuid = row.try_get("id").map_err(map_sqlx)?;
+            let source_str: String = row.try_get("source").map_err(map_sqlx)?;
+            let name: String = row.try_get("name").map_err(map_sqlx)?;
+            let brand: Option<String> = row.try_get("brands").map_err(map_sqlx)?;
+            let barcode: Option<String> = row.try_get("barcode").map_err(map_sqlx)?;
+            let energy: Option<Decimal> = row.try_get("energy_kcal_100g").map_err(map_sqlx)?;
+            let serving_id: Option<Uuid> = row.try_get("default_serving_id").map_err(map_sqlx)?;
+            let serving_label: Option<String> =
+                row.try_get("default_serving_label").map_err(map_sqlx)?;
+            let serving_grams: Option<Decimal> =
+                row.try_get("default_serving_grams").map_err(map_sqlx)?;
+
+            let default_serving = match (serving_id, serving_label, serving_grams) {
+                (Some(sid), Some(label), Some(grams)) => Some(ServingPreview {
+                    id: sid,
+                    label,
+                    grams,
+                }),
+                _ => None,
+            };
+
+            let calories_per_serving = match (energy, serving_grams) {
+                (Some(e), Some(g)) => Some((e * g / Decimal::from(100)).round()),
+                _ => None,
+            };
+
+            hits.push(FoodSearchHit {
+                id,
+                source: FoodSource::parse(&source_str).unwrap_or(FoodSource::User),
+                name,
+                brand,
+                barcode,
+                default_serving,
+                calories_per_serving,
+            });
+        }
+        Ok(hits)
+    }
+
+    async fn count_mine(&self, owner: Uuid, q: Option<&str>) -> CoreResult<i64> {
+        let sql = "SELECT COUNT(*)::BIGINT \
+                   FROM foods f \
+                   WHERE f.owner_user_id = $1 \
+                     AND f.source = 'user' \
+                     AND ($2::text IS NULL OR f.name ILIKE '%' || $2 || '%' OR coalesce(f.brands,'') ILIKE '%' || $2 || '%') \
+                     AND f.name <> '__quick_add__'";
+        let cnt: i64 = sqlx::query_scalar::<_, i64>(sql)
+            .bind(owner)
+            .bind(q)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(map_sqlx)?;
+        Ok(cnt)
+    }
+
     async fn find_ids_by_barcodes(
         &self,
         viewer: Uuid,
