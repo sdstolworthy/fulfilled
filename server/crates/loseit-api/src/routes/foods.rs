@@ -58,6 +58,7 @@ pub fn router() -> Router<AppState> {
     // all collide with /foods/:id otherwise.
     Router::new()
         .route("/foods/search", get(search))
+        .route("/foods/mine", get(list_mine))
         .route("/foods/recent", get(recent_foods))
         .route("/foods/frequent", get(frequent_foods))
         .route("/foods/barcode/:barcode", get(get_by_barcode))
@@ -226,6 +227,13 @@ struct SearchQuery {
 }
 
 #[derive(Deserialize)]
+struct MineQuery {
+    q: Option<String>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+}
+
+#[derive(Deserialize)]
 struct LimitOnlyQuery {
     /// Cap/default applied service-side in `LogService::recent_foods` /
     /// `frequent_foods`. The handler just forwards.
@@ -344,6 +352,18 @@ async fn search(
     // `Validation`, limit cap, default offset. The handler just translates
     // the result via the generic `From<Paginated<T>>` adapter.
     let page = state.foods.search(user.id, &q.q, q.limit, q.offset).await?;
+    Ok(Json(page.into()))
+}
+
+async fn list_mine(
+    State(state): State<AppState>,
+    AuthenticatedUser(user): AuthenticatedUser,
+    Query(q): Query<MineQuery>,
+) -> Result<Json<PaginatedResponse<FoodSearchHitResponse>>, ApiError> {
+    let page = state
+        .foods
+        .list_mine(user.id, q.q.as_deref(), q.limit, q.offset)
+        .await?;
     Ok(Json(page.into()))
 }
 

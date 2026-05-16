@@ -98,6 +98,56 @@ impl FoodService {
         })
     }
 
+    /// List the caller's own custom foods, optionally filtered by a
+    /// case-insensitive substring match. Pagination follows the unified
+    /// `DEFAULT_PAGE_LIMIT=100` / `MAX_PAGE_LIMIT=500` policy via
+    /// [`resolve_page_params`].
+    ///
+    /// Validation:
+    /// * `q` is trimmed; empty after trim is treated as `None`.
+    /// * If `q` is provided and exceeds 200 characters after trim, returns
+    ///   `CoreError::Validation`.
+    #[tracing::instrument(skip(self))]
+    pub async fn list_mine(
+        &self,
+        owner: Uuid,
+        q: Option<&str>,
+        limit: Option<i64>,
+        offset: Option<i64>,
+    ) -> CoreResult<Paginated<FoodSearchHit>> {
+        let q_opt: Option<&str> = match q {
+            Some(s) => {
+                let trimmed = s.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    if trimmed.chars().count() > 200 {
+                        return Err(CoreError::Validation(
+                            "q must be <= 200 characters".into(),
+                        ));
+                    }
+                    Some(trimmed)
+                }
+            }
+            None => None,
+        };
+
+        let page = resolve_page_params(limit, offset)?;
+
+        let results = self
+            .foods
+            .list_mine(owner, q_opt, page.limit, page.offset)
+            .await?;
+        let total = self.foods.count_mine(owner, q_opt).await?;
+
+        Ok(Paginated {
+            results,
+            total,
+            limit: page.limit,
+            offset: page.offset,
+        })
+    }
+
     /// Create a custom food owned by `owner`. Validates the draft, persists
     /// the food, then synthesizes a default `100 g` system serving so logs
     /// can be recorded immediately without a separate request.

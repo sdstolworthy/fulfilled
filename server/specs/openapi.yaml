@@ -281,6 +281,40 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /foods/mine:
+    get:
+      tags: [Foods]
+      operationId: list_my_foods
+      summary: List the caller's custom foods
+      description: |
+        Lists `user`-source foods owned by the caller, optionally filtered
+        by a case-insensitive substring match against `name` and `brands`.
+        The sentinel `__quick_add__` food (used by `POST /log/quick_add`)
+        is never returned.
+
+        Default `limit` is 100; server silently clamps requests above 500.
+      parameters:
+        - in: query
+          name: q
+          schema: { type: string, maxLength: 200 }
+          description: Substring filter; empty/whitespace is treated as absent.
+        - in: query
+          name: limit
+          schema: { type: integer, format: int64, minimum: 0 }
+          description: Page size; 0 or omitted → 100.
+        - in: query
+          name: offset
+          schema: { type: integer, format: int64, minimum: 0 }
+          description: Page offset, starting at 0.
+      responses:
+        "200":
+          description: Page of the caller's custom foods.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PaginatedFoodSearchHits" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /foods/recent:
     get:
       tags: [Foods]
@@ -981,6 +1015,34 @@ components:
         total: { type: integer, format: int64 }
         limit: { type: integer, format: int64 }
         offset: { type: integer, format: int64 }
+
+    Paginated:
+      type: object
+      required: [results, total, limit, offset]
+      properties:
+        results:
+          type: array
+          description: Replaced by the concrete schema in allOf compositions.
+          items: {}
+        total:
+          type: integer
+          format: int64
+          description: Total matching rows across all pages.
+        limit:
+          type: integer
+          format: int64
+        offset:
+          type: integer
+          format: int64
+
+    PaginatedFoodSearchHits:
+      allOf:
+        - $ref: "#/components/schemas/Paginated"
+        - type: object
+          properties:
+            results:
+              type: array
+              items: { $ref: "#/components/schemas/FoodSearchHit" }
 
     LogEntry:
       type: object

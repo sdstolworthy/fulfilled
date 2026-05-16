@@ -683,6 +683,112 @@ async fn test_patch_food_403_on_off_food() {
     assert_eq!(resp.status(), StatusCode::FORBIDDEN);
 }
 
+// -- Tests: GET /foods/mine -------------------------------------------------
+
+#[tokio::test]
+async fn list_mine_returns_paginated_envelope() {
+    let (app, _alice) = build_test_app_with(move |foods, _s, _l, alice| {
+        let foods = foods.clone();
+        Box::pin(async move {
+            seed_custom_food(&foods, alice, "My Food A").await;
+            seed_custom_food(&foods, alice, "My Food B").await;
+            seed_custom_food(&foods, alice, "My Food C").await;
+        })
+    })
+    .await;
+
+    let resp = app
+        .oneshot(authed_request("GET", "/api/v1/foods/mine"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = read_json(resp.into_body()).await;
+    assert_eq!(body["total"], 3);
+    assert_eq!(body["limit"], 100);
+    assert_eq!(body["offset"], 0);
+    assert_eq!(body["results"].as_array().unwrap().len(), 3);
+}
+
+#[tokio::test]
+async fn list_mine_filters_by_q() {
+    let (app, _alice) = build_test_app_with(move |foods, _s, _l, alice| {
+        let foods = foods.clone();
+        Box::pin(async move {
+            seed_custom_food(&foods, alice, "Apple Pie").await;
+            seed_custom_food(&foods, alice, "Banana Bread").await;
+        })
+    })
+    .await;
+
+    let resp = app
+        .oneshot(authed_request("GET", "/api/v1/foods/mine?q=apple"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = read_json(resp.into_body()).await;
+    let results = body["results"].as_array().unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0]["name"], "Apple Pie");
+}
+
+#[tokio::test]
+async fn list_mine_rejects_q_over_200_chars() {
+    let (app, _alice) = build_test_app_with(|_f, _s, _l, _u| Box::pin(async move {})).await;
+
+    let long_q = "a".repeat(201);
+    let uri = format!("/api/v1/foods/mine?q={long_q}");
+    let resp = app
+        .oneshot(authed_request("GET", &uri))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn list_mine_silently_clamps_oversized_limit() {
+    let (app, _alice) = build_test_app_with(|_f, _s, _l, _u| Box::pin(async move {})).await;
+
+    let resp = app
+        .oneshot(authed_request("GET", "/api/v1/foods/mine?limit=1000"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = read_json(resp.into_body()).await;
+    assert_eq!(body["limit"], 500);
+}
+
+#[tokio::test]
+async fn list_mine_negative_limit_400() {
+    let (app, _alice) = build_test_app_with(|_f, _s, _l, _u| Box::pin(async move {})).await;
+
+    let resp = app
+        .oneshot(authed_request("GET", "/api/v1/foods/mine?limit=-1"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn list_mine_excludes_other_users() {
+    let bob = Uuid::new_v4();
+    let (app, _alice) = build_test_app_with(move |foods, _s, _l, _u| {
+        let foods = foods.clone();
+        Box::pin(async move {
+            seed_custom_food(&foods, bob, "Bob's Secret Recipe").await;
+        })
+    })
+    .await;
+
+    let resp = app
+        .oneshot(authed_request("GET", "/api/v1/foods/mine"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = read_json(resp.into_body()).await;
+    assert_eq!(body["total"], 0);
+    assert_eq!(body["results"].as_array().unwrap().len(), 0);
+}
+
 #[tokio::test]
 async fn test_delete_food_409_when_logs_reference_it() {
     use chrono::NaiveDate;
