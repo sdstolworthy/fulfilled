@@ -40,6 +40,7 @@ use crate::server::AppState;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/log", post(create).get(list))
+        .route("/log/quick_add", post(quick_add))
         .route("/log/:id", axum::routing::patch(patch).delete(remove))
         .route("/days/:date/summary", get(day_summary))
 }
@@ -53,6 +54,15 @@ struct CreateLogBody {
     consumed_on: NaiveDate,
     meal: String,
     quantity: Decimal,
+    #[serde(default)]
+    note: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct QuickAddBody {
+    calories_kcal: Decimal,
+    meal: String,
+    consumed_on: NaiveDate,
     #[serde(default)]
     note: Option<String>,
 }
@@ -246,6 +256,19 @@ async fn create(
         note: body.note,
     };
     let entry = state.logs.create(user.id, draft).await?;
+    Ok((StatusCode::CREATED, Json(entry.into())))
+}
+
+async fn quick_add(
+    State(state): State<AppState>,
+    AuthenticatedUser(user): AuthenticatedUser,
+    Json(body): Json<QuickAddBody>,
+) -> Result<(StatusCode, Json<LogEntryResponse>), ApiError> {
+    let meal = parse_meal(&body.meal)?;
+    let entry = state
+        .logs
+        .quick_add(user.id, body.calories_kcal, meal, body.consumed_on, body.note)
+        .await?;
     Ok((StatusCode::CREATED, Json(entry.into())))
 }
 

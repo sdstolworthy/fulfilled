@@ -606,6 +606,32 @@ paths:
         "400": { $ref: "#/components/responses/BadRequest" }
         "401": { $ref: "#/components/responses/Unauthorized" }
 
+  /log/quick_add:
+    post:
+      tags: [Log]
+      operationId: quick_add_log_entry
+      summary: Log raw calories without choosing a food
+      description: |
+        Creates a log entry against a per-user sentinel "Quick Add" food
+        owned by the caller. Only `calories_kcal` carries a value; all
+        macronutrient fields on the returned snapshot are null. The
+        sentinel food is hidden from `/foods/search`, `/foods/mine`,
+        `/foods/recent`, and `/foods/frequent`. It is auto-provisioned on
+        first use.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/QuickAddBody" }
+      responses:
+        "201":
+          description: Created. The response includes a frozen snapshot with macros null.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LogEntry" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
   /log/{id}:
     patch:
       tags: [Log]
@@ -982,6 +1008,9 @@ components:
     FoodCreate:
       type: object
       required: [name, nutrition]
+      description: |
+        Create a new user-custom food. The name `__quick_add__` is reserved
+        for the internal quick-add sentinel and returns 400.
       properties:
         name: { type: string }
         brands: { type: string }
@@ -992,6 +1021,18 @@ components:
           default: []
         nutrition: { $ref: "#/components/schemas/NutritionPer100g" }
         nutriscore_grade: { $ref: "#/components/schemas/NutriscoreGrade" }
+
+    QuickAddBody:
+      type: object
+      required: [calories_kcal, meal, consumed_on]
+      properties:
+        calories_kcal:
+          allOf:
+            - $ref: "#/components/schemas/Decimal"
+          description: Must be > 0 and < 100000.
+        meal: { $ref: "#/components/schemas/Meal" }
+        consumed_on: { type: string, format: date }
+        note: { type: string }
 
     FoodPatch:
       type: object

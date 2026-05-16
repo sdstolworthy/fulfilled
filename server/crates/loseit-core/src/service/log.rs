@@ -141,6 +141,54 @@ impl LogService {
         self.logs.create(user, &persisted).await
     }
 
+    #[tracing::instrument(skip(self))]
+    pub async fn quick_add(
+        &self,
+        user: Uuid,
+        calories_kcal: Decimal,
+        meal: Meal,
+        consumed_on: NaiveDate,
+        note: Option<String>,
+    ) -> CoreResult<FoodLogEntry> {
+        // Validation: must be strictly positive, < 100_000.
+        if calories_kcal <= Decimal::ZERO {
+            return Err(CoreError::Validation(
+                "calories_kcal must be positive".into(),
+            ));
+        }
+        if calories_kcal >= Decimal::from(100_000) {
+            return Err(CoreError::Validation(
+                "calories_kcal exceeds maximum allowed value".into(),
+            ));
+        }
+
+        // Provision sentinel (idempotent) → reuse standard create path.
+        let (food, serving) = self.foods.find_or_create_quick_add(user).await?;
+
+        // grams_total = calories_kcal * 100  (sentinel has 1 kcal / 100 g,
+        // serving.grams = 100, so quantity = calories_kcal). Pad to NUMERIC(8,2).
+        let quantity = calories_kcal;
+        let grams_total = to_numeric_8_2(serving.grams * quantity);
+        if grams_total >= Decimal::new(100_000_000, 2) {
+            return Err(CoreError::Validation(
+                "grams_total exceeds maximum allowed value".into(),
+            ));
+        }
+        let snapshot = Self::compute_snapshot(&food, grams_total);
+
+        let persisted = PersistedLogEntry {
+            food_id: food.id,
+            serving_id: Some(serving.id),
+            consumed_on,
+            meal,
+            quantity,
+            grams_total,
+            snapshot,
+            note,
+        };
+        self.logs.create(user, &persisted).await
+    }
+
     #[tracing::instrument(skip(self, patch))]
     pub async fn update(&self, user: Uuid, id: Uuid, patch: LogPatch) -> CoreResult<FoodLogEntry> {
         let existing = self

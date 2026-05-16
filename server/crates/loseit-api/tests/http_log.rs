@@ -1016,6 +1016,224 @@ async fn test_recent_foods_respects_limit() {
 }
 
 // =============================================================================
+// T08 — POST /log/quick_add.
+// =============================================================================
+
+/// Like `build_test_app_with` but also wires the sentinel filter on the log
+/// repo so `recent_food_ids` / `frequent_food_ids` exclude the quick-add
+/// sentinel. Required when tests assert the sentinel doesn't leak into
+/// recent/frequent.
+async fn build_test_app_with_sentinel_filter<F>(setup: F) -> (axum::Router, Uuid)
+where
+    F: FnOnce(
+        &Arc<InMemoryFoodRepository>,
+        &Arc<InMemoryServingRepository>,
+        &Arc<InMemoryLogRepository>,
+        &Arc<InMemoryGoalRepository>,
+        Uuid,
+    ) -> SeedFuture,
+{
+    let users_concrete = Arc::new(InMemoryUserRepository::new());
+    let foods_concrete = Arc::new(InMemoryFoodRepository::new());
+    let servings_concrete = Arc::new(InMemoryServingRepository::new());
+    let logs_concrete = Arc::new(InMemoryLogRepository::new());
+    let goals_concrete = Arc::new(InMemoryGoalRepository::new());
+
+    foods_concrete.set_serving_repo(servings_concrete.clone());
+    logs_concrete.set_food_repo_for_sentinel_filter(foods_concrete.clone());
+
+    let alice = users_concrete.create(&test_identity()).await.unwrap();
+
+    setup(
+        &foods_concrete,
+        &servings_concrete,
+        &logs_concrete,
+        &goals_concrete,
+        alice.id,
+    )
+    .await;
+
+    let users: Arc<dyn UserRepository> = users_concrete;
+    let weights: Arc<dyn WeightRepository> = Arc::new(InMemoryWeightRepository::new());
+    let goals: Arc<dyn GoalRepository> = goals_concrete;
+    let foods: Arc<dyn FoodRepository> = foods_concrete;
+    let servings: Arc<dyn ServingRepository> = servings_concrete;
+    let logs: Arc<dyn LogRepository> = logs_concrete;
+    let authn: Arc<dyn Authenticator> =
+        Arc::new(FakeAuthenticator::new(TEST_TOKEN, test_identity()));
+    let state = AppState::from_ports(users, weights, goals, foods, servings, logs, authn);
+    (router(state), alice.id)
+}
+
+#[tokio::test]
+async fn quick_add_creates_entry_with_only_calories() {
+    let (app, _alice) =
+        build_test_app_with_sentinel_filter(|_f, _s, _l, _g, _u| Box::pin(async move {})).await;
+
+    let body = serde_json::json!({
+        "calories_kcal": "250",
+        "meal": "snack",
+        "consumed_on": "2024-01-15",
+    });
+    let resp = app
+        .oneshot(authed_json_request("POST", "/api/v1/log/quick_add", body))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let body = read_json(resp.into_body()).await;
+    // quantity == calories_kcal, stored as NUMERIC(8,3) → "250.000" may vary
+    // by store; grams_total = 250 * 100 = 25000.00.
+    assert_eq!(body["calories_kcal"], "250.00");
+    assert_eq!(body["grams_total"], "25000.00");
+    assert_eq!(body["meal"], "snack");
+    assert_eq!(body["consumed_on"], "2024-01-15");
+    // All macros must be null.
+    assert!(body["protein_g"].is_null());
+    assert!(body["carbs_g"].is_null());
+    assert!(body["fat_g"].is_null());
+    assert!(body["fiber_g"].is_null());
+    assert!(body["sugar_g"].is_null());
+    assert!(body["sodium_mg"].is_null());
+    assert!(body["saturated_fat_g"].is_null());
+    // No nested snapshot field.
+    assert!(body.get("snapshot").is_none());
+}
+
+#[tokio::test]
+async fn quick_add_is_repeatable_for_same_user() {
+    // Second call returns 201 with a *different* id but the same food_id.
+    let (app, _alice) =
+        build_test_app_with_sentinel_filter(|_f, _s, _l, _g, _u| Box::pin(async move {})).await;
+
+    let body = serde_json::json!({
+        "calories_kcal": "100",
+        "meal": "breakfast",
+        "consumed_on": "2024-01-15",
+    });
+    let resp1 = app
+        .clone()
+        .oneshot(authed_json_request("POST", "/api/v1/log/quick_add", body.clone()))
+        .await
+        .unwrap();
+    assert_eq!(resp1.status(), StatusCode::CREATED);
+    let body1 = read_json(resp1.into_body()).await;
+
+    let resp2 = app
+        .oneshot(authed_json_request("POST", "/api/v1/log/quick_add", body))
+        .await
+        .unwrap();
+    assert_eq!(resp2.status(), StatusCode::CREATED);
+    let body2 = read_json(resp2.into_body()).await;
+
+    // Different entry ids.
+    assert_ne!(body1["id"], body2["id"]);
+    // Same sentinel food_id (sentinel was reused, not recreated).
+    assert_eq!(body1["food_id"], body2["food_id"]);
+}
+
+#[tokio::test]
+async fn quick_add_400_on_zero_calories() {
+    let (app, _alice) =
+        build_test_app_with_sentinel_filter(|_f, _s, _l, _g, _u| Box::pin(async move {})).await;
+
+    let body = serde_json::json!({
+        "calories_kcal": "0",
+        "meal": "lunch",
+        "consumed_on": "2024-01-15",
+    });
+    let resp = app
+        .oneshot(authed_json_request("POST", "/api/v1/log/quick_add", body))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn quick_add_400_on_negative_calories() {
+    let (app, _alice) =
+        build_test_app_with_sentinel_filter(|_f, _s, _l, _g, _u| Box::pin(async move {})).await;
+
+    let body = serde_json::json!({
+        "calories_kcal": "-50",
+        "meal": "dinner",
+        "consumed_on": "2024-01-15",
+    });
+    let resp = app
+        .oneshot(authed_json_request("POST", "/api/v1/log/quick_add", body))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn quick_add_400_on_max_calories_overflow() {
+    let (app, _alice) =
+        build_test_app_with_sentinel_filter(|_f, _s, _l, _g, _u| Box::pin(async move {})).await;
+
+    let body = serde_json::json!({
+        "calories_kcal": "200000",
+        "meal": "snack",
+        "consumed_on": "2024-01-15",
+    });
+    let resp = app
+        .oneshot(authed_json_request("POST", "/api/v1/log/quick_add", body))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn quick_add_400_on_invalid_meal() {
+    let (app, _alice) =
+        build_test_app_with_sentinel_filter(|_f, _s, _l, _g, _u| Box::pin(async move {})).await;
+
+    let body = serde_json::json!({
+        "calories_kcal": "300",
+        "meal": "elevenses",
+        "consumed_on": "2024-01-15",
+    });
+    let resp = app
+        .oneshot(authed_json_request("POST", "/api/v1/log/quick_add", body))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn quick_add_does_not_appear_in_food_search() {
+    // After quick_add, searching for "quick" or the sentinel name should
+    // return an empty result.
+    let (app, _alice) =
+        build_test_app_with_sentinel_filter(|_f, _s, _l, _g, _u| Box::pin(async move {})).await;
+
+    // Trigger quick_add to provision the sentinel food.
+    let body = serde_json::json!({
+        "calories_kcal": "150",
+        "meal": "snack",
+        "consumed_on": "2024-01-15",
+    });
+    let resp = app
+        .clone()
+        .oneshot(authed_json_request("POST", "/api/v1/log/quick_add", body))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    // Search for "quick" — should return no results.
+    let resp = app
+        .oneshot(authed_request("GET", "/api/v1/foods/search?q=quick"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = read_json(resp.into_body()).await;
+    let results = body["results"].as_array().expect("results array");
+    assert!(
+        results.is_empty(),
+        "sentinel food must not appear in search results"
+    );
+}
+
+// =============================================================================
 // T04 — GET /log paginated envelope.
 // =============================================================================
 
