@@ -128,9 +128,18 @@ class LogRepository {
     );
     final now = DateTime.now();
     final id = 'le_new_${_seq++}_${now.microsecondsSinceEpoch}';
+    // Quick-add path: when `LogCreate.nutritionOverride` is supplied,
+    // substitute it for the food's per-100 g panel before computing the
+    // snapshot. The Quick-add sheet uses this to thread user-supplied
+    // macros through the normal log math without inventing a new
+    // endpoint. Normal log flows leave the override null and the math
+    // is byte-for-byte unchanged.
+    final foodForSnapshot = data.nutritionOverride == null
+        ? food
+        : food.copyWith(nutritionPer100g: data.nutritionOverride);
     final entry = computeLogEntry(
       id: id,
-      food: food,
+      food: foodForSnapshot,
       serving: serving,
       consumedOn:
           DateTime(data.consumedOn.year, data.consumedOn.month, data.consumedOn.day),

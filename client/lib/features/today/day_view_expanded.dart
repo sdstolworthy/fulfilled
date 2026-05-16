@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import 'package:fulfilled/widgets/empty_state.dart';
+import 'package:fulfilled/widgets/icon_button_36.dart';
 import 'package:fulfilled/widgets/meal_section.dart';
 import 'package:fulfilled/widgets/primary_button.dart';
 import 'package:fulfilled/widgets/ring_summary_card.dart';
@@ -21,6 +22,7 @@ import '../../providers/weight_providers.dart';
 import '../../routing/routes.dart';
 import '../../theme/context_extensions.dart';
 import '../log_entry/log_entry_sheet.dart';
+import '../quick_add/quick_add_sheet.dart';
 import 'today_internals.dart';
 import 'widgets/mini_weight_sparkline.dart';
 import 'widgets/quick_add_chips.dart';
@@ -79,6 +81,17 @@ class DayViewExpanded extends ConsumerWidget {
                   SizedBox(width: context.space.x4),
                   _TopSearchField(
                     onTap: () => context.push(Routes.foodsSearchPath),
+                  ),
+                  SizedBox(width: context.space.x2 + 2),
+                  // Quick-add affordance — sits between the search field
+                  // and the primary "Log food" button. Same icon + tooltip
+                  // as the compact header so the affordance is identical
+                  // across form factors.
+                  IconButton36(
+                    icon: Icons.bolt_outlined,
+                    tooltip: 'Quick add calories',
+                    onPressed: () => showQuickAddSheet(context),
+                    color: context.colors.ink2,
                   ),
                   SizedBox(width: context.space.x2 + 2),
                   _LogFoodButton(

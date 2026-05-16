@@ -15,6 +15,7 @@ import '../../providers/log_providers.dart';
 import '../../providers/repository_providers.dart';
 import '../../routing/routes.dart';
 import '../../theme/context_extensions.dart';
+import '../quick_add/quick_add_sheet.dart';
 import 'today_internals.dart';
 import 'widgets/log_food_fab.dart';
 
@@ -149,6 +150,19 @@ class _CompactHeader extends StatelessWidget {
             ),
           ),
           const Spacer(),
+          // Discoverability per the quick-add brief: a compact icon
+          // button on the Today header that opens the synthetic-food
+          // "Quick add calories" sheet. Sits BEFORE the search icon so
+          // it's left of search on every form factor. `Icons.bolt_outlined`
+          // reads as a fast / quick action; the tooltip + Semantics label
+          // ("Quick add calories") carries the precise affordance label
+          // for screen-reader users (T-20).
+          IconButton36(
+            icon: Icons.bolt_outlined,
+            tooltip: 'Quick add calories',
+            onPressed: () => showQuickAddSheet(context),
+            color: context.colors.ink2,
+          ),
           IconButton36(
             icon: Icons.search,
             tooltip: 'Search',

@@ -7,7 +7,7 @@ import '../domain/enums.dart';
 import '../domain/food.dart';
 import '../domain/food_patch.dart';
 import '../domain/serving.dart';
-import '_fixtures.dart';
+import '_fixtures.dart' show buildSeedFoods, quickAddFoodId;
 import '_mock_latency.dart';
 
 /// Read + write surface for the `Food` and `Serving` resources. Mirrors
@@ -364,9 +364,16 @@ class FoodRepository {
 
   /// Number of `source == user` rows owned by the caller. Drives screen
   /// 08's "My foods · N" row.
+  ///
+  /// The synthetic Quick-add food (`quickAddFoodId`) is filed under
+  /// `FoodSource.user` so the existing log-write path accepts it, but it
+  /// is **not** a user-authored food — exclude it by id so the count
+  /// (and the "My foods" list) match the user's mental model.
   Future<int> customCount() async {
     await mockLatency();
-    return _foods.where((f) => f.source == FoodSource.user).length;
+    return _foods
+        .where((f) => f.source == FoodSource.user && f.id != quickAddFoodId)
+        .length;
   }
 
   /// Custom-food library — every `source == user` row in the catalog. Used
@@ -379,7 +386,12 @@ class FoodRepository {
   // once the field lands on `Food`.
   Future<List<Food>> customFoods({int limit = 100, int offset = 0}) async {
     await mockLatency();
-    final hits = _foods.where((f) => f.source == FoodSource.user).toList();
+    // Exclude the synthetic Quick-add row: it lives in the catalog so
+    // `LogRepository.create` can resolve `food_quick_add`, but it is
+    // not a user-authored food and must never surface in "My foods".
+    final hits = _foods
+        .where((f) => f.source == FoodSource.user && f.id != quickAddFoodId)
+        .toList();
     if (offset >= hits.length) return const <Food>[];
     final end = (offset + limit).clamp(0, hits.length);
     return hits.sublist(offset, end);
@@ -400,6 +412,12 @@ class FoodRepository {
   /// who reaches `noteFoodLogged` directly sees the contract without a
   /// round-trip to the caller.
   void noteFoodLogged(String foodId) {
+    // The synthetic Quick-add food (`food_quick_add`) is a generic
+    // "raw calories" bucket — it doesn't represent a real food the
+    // user might want to re-log later. Excluding it from recents +
+    // frequents keeps those projections meaningful as food
+    // suggestions instead of slowly filling with `Quick add` noise.
+    if (foodId == quickAddFoodId) return;
     _frequencyById[foodId] = (_frequencyById[foodId] ?? 0) + 1;
     _recentIds.remove(foodId);
     _recentIds.insert(0, foodId);

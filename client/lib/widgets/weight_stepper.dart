@@ -27,8 +27,10 @@ import '../theme/context_extensions.dart';
 /// decimal place (architect §3.5); +/- bumps by `0.1` of the displayed
 /// unit and emits canonical kg on every commit.
 ///
-/// **st** renders two integer sub-steppers side-by-side — stones (no
-/// upper clamp, integer) and pounds (0–13) — using the same chrome.
+/// **st** renders two integer sub-steppers stacked vertically — stones
+/// (no upper clamp, integer) above pounds (0–13) — using the same
+/// chrome. (Stacking avoids the thumb obscuring the active sub-field's
+/// number on +/- tap that side-by-side suffered.)
 /// Each sub-field is its own integer-only `TextField`. The +/- buttons
 /// on the pounds field carry / borrow across the stones field:
 /// `13 lb + 1 = 1 st 0 lb` and `0 lb − 1 = (stones − 1) st 13 lb`.
@@ -415,54 +417,58 @@ class _WeightStepperState extends ConsumerState<WeightStepper> {
     );
   }
 
-  /// Stone shape — two integer `_TapStepper`s side by side. The pounds
-  /// field has NO `min` / `max` on the inner stepper — we own
+  /// Stone shape — two integer `_TapStepper`s stacked vertically. The
+  /// pounds field has NO `min` / `max` on the inner stepper — we own
   /// carry/borrow at the bump seam. The stone field clamps at 0 only.
+  ///
+  /// Stacked (not side-by-side) so the user's thumb doesn't obscure the
+  /// number it's editing while tapping `+` / `-`: each sub-field gets
+  /// full width, centering its number well clear of the buttons. Mirrors
+  /// `HeightStepper`'s ftIn layout for visual consistency (UX bug
+  /// report: thumb covered the active sub-field's number on tap).
   Widget _buildStone(BuildContext context) {
     final space = context.space;
-    return Row(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
       children: <Widget>[
-        Expanded(
-          child: _TapStepper(
-            controller: _stonesCtrl,
-            focusNode: _stonesFocus,
-            unitSuffix: 'st',
-            allowDecimal: false,
-            onSubmitted: (_) => _commitStoneSubField(isStones: true),
-            onIncrement: () {
-              setState(() => _stones += 1);
-              _stonesCtrl.text = '$_stones';
-              widget.onChanged(parseStoneToKg(_stones, _pounds));
-            },
-            onDecrement: () {
-              if (_stones <= 0) return;
-              setState(() => _stones -= 1);
-              _stonesCtrl.text = '$_stones';
-              widget.onChanged(parseStoneToKg(_stones, _pounds));
-            },
-            hasError: widget.hasError,
-            semanticsLabel: widget.semanticsLabel == null
-                ? 'Stones'
-                : '${widget.semanticsLabel} stones',
-            // Autofocus the stones sub-field (leftmost / first input).
-            autofocus: widget.autofocus,
-          ),
+        _TapStepper(
+          controller: _stonesCtrl,
+          focusNode: _stonesFocus,
+          unitSuffix: 'st',
+          allowDecimal: false,
+          onSubmitted: (_) => _commitStoneSubField(isStones: true),
+          onIncrement: () {
+            setState(() => _stones += 1);
+            _stonesCtrl.text = '$_stones';
+            widget.onChanged(parseStoneToKg(_stones, _pounds));
+          },
+          onDecrement: () {
+            if (_stones <= 0) return;
+            setState(() => _stones -= 1);
+            _stonesCtrl.text = '$_stones';
+            widget.onChanged(parseStoneToKg(_stones, _pounds));
+          },
+          hasError: widget.hasError,
+          semanticsLabel: widget.semanticsLabel == null
+              ? 'Stones'
+              : '${widget.semanticsLabel} stones',
+          // Autofocus the stones sub-field (top / first input).
+          autofocus: widget.autofocus,
         ),
-        SizedBox(width: space.x3),
-        Expanded(
-          child: _TapStepper(
-            controller: _poundsCtrl,
-            focusNode: _poundsFocus,
-            unitSuffix: 'lb',
-            allowDecimal: false,
-            onSubmitted: (_) => _commitStoneSubField(isStones: false),
-            onIncrement: _incrementPounds,
-            onDecrement: _decrementPounds,
-            hasError: widget.hasError,
-            semanticsLabel: widget.semanticsLabel == null
-                ? 'Pounds'
-                : '${widget.semanticsLabel} pounds',
-          ),
+        SizedBox(height: space.x2),
+        _TapStepper(
+          controller: _poundsCtrl,
+          focusNode: _poundsFocus,
+          unitSuffix: 'lb',
+          allowDecimal: false,
+          onSubmitted: (_) => _commitStoneSubField(isStones: false),
+          onIncrement: _incrementPounds,
+          onDecrement: _decrementPounds,
+          hasError: widget.hasError,
+          semanticsLabel: widget.semanticsLabel == null
+              ? 'Pounds'
+              : '${widget.semanticsLabel} pounds',
         ),
       ],
     );

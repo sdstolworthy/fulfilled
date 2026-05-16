@@ -94,6 +94,23 @@ User buildSeedUser({
 // The mix is intentional: ~12 OFF, ~9 USDA, 4 user — 25 total — enough
 // to show source variety in `SearchResultRow` and the "My foods · N"
 // row on screen 08.
+//
+// **Quick-add synthetic food** (`food_quick_add`). The "Quick add
+// calories" affordance on the Today header logs raw kcal without
+// scanning a real food. To reuse the existing `LogCreate` path we mint
+// a synthetic food whose per-100 g panel is exactly 100 kcal — its
+// one serving (`sv_kcal`) is 1 g, so the existing log math collapses
+// to `quantity == kcal value`. We piggy-back on `FoodSource.user`
+// because no `synthetic` variant exists yet (and PM ruled we don't add
+// one for v1); `FoodRepository.customFoods` and `customCount`
+// explicitly skip this id so it never surfaces in "My foods".
+
+/// Stable id of the synthetic Quick-add food. Referenced from the Today
+/// header's quick-add sheet and from `FoodRepository`'s My-foods filter.
+const String quickAddFoodId = 'food_quick_add';
+
+/// Stable id of the synthetic 1 g `kcal` serving on the Quick-add food.
+const String quickAddServingId = 'sv_kcal';
 
 Serving _systemHundredG(String id) => Serving(
       id: id,
@@ -895,6 +912,46 @@ List<Food> buildSeedFoods() {
         _systemHundredG('sv_coffee_100g'),
       ],
       categoriesTags: const <String>['user-recipes', 'beverages'],
+    ),
+
+    // ── Synthetic: Quick add ───────────────────────────────────────────
+    //
+    // Reserves the `food_quick_add` row so the Today header's "Quick
+    // add calories" affordance can POST a normal `LogCreate` against a
+    // real food id. The per-100 g panel is exactly 100 kcal and the
+    // single serving is 1 g — so the standard log math
+    // (`per100 × grams / 100 × quantity`) collapses to
+    // `quantity == kcal value`. Macros default to zero; the optional
+    // macros toggle on the quick-add sheet supplies an override via
+    // `LogCreate.nutritionOverride` when the user opts in.
+    //
+    // `source == user` is the least-bad enum value (no `synthetic`
+    // variant in v1 per PM); `FoodRepository.customFoods` /
+    // `customCount` skip this id by name so it never appears in "My
+    // foods".
+    Food(
+      id: quickAddFoodId,
+      name: 'Quick add',
+      source: FoodSource.user,
+      isCustom: false,
+      nutritionPer100g: NutritionPer100g(
+        energyKcal: _d('100'),
+        proteinG: Decimal.zero,
+        carbsG: Decimal.zero,
+        fatG: Decimal.zero,
+        sodiumMg: Decimal.zero,
+      ),
+      servings: <Serving>[
+        Serving(
+          id: quickAddServingId,
+          name: 'kcal',
+          grams: Decimal.one,
+          isDefault: true,
+          source: ServingSource.system,
+          sortOrder: 0,
+        ),
+      ],
+      categoriesTags: const <String>['quick-add'],
     ),
   ];
 }

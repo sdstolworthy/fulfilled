@@ -28,9 +28,10 @@ import '../theme/context_extensions.dart';
 /// integer cm (architect §5.6); +/- bumps by 1 cm and emits canonical
 /// cm on every commit.
 ///
-/// **ftIn** renders two integer sub-steppers side-by-side — feet (3..8
-/// soft clamp; buttons disable at edges) and inches (0..11) — using
-/// the same chrome. Each sub-field is its own integer-only
+/// **ftIn** renders two integer sub-steppers stacked vertically — feet
+/// (3..8 soft clamp; buttons disable at edges) above inches (0..11) —
+/// using the same chrome. (Stacking avoids the thumb obscuring the
+/// active sub-field's number on +/- tap that side-by-side suffered.) Each sub-field is its own integer-only
 /// `TextField`. The +/- buttons on the inches field carry / borrow
 /// across the feet field: `11 in + 1 = 1 ft 0 in` and
 /// `0 in − 1 = (feet − 1) ft 11 in`. State for the two integers lives
@@ -356,10 +357,15 @@ class _HeightStepperState extends ConsumerState<HeightStepper> {
     );
   }
 
-  /// ftIn shape — two integer `_TapStepper`s side by side. The inches
-  /// field has NO `min` / `max` on the inner stepper — we own
+  /// ftIn shape — two integer `_TapStepper`s stacked vertically. The
+  /// inches field has NO `min` / `max` on the inner stepper — we own
   /// carry/borrow at the bump seam. The feet field clamps at
   /// `[_minFeet, _maxFeet]`.
+  ///
+  /// Stacked (not side-by-side) so the user's thumb doesn't obscure the
+  /// number it's editing while tapping `+` / `-`: each sub-field gets
+  /// full width, centering its number well clear of the buttons (UX bug
+  /// report: thumb covered the active sub-field's number on tap).
   Widget _buildFtIn(BuildContext context) {
     final space = context.space;
     final feetAtFloor = _feet <= _minFeet;
@@ -370,50 +376,48 @@ class _HeightStepperState extends ConsumerState<HeightStepper> {
     // Inches `-` at the absolute floor (feet at min AND inches at 0)
     // is a no-op — no `2 ft 11 in` slot to borrow from.
     final inchesAtFloor = feetAtFloor && _inches <= 0;
-    return Row(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
       children: <Widget>[
-        Expanded(
-          child: _TapStepper(
-            controller: _feetCtrl,
-            focusNode: _feetFocus,
-            unitSuffix: 'ft',
-            allowDecimal: false,
-            onSubmitted: (_) => _commitFtInSubField(isFeet: true),
-            onIncrement: feetAtCeiling
-                ? null
-                : () {
-                    setState(() => _feet += 1);
-                    _feetCtrl.text = '$_feet';
-                    widget.onChanged(parseFeetInchesToCm(_feet, _inches));
-                  },
-            onDecrement: feetAtFloor
-                ? null
-                : () {
-                    setState(() => _feet -= 1);
-                    _feetCtrl.text = '$_feet';
-                    widget.onChanged(parseFeetInchesToCm(_feet, _inches));
-                  },
-            hasError: widget.hasError,
-            semanticsLabel: widget.semanticsLabel == null
-                ? '$_feet feet'
-                : '${widget.semanticsLabel} $_feet feet',
-          ),
+        _TapStepper(
+          controller: _feetCtrl,
+          focusNode: _feetFocus,
+          unitSuffix: 'ft',
+          allowDecimal: false,
+          onSubmitted: (_) => _commitFtInSubField(isFeet: true),
+          onIncrement: feetAtCeiling
+              ? null
+              : () {
+                  setState(() => _feet += 1);
+                  _feetCtrl.text = '$_feet';
+                  widget.onChanged(parseFeetInchesToCm(_feet, _inches));
+                },
+          onDecrement: feetAtFloor
+              ? null
+              : () {
+                  setState(() => _feet -= 1);
+                  _feetCtrl.text = '$_feet';
+                  widget.onChanged(parseFeetInchesToCm(_feet, _inches));
+                },
+          hasError: widget.hasError,
+          semanticsLabel: widget.semanticsLabel == null
+              ? '$_feet feet'
+              : '${widget.semanticsLabel} $_feet feet',
         ),
-        SizedBox(width: space.x3),
-        Expanded(
-          child: _TapStepper(
-            controller: _inchesCtrl,
-            focusNode: _inchesFocus,
-            unitSuffix: 'in',
-            allowDecimal: false,
-            onSubmitted: (_) => _commitFtInSubField(isFeet: false),
-            onIncrement: inchesAtCeiling ? null : _incrementInches,
-            onDecrement: inchesAtFloor ? null : _decrementInches,
-            hasError: widget.hasError,
-            semanticsLabel: widget.semanticsLabel == null
-                ? '$_inches inches'
-                : '${widget.semanticsLabel} $_inches inches',
-          ),
+        SizedBox(height: space.x2),
+        _TapStepper(
+          controller: _inchesCtrl,
+          focusNode: _inchesFocus,
+          unitSuffix: 'in',
+          allowDecimal: false,
+          onSubmitted: (_) => _commitFtInSubField(isFeet: false),
+          onIncrement: inchesAtCeiling ? null : _incrementInches,
+          onDecrement: inchesAtFloor ? null : _decrementInches,
+          hasError: widget.hasError,
+          semanticsLabel: widget.semanticsLabel == null
+              ? '$_inches inches'
+              : '${widget.semanticsLabel} $_inches inches',
         ),
       ],
     );

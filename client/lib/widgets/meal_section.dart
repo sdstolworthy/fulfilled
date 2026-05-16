@@ -316,6 +316,14 @@ class _EntryRowState extends State<_EntryRow> {
   }
 
   String _metaLine(LogEntry entry) {
+    // Quick-add entries carry the synthetic `food_quick_add` food id and
+    // a `kcal` serving. The serving label is a unit-of-measure, not a
+    // food descriptor — printing "kcal · 105 kcal" reads as a typo, so
+    // suppress the meta line entirely for these rows. The `_KcalCell`
+    // already renders the numeric value; the row therefore reads as
+    // "Quick add ... 105 kcal" — title + trailing kcal — which is the
+    // designed shape for a raw-calorie entry.
+    if (entry.foodId == _quickAddFoodId) return '';
     final parts = <String>[];
     final serving = entry.servingName;
     if (serving != null && serving.isNotEmpty) parts.add(serving);
@@ -325,6 +333,12 @@ class _EntryRowState extends State<_EntryRow> {
     return parts.join(' · ');
   }
 }
+
+/// Mirror of `quickAddFoodId` from `repositories/_fixtures.dart`. Kept
+/// inline here so the widget layer doesn't import the mock-data file
+/// (which is documented as deletable once the real API lands). When the
+/// API ships, the synthetic food's id is stable across mock and live.
+const String _quickAddFoodId = 'food_quick_add';
 
 /// "Pending sync" badge next to the meta line. Rendered only when the
 /// entry's POST hasn't ack'd. The outer `AnimatedScale` is what QL-108

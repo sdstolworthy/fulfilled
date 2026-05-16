@@ -162,21 +162,21 @@ void main() {
         ),
       );
 
-      // Two display sub-steppers side-by-side — st + lb. The number
-      // is in each `TextField`, the unit is a sibling `Text`.
+      // Two display sub-steppers stacked vertically — st + lb. The
+      // number is in each `TextField`, the unit is a sibling `Text`.
       expect(find.text('12'), findsOneWidget);
       expect(find.text('13'), findsOneWidget);
       expect(find.text('st'), findsOneWidget);
       expect(find.text('lb'), findsOneWidget);
 
-      // Two Increment buttons live in the row (one per sub-stepper).
+      // Two Increment buttons live in the column (one per sub-stepper).
       // The pounds +/- buttons drive the stone composite; carry kicks
       // in when pounds goes from 13 → 14, which becomes stones += 1.
       final incrementButtons = find.bySemanticsLabel('Increment');
       expect(incrementButtons, findsNWidgets(2));
 
       // Tap the pounds Increment (second of the two, since pounds is
-      // the rightmost field). 13 + 1 = 14 → carry → 13 st 0 lb.
+      // the lower / second sub-field). 13 + 1 = 14 → carry → 13 st 0 lb.
       await tester.tap(incrementButtons.at(1));
       await tester.pump();
 
@@ -215,7 +215,7 @@ void main() {
       final decrementButtons = find.bySemanticsLabel('Decrement');
       expect(decrementButtons, findsNWidgets(2));
 
-      // Tap pounds Decrement — the rightmost of the two.
+      // Tap pounds Decrement — the lower / second of the two.
       await tester.tap(decrementButtons.at(1));
       await tester.pump();
 

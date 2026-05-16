@@ -242,6 +242,18 @@ class LogEntryNotFoundError implements Exception {
 /// and hands it to `log_repository.create`. The mock repository computes
 /// the frozen snapshot from the food's per-100 g + the serving's grams +
 /// the quantity — matching the server's behavior.
+///
+/// **Quick-add macros override.** The Quick-add affordance on the Today
+/// header logs raw kcal against the synthetic `food_quick_add` food (per
+/// 100 g = 100 kcal, 1 g serving), so `quantity` maps 1:1 to kcal. When
+/// the user toggles "Add macros" the sheet supplies a sparse
+/// [nutritionOverride] (energy + P/C/F only) on the create payload; the
+/// mock `LogRepository.create` substitutes this for the computed
+/// `nutritionPer100g` before running the existing `computeLogEntry` math.
+/// On the wire this is a non-standard addition — the field is **not**
+/// serialised by [toJson] (it's a client-only seam until the spec adds a
+/// "free-form calories" endpoint). Normal log-entry flows leave it null
+/// and the existing snapshot computation is preserved byte-for-byte.
 class LogCreate {
   const LogCreate({
     required this.foodId,
@@ -250,6 +262,7 @@ class LogCreate {
     required this.meal,
     required this.quantity,
     this.note,
+    this.nutritionOverride,
   });
 
   final String foodId;
@@ -258,6 +271,14 @@ class LogCreate {
   final Meal meal;
   final Decimal quantity;
   final String? note;
+
+  /// Optional per-100 g panel override. When non-null, the mock
+  /// repository substitutes this for the food's `nutritionPer100g`
+  /// before computing the frozen snapshot — enabling the Quick-add
+  /// sheet's "Add macros" toggle to carry user-supplied P/C/F values
+  /// without needing a new "free-form calories" wire endpoint. Not
+  /// emitted by [toJson]; this is a client-only seam.
+  final NutritionPer100g? nutritionOverride;
 
   Map<String, dynamic> toJson() => <String, dynamic>{
         'food_id': foodId,

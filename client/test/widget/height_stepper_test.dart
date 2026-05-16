@@ -156,14 +156,14 @@ void main() {
       expect(find.text('ft'), findsOneWidget);
       expect(find.text('in'), findsOneWidget);
 
-      // Two Increment buttons live in the row (one per sub-stepper).
+      // Two Increment buttons live in the column (one per sub-stepper).
       // The inches +/- buttons drive the ftIn composite; carry kicks
       // in when inches goes from 11 → 12, which becomes feet += 1.
       final incrementButtons = find.bySemanticsLabel('Increment');
       expect(incrementButtons, findsNWidgets(2));
 
       // Tap the inches Increment (second of the two, since inches is
-      // the rightmost field). 11 + 1 = 12 → carry → 6 ft 0 in.
+      // the lower / second sub-field). 11 + 1 = 12 → carry → 6 ft 0 in.
       await tester.tap(incrementButtons.at(1));
       await tester.pump();
 
@@ -207,7 +207,7 @@ void main() {
       final decrementButtons = find.bySemanticsLabel('Decrement');
       expect(decrementButtons, findsNWidgets(2));
 
-      // Tap inches Decrement — the rightmost of the two.
+      // Tap inches Decrement — the lower / second of the two.
       await tester.tap(decrementButtons.at(1));
       await tester.pump();
 
