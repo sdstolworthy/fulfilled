@@ -124,11 +124,13 @@ impl FoodService {
         })
     }
 
-    /// Create a custom food owned by `owner`. Validates the draft (including
-    /// that at least one serving is present), then persists the food and
-    /// its servings. T08 will add the full per-serving validation pass.
+    /// Create a custom food owned by `owner`. Validates the draft per §5.4:
+    /// - name non-empty and not the sentinel,
+    /// - servings.len() >= 1,
+    /// - at most one serving is_default = true (if none, marks the first),
+    /// - each serving passes `validate_serving_draft`.
     #[tracing::instrument(skip(self, draft), fields(name = %draft.name))]
-    pub async fn create_custom(&self, owner: Uuid, draft: FoodDraft) -> CoreResult<Food> {
+    pub async fn create_custom(&self, owner: Uuid, mut draft: FoodDraft) -> CoreResult<Food> {
         if draft.name.trim().is_empty() {
             return Err(CoreError::Validation("name is required".into()));
         }
@@ -144,8 +146,13 @@ impl FoodService {
                 "at least one serving is required".into(),
             ));
         }
+        validate_servings_default_invariant(&draft.servings)?;
         for s in &draft.servings {
             validate_serving_draft(s)?;
+        }
+        // If no serving has is_default = true, mark the first one.
+        if !draft.servings.iter().any(|s| s.is_default) {
+            draft.servings[0].is_default = true;
         }
 
         let servings = draft.servings.clone();
@@ -183,6 +190,7 @@ impl FoodService {
                     "at least one serving is required".into(),
                 ));
             }
+            validate_servings_default_invariant(servings)?;
             for s in servings {
                 validate_serving_draft(s)?;
             }
@@ -208,6 +216,17 @@ impl FoodService {
         }
         self.foods.delete_custom(owner, id).await
     }
+}
+
+/// §5.4 invariant: at most one serving may have `is_default = true`.
+fn validate_servings_default_invariant(servings: &[ServingDraft]) -> CoreResult<()> {
+    let default_count = servings.iter().filter(|s| s.is_default).count();
+    if default_count > 1 {
+        return Err(CoreError::Validation(
+            "at most one serving may be marked as default".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_serving_draft(s: &ServingDraft) -> CoreResult<()> {
@@ -238,3 +257,7 @@ fn validate_serving_draft(s: &ServingDraft) -> CoreResult<()> {
     }
     Ok(())
 }
+
+// Tests for FoodService live in tests/service_food.rs (integration test file)
+// to avoid the "multiple loseit_core versions" issue that arises when
+// loseit_testing is imported into the library's own cfg(test) block.

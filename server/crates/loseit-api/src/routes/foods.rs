@@ -20,8 +20,9 @@ use axum::routing::{get, patch, post};
 use axum::{Json, Router};
 use loseit_core::domain::{
     Food, FoodDraft, FoodKind, FoodPatch, FoodSearchHit, FoodSource, NutriscoreGrade,
-    NutritionPer100g, Serving, ServingDraft, ServingPatch, ServingPreview, ServingSource,
+    Serving, ServingDraft, ServingPatch, ServingPreview, ServingSource,
 };
+use loseit_core::domain::unit::Unit;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -63,37 +64,19 @@ pub fn router() -> Router<AppState> {
 // -- Response DTOs -----------------------------------------------------------
 
 #[derive(Serialize)]
-struct NutritionResponse {
-    energy_kcal: Option<Decimal>,
+struct ServingResponse {
+    id: Uuid,
+    label: Option<String>,
+    amount: Decimal,
+    unit: &'static str,
+    kcal: Decimal,
     protein_g: Option<Decimal>,
     carbs_g: Option<Decimal>,
     fat_g: Option<Decimal>,
     fiber_g: Option<Decimal>,
     sugar_g: Option<Decimal>,
-    sodium_g: Option<Decimal>,
+    sodium_mg: Option<Decimal>,
     saturated_fat_g: Option<Decimal>,
-}
-
-impl From<NutritionPer100g> for NutritionResponse {
-    fn from(n: NutritionPer100g) -> Self {
-        Self {
-            energy_kcal: n.energy_kcal,
-            protein_g: n.protein_g,
-            carbs_g: n.carbs_g,
-            fat_g: n.fat_g,
-            fiber_g: n.fiber_g,
-            sugar_g: n.sugar_g,
-            sodium_g: n.sodium_g,
-            saturated_fat_g: n.saturated_fat_g,
-        }
-    }
-}
-
-#[derive(Serialize)]
-struct ServingResponse {
-    id: Uuid,
-    label: String,
-    grams: Decimal,
     is_default: bool,
     source: &'static str,
     sort_order: i32,
@@ -104,7 +87,16 @@ impl From<Serving> for ServingResponse {
         Self {
             id: s.id,
             label: s.label,
-            grams: s.grams,
+            amount: s.amount,
+            unit: s.unit.as_str(),
+            kcal: s.kcal,
+            protein_g: s.protein_g,
+            carbs_g: s.carbs_g,
+            fat_g: s.fat_g,
+            fiber_g: s.fiber_g,
+            sugar_g: s.sugar_g,
+            sodium_mg: s.sodium_mg,
+            saturated_fat_g: s.saturated_fat_g,
             is_default: s.is_default,
             source: serving_source_str(s.source),
             sort_order: s.sort_order,
@@ -140,7 +132,6 @@ struct FoodDetailResponse {
     name: String,
     brands: Option<String>,
     categories_tags: Vec<String>,
-    nutrition: NutritionResponse,
     nutriscore: Option<&'static str>,
     quality_score: i16,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -160,7 +151,6 @@ impl FoodDetailResponse {
             name: food.name,
             brands: food.brands,
             categories_tags: food.categories_tags,
-            nutrition: food.nutrition.into(),
             nutriscore: food.nutriscore_grade.map(nutriscore_str),
             quality_score: food.quality_score,
             extra_nutrients: food.extra_nutrients,
@@ -172,8 +162,10 @@ impl FoodDetailResponse {
 #[derive(Serialize)]
 struct ServingPreviewResponse {
     id: Uuid,
-    label: String,
-    grams: Decimal,
+    label: Option<String>,
+    amount: Decimal,
+    unit: &'static str,
+    kcal: Decimal,
 }
 
 impl From<ServingPreview> for ServingPreviewResponse {
@@ -181,7 +173,9 @@ impl From<ServingPreview> for ServingPreviewResponse {
         Self {
             id: p.id,
             label: p.label,
-            grams: p.grams,
+            amount: p.amount,
+            unit: p.unit.as_str(),
+            kcal: p.kcal,
         }
     }
 }
@@ -194,7 +188,6 @@ struct FoodSearchHitResponse {
     brand: Option<String>,
     barcode: Option<String>,
     default_serving: Option<ServingPreviewResponse>,
-    calories_per_serving: Option<Decimal>,
 }
 
 impl From<FoodSearchHit> for FoodSearchHitResponse {
@@ -206,7 +199,6 @@ impl From<FoodSearchHit> for FoodSearchHitResponse {
             brand: h.brand,
             barcode: h.barcode,
             default_serving: h.default_serving.map(Into::into),
-            calories_per_serving: h.calories_per_serving,
         }
     }
 }
@@ -234,32 +226,59 @@ struct LimitOnlyQuery {
     limit: Option<i64>,
 }
 
-// -- Request DTOs (T12 + T13) ------------------------------------------------
+// -- Request DTOs ------------------------------------------------------------
 
-#[derive(Debug, Deserialize, Default)]
-struct NutritionBody {
-    energy_kcal: Option<Decimal>,
+#[derive(Debug, Deserialize)]
+struct ServingBody {
+    label: Option<String>,
+    amount: Decimal,
+    unit: String,
+    kcal: Decimal,
     protein_g: Option<Decimal>,
     carbs_g: Option<Decimal>,
     fat_g: Option<Decimal>,
     fiber_g: Option<Decimal>,
     sugar_g: Option<Decimal>,
-    sodium_g: Option<Decimal>,
+    sodium_mg: Option<Decimal>,
     saturated_fat_g: Option<Decimal>,
+    #[serde(default)]
+    is_default: bool,
+    source: Option<String>,
+    #[serde(default)]
+    sort_order: i32,
 }
 
-impl From<NutritionBody> for NutritionPer100g {
-    fn from(n: NutritionBody) -> Self {
-        Self {
-            energy_kcal: n.energy_kcal,
-            protein_g: n.protein_g,
-            carbs_g: n.carbs_g,
-            fat_g: n.fat_g,
-            fiber_g: n.fiber_g,
-            sugar_g: n.sugar_g,
-            sodium_g: n.sodium_g,
-            saturated_fat_g: n.saturated_fat_g,
-        }
+fn parse_unit(raw: &str) -> Result<Unit, ApiError> {
+    Unit::parse(raw).ok_or_else(|| {
+        ApiError::bad_request(format!(
+            "unknown unit '{raw}' (expected one of g, kg, oz, lb, ml, l, cup, fl_oz, tbsp, tsp, serving, piece)"
+        ))
+    })
+}
+
+impl ServingBody {
+    fn into_draft(self) -> Result<ServingDraft, ApiError> {
+        let unit = parse_unit(&self.unit)?;
+        let source = match self.source.as_deref() {
+            Some(s) => parse_serving_source(s)?,
+            None => ServingSource::User,
+        };
+        Ok(ServingDraft {
+            label: self.label,
+            amount: self.amount,
+            unit,
+            kcal: self.kcal,
+            protein_g: self.protein_g,
+            carbs_g: self.carbs_g,
+            fat_g: self.fat_g,
+            fiber_g: self.fiber_g,
+            sugar_g: self.sugar_g,
+            sodium_mg: self.sodium_mg,
+            saturated_fat_g: self.saturated_fat_g,
+            is_default: self.is_default,
+            source,
+            sort_order: self.sort_order,
+        })
     }
 }
 
@@ -270,8 +289,9 @@ struct CreateFoodBody {
     barcode: Option<String>,
     #[serde(default)]
     categories_tags: Vec<String>,
-    nutrition: NutritionBody,
     nutriscore_grade: Option<String>,
+    #[serde(default)]
+    servings: Vec<ServingBody>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -280,8 +300,8 @@ struct PatchFoodBody {
     brands: Option<String>,
     barcode: Option<String>,
     categories_tags: Option<Vec<String>>,
-    nutrition: Option<NutritionBody>,
     nutriscore_grade: Option<String>,
+    servings: Option<Vec<ServingBody>>,
 }
 
 fn parse_nutriscore(raw: &str) -> Result<NutriscoreGrade, ApiError> {
@@ -301,19 +321,18 @@ fn parse_serving_source(raw: &str) -> Result<ServingSource, ApiError> {
 }
 
 #[derive(Debug, Deserialize)]
-struct CreateServingBody {
-    label: String,
-    grams: Decimal,
-    #[serde(default)]
-    is_default: bool,
-    source: Option<String>,
-    sort_order: Option<i32>,
-}
-
-#[derive(Debug, Deserialize, Default)]
 struct PatchServingBody {
-    label: Option<String>,
-    grams: Option<Decimal>,
+    label: Option<Option<String>>,
+    amount: Option<Decimal>,
+    unit: Option<String>,
+    kcal: Option<Decimal>,
+    protein_g: Option<Option<Decimal>>,
+    carbs_g: Option<Option<Decimal>>,
+    fat_g: Option<Option<Decimal>>,
+    fiber_g: Option<Option<Decimal>>,
+    sugar_g: Option<Option<Decimal>>,
+    sodium_mg: Option<Option<Decimal>>,
+    saturated_fat_g: Option<Option<Decimal>>,
     sort_order: Option<i32>,
 }
 
@@ -361,7 +380,7 @@ async fn list_mine(
     Ok(Json(page.into()))
 }
 
-// -- /foods/recent + /foods/frequent (T17) -----------------------------------
+// -- /foods/recent + /foods/frequent -----------------------------------------
 
 async fn recent_foods(
     State(state): State<AppState>,
@@ -383,7 +402,7 @@ async fn frequent_foods(
     Ok(Json(hits.into_iter().map(Into::into).collect()))
 }
 
-// -- Custom food write handlers (T12) ----------------------------------------
+// -- Custom food write handlers -----------------------------------------------
 
 async fn create_food(
     State(state): State<AppState>,
@@ -395,17 +414,21 @@ async fn create_food(
         .as_deref()
         .map(parse_nutriscore)
         .transpose()?;
+    let servings: Result<Vec<ServingDraft>, ApiError> = body
+        .servings
+        .into_iter()
+        .map(|s| s.into_draft())
+        .collect();
     let draft = FoodDraft {
         name: body.name,
         brands: body.brands,
         barcode: body.barcode,
         categories_tags: body.categories_tags,
-        nutrition: body.nutrition.into(),
         nutriscore_grade,
+        servings: servings?,
     };
     let food = state.foods.create_custom(user.id, draft).await?;
-    // Re-hydrate via the service so the response reflects the synthesized
-    // default serving without duplicating that logic here.
+    // Re-hydrate so the response reflects the persisted servings.
     let (food, servings) = state.foods.detail(user.id, food.id).await?;
     Ok((
         StatusCode::CREATED,
@@ -424,13 +447,21 @@ async fn patch_food(
         .as_deref()
         .map(parse_nutriscore)
         .transpose()?;
+    let servings = match body.servings {
+        Some(sv) => {
+            let drafts: Result<Vec<ServingDraft>, ApiError> =
+                sv.into_iter().map(|s| s.into_draft()).collect();
+            Some(drafts?)
+        }
+        None => None,
+    };
     let patch = FoodPatch {
         name: body.name,
         brands: body.brands,
         barcode: body.barcode,
         categories_tags: body.categories_tags,
-        nutrition: body.nutrition.map(Into::into),
         nutriscore_grade,
+        servings,
     };
     state.foods.update_custom(user.id, id, patch).await?;
     let (food, servings) = state.foods.detail(user.id, id).await?;
@@ -446,25 +477,15 @@ async fn delete_food(
     Ok(StatusCode::NO_CONTENT)
 }
 
-// -- Serving write handlers (T13) --------------------------------------------
+// -- Serving write handlers ---------------------------------------------------
 
 async fn create_serving(
     State(state): State<AppState>,
     AuthenticatedUser(user): AuthenticatedUser,
     Path(food_id): Path<Uuid>,
-    Json(body): Json<CreateServingBody>,
+    Json(body): Json<ServingBody>,
 ) -> Result<(StatusCode, Json<ServingResponse>), ApiError> {
-    let source = match body.source.as_deref() {
-        Some(s) => parse_serving_source(s)?,
-        None => ServingSource::User,
-    };
-    let draft = ServingDraft {
-        label: body.label,
-        grams: body.grams,
-        is_default: body.is_default,
-        source,
-        sort_order: body.sort_order.unwrap_or(0),
-    };
+    let draft = body.into_draft()?;
     let serving = state.servings.create(user.id, food_id, draft).await?;
     Ok((StatusCode::CREATED, Json(serving.into())))
 }
@@ -475,9 +496,22 @@ async fn patch_serving(
     Path(id): Path<Uuid>,
     Json(body): Json<PatchServingBody>,
 ) -> Result<Json<ServingResponse>, ApiError> {
+    let unit = match &body.unit {
+        Some(u) => Some(parse_unit(u)?),
+        None => None,
+    };
     let patch = ServingPatch {
         label: body.label,
-        grams: body.grams,
+        amount: body.amount,
+        unit,
+        kcal: body.kcal,
+        protein_g: body.protein_g,
+        carbs_g: body.carbs_g,
+        fat_g: body.fat_g,
+        fiber_g: body.fiber_g,
+        sugar_g: body.sugar_g,
+        sodium_mg: body.sodium_mg,
+        saturated_fat_g: body.saturated_fat_g,
         sort_order: body.sort_order,
     };
     let serving = state.servings.update(user.id, id, patch).await?;

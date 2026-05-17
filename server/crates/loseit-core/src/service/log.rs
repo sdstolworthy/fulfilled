@@ -6,6 +6,7 @@ use rust_decimal::Decimal;
 use uuid::Uuid;
 
 use crate::domain::{
+    unit::{Unit, UnitFamily},
     DaySummary, FoodLogEntry, FoodSearchHit, LogDraft, LogPatch, Meal, MealSubtotal,
     NutritionSnapshot, PersistedLogEntry, PersistedLogPatch, RecomputedSnapshot, Serving,
     ServingPreview,
@@ -99,17 +100,8 @@ impl LogService {
                 "serving does not belong to that food".into(),
             ));
         }
-        // T08 derives quantity from entered_amount + entered_unit + serving.
-        // Placeholder: quantity = entered_amount / serving.amount (same-unit assumed).
-        let quantity = to_numeric_8_3(draft.entered_amount / serving.amount);
-        if quantity <= Decimal::ZERO {
-            return Err(CoreError::Validation("quantity must be positive".into()));
-        }
-        if quantity >= Decimal::from(10_000) {
-            return Err(CoreError::Validation(
-                "quantity exceeds maximum allowed value".into(),
-            ));
-        }
+        // §5.1 conversion pipeline: cross-family guard → within-family quantity derivation.
+        let quantity = derive_quantity(draft.entered_amount, draft.entered_unit, &serving)?;
         let snapshot = Self::compute_snapshot(&serving, quantity);
         let persisted = PersistedLogEntry {
             food_id: draft.food_id,
@@ -203,16 +195,8 @@ impl LogService {
                     "serving does not belong to that food".into(),
                 ));
             }
-            // T08 proper cross-family validation + conversion.
-            let quantity = to_numeric_8_3(entered_amount / serving.amount);
-            if quantity <= Decimal::ZERO {
-                return Err(CoreError::Validation("quantity must be positive".into()));
-            }
-            if quantity >= Decimal::from(10_000) {
-                return Err(CoreError::Validation(
-                    "quantity exceeds maximum allowed value".into(),
-                ));
-            }
+            // §5.1 conversion pipeline: cross-family guard → within-family quantity derivation.
+            let quantity = derive_quantity(entered_amount, entered_unit, &serving)?;
             let snapshot = Self::compute_snapshot(&serving, quantity);
             Some(RecomputedSnapshot {
                 quantity,
@@ -520,7 +504,146 @@ fn accumulate(acc: &mut (Decimal, bool), value: Option<Decimal>) {
     }
 }
 
-// Note: tests for the old per-100g compute_snapshot path are removed here.
-// T08 will add tests for the new per-serving compute_snapshot path.
-// The _food parameter to create() is kept for the visibility check;
-// T08 adds cross-family unit validation using food.id.
+/// §5.1 conversion helper.
+///
+/// Given what the user typed (`entered_amount`, `entered_unit`) and the
+/// target serving, derives the dimensionless quantity multiplier (rounded to
+/// NUMERIC(8,3)) and validates all guards:
+///
+/// 1. Cross-family guard: `entered_unit.family() != serving.unit.family()` → Validation.
+/// 2. Count strict-unit: both Count but different units (e.g. `piece` vs `serving`) → Validation.
+/// 3. Within-family conversion via `ratio_to_canonical`.
+/// 4. Quantity guard: must be > 0 and < 10_000.
+pub(crate) fn derive_quantity(
+    entered_amount: Decimal,
+    entered_unit: Unit,
+    serving: &Serving,
+) -> crate::CoreResult<Decimal> {
+    let e_family = entered_unit.family();
+    let s_family = serving.unit.family();
+
+    // Guard 1: cross-family
+    if e_family != s_family {
+        return Err(CoreError::Validation("unit_family_mismatch".into()));
+    }
+
+    let quantity = match e_family {
+        UnitFamily::Mass | UnitFamily::Volume => {
+            // Within-family conversion via canonical ratio.
+            let entered_canonical = entered_amount * entered_unit.ratio_to_canonical();
+            let serving_canonical = serving.amount * serving.unit.ratio_to_canonical();
+            entered_canonical / serving_canonical
+        }
+        UnitFamily::Count => {
+            // Guard 2: Count members are siblings, not interconvertible.
+            if entered_unit != serving.unit {
+                return Err(CoreError::Validation("unit_family_mismatch".into()));
+            }
+            entered_amount / serving.amount
+        }
+    };
+
+    let quantity = to_numeric_8_3(quantity);
+
+    if quantity <= Decimal::ZERO {
+        return Err(CoreError::Validation("quantity must be positive".into()));
+    }
+    if quantity >= Decimal::from(10_000) {
+        return Err(CoreError::Validation(
+            "quantity exceeds maximum allowed value".into(),
+        ));
+    }
+
+    Ok(quantity)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::{serving::ServingSource, unit::Unit};
+    use chrono::Utc;
+    use rust_decimal_macros::dec;
+    use uuid::Uuid;
+
+    fn make_serving(amount: Decimal, unit: Unit, kcal: Decimal) -> Serving {
+        Serving {
+            id: Uuid::new_v4(),
+            food_id: Uuid::new_v4(),
+            label: None,
+            amount,
+            unit,
+            kcal,
+            protein_g: None,
+            carbs_g: None,
+            fat_g: None,
+            fiber_g: None,
+            sugar_g: None,
+            sodium_mg: None,
+            saturated_fat_g: None,
+            is_default: true,
+            source: ServingSource::User,
+            sort_order: 0,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    /// Volume within-family: 4 fl_oz against {1 cup} serving → quantity = 0.5
+    /// (4 × 29.5735295625 ml / (1 × 236.5882365 ml) = 118.294… / 236.588… ≈ 0.5 exact).
+    #[test]
+    fn test_volume_within_family_fl_oz_to_cup() {
+        let serving = make_serving(dec!(1), Unit::Cup, dec!(200));
+        let q = derive_quantity(dec!(4), Unit::FluidOunce, &serving).unwrap();
+        assert_eq!(q, dec!(0.500));
+    }
+
+    /// Mass within-family: 100 g against {1 kg} serving → quantity = 0.100.
+    #[test]
+    fn test_mass_within_family_g_to_kg() {
+        let serving = make_serving(dec!(1), Unit::Kilogram, dec!(100));
+        let q = derive_quantity(dec!(100), Unit::Gram, &serving).unwrap();
+        assert_eq!(q, dec!(0.100));
+    }
+
+    /// Cross-family rejection: entered=g, serving.unit=cup → Validation("unit_family_mismatch").
+    #[test]
+    fn test_cross_family_mass_vs_volume_rejected() {
+        let serving = make_serving(dec!(1), Unit::Cup, dec!(150));
+        let err = derive_quantity(dec!(100), Unit::Gram, &serving).unwrap_err();
+        match err {
+            CoreError::Validation(msg) => assert_eq!(msg, "unit_family_mismatch"),
+            other => panic!("expected Validation, got {other:?}"),
+        }
+    }
+
+    /// Count strict-unit: entered=Piece against serving.unit=Serving → Validation.
+    #[test]
+    fn test_count_strict_unit_piece_vs_serving_rejected() {
+        let serving = make_serving(dec!(1), Unit::Serving, dec!(100));
+        let err = derive_quantity(dec!(1), Unit::Piece, &serving).unwrap_err();
+        match err {
+            CoreError::Validation(msg) => assert_eq!(msg, "unit_family_mismatch"),
+            other => panic!("expected Validation, got {other:?}"),
+        }
+    }
+
+    /// Count exact-unit: entered=Serving against {amount:1, unit:Serving} → quantity = entered_amount.
+    #[test]
+    fn test_count_exact_unit_serving_matches() {
+        let serving = make_serving(dec!(1), Unit::Serving, dec!(100));
+        let q = derive_quantity(dec!(2), Unit::Serving, &serving).unwrap();
+        assert_eq!(q, dec!(2.000));
+    }
+
+    /// Quick-add path: quantity = calories_kcal, entered_unit = Serving,
+    /// snapshot.calories_kcal = calories_kcal (sentinel has kcal=1).
+    #[test]
+    fn test_quick_add_quantity_equals_calories() {
+        let serving = make_serving(dec!(1), Unit::Serving, dec!(1));
+        let q = derive_quantity(dec!(100), Unit::Serving, &serving).unwrap();
+        assert_eq!(q, dec!(100.000));
+        let snapshot = LogService::compute_snapshot(&serving, q);
+        assert_eq!(snapshot.calories_kcal, dec!(100.00));
+        assert!(snapshot.protein_g.is_none());
+    }
+}

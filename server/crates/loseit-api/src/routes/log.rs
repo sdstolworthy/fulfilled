@@ -27,7 +27,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use chrono::{DateTime, NaiveDate, Utc};
 use loseit_core::domain::{
-    DaySummary, FoodLogEntry, LogDraft, LogPatch, Meal, MealSubtotal, NutritionSnapshot,
+    unit::Unit, DaySummary, FoodLogEntry, LogDraft, LogPatch, Meal, MealSubtotal, NutritionSnapshot,
 };
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -59,7 +59,8 @@ struct CreateLogBody {
     serving_id: Uuid,
     consumed_on: NaiveDate,
     meal: String,
-    quantity: Decimal,
+    entered_amount: Decimal,
+    entered_unit: String,
     #[serde(default)]
     note: Option<String>,
 }
@@ -87,7 +88,9 @@ struct PatchLogBody {
     #[serde(default)]
     meal: Option<String>,
     #[serde(default)]
-    quantity: Option<Decimal>,
+    entered_amount: Option<Decimal>,
+    #[serde(default)]
+    entered_unit: Option<String>,
     // Double-Option so the wire `"note": null` can clear, but a missing key
     // leaves the existing value untouched.
     #[serde(default, deserialize_with = "deserialize_optional_optional_string")]
@@ -143,7 +146,8 @@ struct LogEntryResponse {
     consumed_on: NaiveDate,
     meal: &'static str,
     quantity: Decimal,
-    grams_total: Decimal,
+    entered_amount: Decimal,
+    entered_unit: &'static str,
     // Flattened nutrition snapshot. Field names match the SQL column names
     // in `food_log_entries`.
     calories_kcal: Decimal,
@@ -170,7 +174,8 @@ impl From<FoodLogEntry> for LogEntryResponse {
             consumed_on: e.consumed_on,
             meal: e.meal.as_str(),
             quantity: e.quantity,
-            grams_total: e.grams_total,
+            entered_amount: e.entered_amount,
+            entered_unit: e.entered_unit.as_str(),
             calories_kcal: e.snapshot.calories_kcal,
             protein_g: e.snapshot.protein_g,
             carbs_g: e.snapshot.carbs_g,
@@ -269,18 +274,28 @@ fn parse_meal(raw: &str) -> Result<Meal, ApiError> {
 
 // -- Handlers ----------------------------------------------------------------
 
+fn parse_unit(raw: &str) -> Result<Unit, ApiError> {
+    Unit::parse(raw).ok_or_else(|| {
+        ApiError::bad_request(format!(
+            "unknown unit '{raw}' (expected one of g, kg, oz, lb, ml, l, cup, fl_oz, tbsp, tsp, serving, piece)"
+        ))
+    })
+}
+
 async fn create(
     State(state): State<AppState>,
     AuthenticatedUser(user): AuthenticatedUser,
     Json(body): Json<CreateLogBody>,
 ) -> Result<(StatusCode, Json<LogEntryResponse>), ApiError> {
     let meal = parse_meal(&body.meal)?;
+    let entered_unit = parse_unit(&body.entered_unit)?;
     let draft = LogDraft {
         food_id: body.food_id,
         serving_id: body.serving_id,
         consumed_on: body.consumed_on,
         meal,
-        quantity: body.quantity,
+        entered_amount: body.entered_amount,
+        entered_unit,
         note: body.note,
     };
     let entry = state.logs.create(user.id, draft).await?;
@@ -330,11 +345,17 @@ async fn patch(
         ));
     }
     let meal = body.meal.as_deref().map(parse_meal).transpose()?;
+    let entered_unit = body
+        .entered_unit
+        .as_deref()
+        .map(parse_unit)
+        .transpose()?;
     let patch = LogPatch {
         serving_id: body.serving_id,
         consumed_on: body.consumed_on,
         meal,
-        quantity: body.quantity,
+        entered_amount: body.entered_amount,
+        entered_unit,
         note: body.note,
     };
     let entry = state.logs.update(user.id, id, patch).await?;
