@@ -5,7 +5,7 @@ use uuid::Uuid;
 /// input is rejected by returning `None`. Malformed-username failures
 /// land as 401 (not 400) at the API layer so "user does not exist" and
 /// "user exists but wrong password" are wire-indistinguishable.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Username(String);
 
 impl Username {
