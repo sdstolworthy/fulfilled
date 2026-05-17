@@ -1,10 +1,20 @@
-//! OpenFoodFacts bulk-import binary.
+//! OpenFoodFacts / USDA FoodData Central bulk-import binary.
 //!
-//! Reads a local OFF dump (JSONL or Parquet), normalizes each product,
-//! upserts into the `foods` + `servings` tables in 500-row chunks, and
-//! records progress in the `food_import_batches` table.
+//! Reads a local dump file, normalizes each product, upserts into the
+//! `foods` + `servings` tables in 500-row chunks, and records progress in
+//! the `food_import_batches` table.
 //!
-//! Postgres must be reachable via `DATABASE_URL` (or `--database-url`).
+//! # CLI
+//!
+//! ```text
+//! loseit-ingest --source off  --format jsonl   --input off-products.jsonl [--limit N]
+//! loseit-ingest --source off  --format parquet --input off-products.parquet
+//! loseit-ingest --source usda --format jsonl   --input fdc-foods.jsonl
+//! ```
+//!
+//! `DATABASE_URL` (or `--database-url`) must point to a reachable Postgres
+//! instance unless you only pass `--help` (which exits before any DB work).
+//!
 //! No network fetch is performed — provide the file via `--input`.
 
 use std::path::PathBuf;
@@ -13,34 +23,37 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use loseit_core::service::{FoodRecordSource, IngestService};
+use loseit_core::service::{FoodRecordSource, IngestService, UsdaSource};
 use loseit_db::{
     build_pool, run_migrations, PgBatchRepository, PgFoodRepository, PgServingRepository,
     PoolConfig,
 };
-use loseit_ingest::{open_source, LimitedSource};
+use loseit_ingest::{open_source, open_usda_source, LimitedSource, LimitedUsdaSource};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Debug, Parser)]
 #[command(
     name = "loseit-ingest",
-    about = "Bulk-import OFF products into the loseit DB"
+    about = "Bulk-import OFF or USDA FDC products into the loseit DB"
 )]
 struct Args {
-    /// Source format. `jsonl` is always available; `parquet` is
-    /// available when the binary is built with `--features parquet`
-    /// (the default).
-    #[arg(long, default_value = "jsonl")]
+    /// Data source. `off` = OpenFoodFacts; `usda` = USDA FoodData Central.
+    #[arg(long, default_value = "off")]
     source: String,
 
-    /// Path to the OFF dump file.
+    /// File format within the chosen source. OFF supports `jsonl` and
+    /// `parquet`; USDA supports `jsonl` only.
+    #[arg(long, default_value = "jsonl")]
+    format: String,
+
+    /// Path to the dump file.
     #[arg(long)]
     input: PathBuf,
 
     /// Postgres connection URL. Defaults to `$DATABASE_URL`.
     #[arg(long, env = "DATABASE_URL")]
-    database_url: String,
+    database_url: Option<String>,
 
     /// Skip running migrations on startup (assumes the DB schema is
     /// already at HEAD).
@@ -59,13 +72,19 @@ async fn main() -> Result<()> {
 
     info!(
         source = %args.source,
+        format = %args.format,
         input = %args.input.display(),
         limit = ?args.limit,
         "starting loseit-ingest"
     );
 
+    let database_url = args
+        .database_url
+        .clone()
+        .context("--database-url or DATABASE_URL must be set")?;
+
     let pool_config = PoolConfig {
-        url: args.database_url.clone(),
+        url: database_url,
         max_connections: 8,
         acquire_timeout: Duration::from_secs(10),
     };
@@ -84,19 +103,46 @@ async fn main() -> Result<()> {
 
     let service = IngestService::new(foods, servings, batches);
 
-    let source = open_source(&args.source, &args.input)
-        .await
-        .with_context(|| format!("opening source `{}` at {:?}", args.source, args.input))?;
-    let source: Box<dyn FoodRecordSource> = match args.limit {
-        Some(n) => Box::new(LimitedSource::new(source, n)),
-        None => source,
-    };
-
     let source_url = args.input.display().to_string();
-    let stats = service
-        .run(BoxedSource(source), &source_url, None)
-        .await
-        .context("ingest run failed")?;
+
+    let stats = match args.source.as_str() {
+        "off" => {
+            let source = open_source(&args.format, &args.input)
+                .await
+                .with_context(|| {
+                    format!(
+                        "opening OFF source (format={}) at {:?}",
+                        args.format, args.input
+                    )
+                })?;
+            let source: Box<dyn FoodRecordSource> = match args.limit {
+                Some(n) => Box::new(LimitedSource::new(source, n)),
+                None => source,
+            };
+            run_off(&service, BoxedOffSource(source), &source_url).await?
+        }
+        "usda" => {
+            let source = open_usda_source(&args.format, &args.input)
+                .await
+                .with_context(|| {
+                    format!(
+                        "opening USDA source (format={}) at {:?}",
+                        args.format, args.input
+                    )
+                })?;
+            let source: Box<dyn UsdaSource> = match args.limit {
+                Some(n) => Box::new(LimitedUsdaSource::new(source, n)),
+                None => source,
+            };
+            run_usda(&service, BoxedUsdaSource(source), &source_url).await?
+        }
+        other => {
+            anyhow::bail!(
+                "unknown --source `{}`; expected `off` or `usda`",
+                other
+            );
+        }
+    };
 
     info!(
         inserted = stats.inserted,
@@ -107,18 +153,67 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// `IngestService::run` takes `S: FoodRecordSource` by value; the
+// ---------------------------------------------------------------------------
+// run_off / run_usda pipeline helpers  (§7.4)
+// ---------------------------------------------------------------------------
+
+/// §7.4: Pull `OffFoodRecord`s from `source`, normalize each via
+/// `accept_and_normalize_off`, and upsert the resulting
+/// `FoodDraftWithServings` batch via `repo.upsert_external_food_batch`.
+async fn run_off<S: FoodRecordSource>(
+    service: &IngestService,
+    source: S,
+    source_url: &str,
+) -> Result<loseit_core::repo::UpsertStats> {
+    service
+        .run_off(source, source_url, None)
+        .await
+        .context("OFF ingest run failed")
+}
+
+/// §7.4: Pull `UsdaFoodRecord`s from `source`, normalize each via
+/// `accept_and_normalize_usda`, and upsert the resulting
+/// `FoodDraftWithServings` batch via `repo.upsert_external_food_batch`.
+async fn run_usda<S: UsdaSource>(
+    service: &IngestService,
+    source: S,
+    source_url: &str,
+) -> Result<loseit_core::repo::UpsertStats> {
+    service
+        .run_usda(source, source_url, None)
+        .await
+        .context("USDA ingest run failed")
+}
+
+// ---------------------------------------------------------------------------
+// Boxed source newtypes
+// ---------------------------------------------------------------------------
+
+/// `IngestService::run_off` takes `S: FoodRecordSource` by value; the
 /// `Box<dyn ...>` we build at the CLI layer doesn't satisfy `Sized`
 /// generic bounds directly, so we wrap it in a tiny newtype that
 /// re-implements the trait by delegating.
-struct BoxedSource(Box<dyn FoodRecordSource>);
+struct BoxedOffSource(Box<dyn FoodRecordSource>);
 
 #[async_trait::async_trait]
-impl FoodRecordSource for BoxedSource {
+impl FoodRecordSource for BoxedOffSource {
     async fn next_chunk(
         &mut self,
         n: usize,
     ) -> loseit_core::CoreResult<Option<Vec<loseit_core::service::OffFoodRecord>>> {
+        self.0.next_chunk(n).await
+    }
+}
+
+/// Boxed USDA source newtype — same rationale as `BoxedOffSource`.
+struct BoxedUsdaSource(Box<dyn UsdaSource>);
+
+#[async_trait::async_trait]
+impl UsdaSource for BoxedUsdaSource {
+    async fn next_chunk(
+        &mut self,
+        n: usize,
+    ) -> loseit_core::CoreResult<Option<Vec<loseit_core::service::UsdaFoodRecord>>> {
         self.0.next_chunk(n).await
     }
 }

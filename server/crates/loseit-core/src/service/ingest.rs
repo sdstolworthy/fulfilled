@@ -681,6 +681,44 @@ impl IngestService {
         }
     }
 
+    /// §7.4: Run the OFF pipeline. Reads `OffFoodRecord`s from `source`,
+    /// normalizes each via `accept_and_normalize_off`, and upserts the
+    /// resulting `FoodDraftWithServings` batch via
+    /// `FoodRepository::upsert_external_food_batch`.
+    pub async fn run_off<S: FoodRecordSource>(
+        &self,
+        source: S,
+        source_url: &str,
+        source_etag: Option<&str>,
+    ) -> CoreResult<UpsertStats> {
+        self.run(source, source_url, source_etag).await
+    }
+
+    /// §7.4: Run the USDA pipeline. Reads `UsdaFoodRecord`s from `source`,
+    /// normalizes each via `accept_and_normalize_usda`, and upserts the
+    /// resulting `FoodDraftWithServings` batch via
+    /// `FoodRepository::upsert_external_food_batch`.
+    pub async fn run_usda<S: UsdaSource>(
+        &self,
+        mut source: S,
+        source_url: &str,
+        source_etag: Option<&str>,
+    ) -> CoreResult<UpsertStats> {
+        let batch = self.batches.start(source_url, source_etag).await?;
+        let result = self.run_usda_inner(&mut source, batch.id).await;
+        match result {
+            Ok(stats) => {
+                self.batches.finish(batch.id, stats.clone()).await?;
+                Ok(stats)
+            }
+            Err(err) => {
+                let msg = err.to_string();
+                let _ = self.batches.fail(batch.id, &msg).await;
+                Err(err)
+            }
+        }
+    }
+
     async fn run_inner<S: FoodRecordSource>(
         &self,
         source: &mut S,
@@ -713,6 +751,46 @@ impl IngestService {
                             }
                         }
                     }
+                    accepted.push(upsert);
+                }
+            }
+            let skipped = seen.saturating_sub(accepted.len() as u64);
+            let upserted = accepted.len() as u64;
+
+            self.foods
+                .upsert_external_food_batch(batch_id, accepted)
+                .await?;
+
+            total.inserted += upserted;
+            total.skipped += skipped;
+            self.batches
+                .bump_counts(batch_id, seen, upserted, skipped)
+                .await?;
+        }
+
+        Ok(total)
+    }
+
+    async fn run_usda_inner<S: UsdaSource>(
+        &self,
+        source: &mut S,
+        batch_id: Uuid,
+    ) -> CoreResult<UpsertStats> {
+        let mut total = UpsertStats::default();
+
+        loop {
+            let Some(chunk) = source.next_chunk(BATCH_SIZE).await? else {
+                break;
+            };
+            if chunk.is_empty() {
+                continue;
+            }
+
+            let seen = chunk.len() as u64;
+
+            let mut accepted: Vec<FoodDraftWithServings> = Vec::with_capacity(chunk.len());
+            for record in chunk {
+                if let Some(upsert) = accept_and_normalize_usda(record) {
                     accepted.push(upsert);
                 }
             }
