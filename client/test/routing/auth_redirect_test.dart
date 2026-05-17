@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fulfilled/data/auth_token.dart';
+import 'package:fulfilled/form_factor/form_factor.dart';
+import 'package:fulfilled/providers/repository_providers.dart';
+import 'package:fulfilled/repositories/_mock_latency.dart';
 import 'package:fulfilled/routing/app_router.dart';
 import 'package:fulfilled/routing/routes.dart';
 import 'package:go_router/go_router.dart';
@@ -41,11 +44,24 @@ class _FakeAuthTokenNotifier extends AuthTokenNotifier {
 }
 
 /// Convenience — builds the harness app with the auth token override.
+///
+/// Two additional overrides keep cases that render the shell
+/// (`/today` and beyond) free of Hive-backed dependencies:
+///
+/// - `formFactorOverrideProvider` is pinned to `medium` so
+///   `logRepositoryProvider` passes `outbox: null` and never reads the
+///   strict-throwing `outboxBoxProvider`. The redirect logic itself is
+///   form-factor-agnostic — pinning to medium is purely a test-scope
+///   convenience.
+/// - `setMockLatencyForTesting()` (called in the test `setUp`) shrinks
+///   mock repository latency to ~0 so `pumpAndSettle` doesn't burn the
+///   default 200–800 ms artificial delay on each frame.
 Widget _harness({required String? seed}) {
   return ProviderScope(
     overrides: <Override>[
       authTokenProvider
           .overrideWith(() => _FakeAuthTokenNotifier(seed)),
+      formFactorOverrideProvider.overrideWithValue(FormFactor.medium),
     ],
     child: Consumer(
       builder: (context, ref, _) {
@@ -78,6 +94,14 @@ void main() {
   // breakpoint-agnostic but the shell isn't.
   setUp(() {
     TestWidgetsFlutterBinding.ensureInitialized();
+    // Mock repositories sleep 200–800 ms by default — `pumpAndSettle`
+    // would chase those frames. Shrink to ~0 ms so the suite is snappy
+    // and we don't time out waiting for the redirect to resolve.
+    setMockLatencyForTesting();
+  });
+
+  tearDown(() {
+    clearMockLatencyForTesting();
   });
 
   testWidgets(

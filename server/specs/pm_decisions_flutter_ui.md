@@ -278,6 +278,12 @@ scope and it gets real product scope or it gets cut.
   account' link on onboarding step 1." Owner: TBD when auth is
   scoped.
 
+> **Addendum 2026-05-16 — login flow shipped.** The "remove
+> the link entirely" decision is superseded by
+> `specs/pm_login.md`. The link is back; it routes to
+> `/login`. Original rationale (no login screen for the link
+> to route to) preserved above for history.
+
 ---
 
 ## Risk 3 — Trends tab

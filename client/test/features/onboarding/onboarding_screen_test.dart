@@ -131,8 +131,8 @@ Widget _harness({
 
 void main() {
   testWidgets(
-    'step 1 renders Get started but NOT "I already have an account" '
-    '(PM Risk 2)',
+    'step 1 renders Get started AND "I already have an account" '
+    '(LOG-008 — PM Risk 2 reversal)',
     (tester) async {
       tester.view.physicalSize = const Size(390, 844);
       tester.view.devicePixelRatio = 1.0;
@@ -146,9 +146,12 @@ void main() {
       expect(find.byType(Step1Welcome), findsOneWidget);
       expect(find.text('Get started'), findsOneWidget);
 
-      // PM Risk 2 regression — the link is gone in v1.
-      expect(find.text('I already have an account'), findsNothing);
-      expect(find.textContaining('have an account'), findsNothing);
+      // LOG-008 reverses PM Risk 2 (see Risk 2 Addendum 2026-05-16) —
+      // the link is back; it routes to /login. The original "link is
+      // gone" assertion is preserved below as a comment for the audit
+      // trail.
+      // OLD: expect(find.text('I already have an account'), findsNothing);
+      expect(find.text('I already have an account'), findsOneWidget);
     },
   );
 

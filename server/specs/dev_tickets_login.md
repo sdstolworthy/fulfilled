@@ -1597,7 +1597,7 @@ redirect is part of the routing rules).
 
 ## LOG-008  Onboarding step 1 — re-add "I already have an account" link + Risk 2 addendum
 
-**Status**: pending
+**Status**: shipped (Wave 5)
 **Priority**: P1
 **Effort**: S
 **Depends on**: LOG-006, LOG-007

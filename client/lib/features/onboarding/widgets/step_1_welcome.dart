@@ -1,14 +1,22 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 
+import '../../../routing/routes.dart';
 import '../../../theme/context_extensions.dart';
 
 /// Welcome step (1 of 3). Logo + headline + features list + the primary
-/// CTA. **No "I already have an account" affordance** — PM Risk 2 removed
-/// it from v1; it returns alongside real auth in v2. Do not re-add it
-/// without a PM ruling on the corresponding decision doc.
+/// CTA. The "I already have an account" link sits at the bottom of the
+/// body column and routes to [Routes.loginPath].
 ///
 /// The footer button is supplied by `OnboardingStepShell`. This widget
 /// fills the body slot only.
+///
+/// History (2026-05-16): the "I already have an account" link
+/// was removed earlier in v1 planning per
+/// `pm_decisions_flutter_ui.md` Risk 2, on the premise that v1
+/// had no login screen for it to route to. That premise is
+/// reversed by `pm_login.md`, which ships `/login`; the link is
+/// back and routes there.
 class Step1Welcome extends StatelessWidget {
   const Step1Welcome({super.key});
 
@@ -54,6 +62,15 @@ class Step1Welcome extends StatelessWidget {
               ),
             ],
           ),
+        ),
+        SizedBox(height: context.space.x6),
+        TextButton(
+          onPressed: () => context.go(Routes.loginPath),
+          style: TextButton.styleFrom(
+            foregroundColor: context.colors.accent,
+            textStyle: context.text.bodyStrong,
+          ),
+          child: const Text('I already have an account'),
         ),
       ],
     );
