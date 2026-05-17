@@ -143,7 +143,7 @@ Future<LogEntry?> showLogEntrySheet(
       return Dialog(
         backgroundColor: Colors.transparent,
         insetPadding: const EdgeInsets.all(24),
-        child: _DialogEnterAnimation(
+        child: SheetDialogEnter(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 480, maxHeight: 720),
             child: ClipRRect(
@@ -162,31 +162,6 @@ Future<LogEntry?> showLogEntrySheet(
 /// (0 → 1) + an 8-px upward translate. Duration 200 ms with the
 /// `easeOutCubic` arrival curve. `motion()` collapses to zero under
 /// reduce-motion.
-class _DialogEnterAnimation extends StatelessWidget {
-  const _DialogEnterAnimation({required this.child});
-
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    return TweenAnimationBuilder<double>(
-      tween: Tween<double>(begin: 0, end: 1),
-      duration: motion(context, const Duration(milliseconds: 200)),
-      curve: Curves.easeOutCubic,
-      builder: (context, t, inner) {
-        return Opacity(
-          opacity: t,
-          child: Transform.translate(
-            offset: Offset(0, 8 * (1 - t)),
-            child: inner,
-          ),
-        );
-      },
-      child: child,
-    );
-  }
-}
-
 /// The inner widget rendered identically inside the sheet (compact) or
 /// the dialog (medium / expanded). Public so tests can pump it without
 /// going through `showModalBottomSheet` plumbing.

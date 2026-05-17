@@ -22,3 +22,37 @@ import 'package:flutter/widgets.dart';
 /// pass.
 Duration motion(BuildContext context, Duration full) =>
     MediaQuery.disableAnimationsOf(context) ? Duration.zero : full;
+
+/// T-016 dialog arrival animation used by the bottom-sheet/dialog
+/// surfaces (`LogEntrySheet`, `QuickAddSheet`). Fades + slides the
+/// dialog body in over 200 ms; collapses to a one-frame snap when
+/// `disableAnimations` is set.
+///
+/// Audit finding #11: the body of this widget was byte-identical
+/// between `LogEntrySheet._DialogEnterAnimation` and
+/// `QuickAddSheet._DialogEnterAnimation`. Lifting it here drops two
+/// copies; new sheets get it for free.
+class SheetDialogEnter extends StatelessWidget {
+  const SheetDialogEnter({required this.child, super.key});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(begin: 0, end: 1),
+      duration: motion(context, const Duration(milliseconds: 200)),
+      curve: Curves.easeOutCubic,
+      builder: (context, t, inner) {
+        return Opacity(
+          opacity: t,
+          child: Transform.translate(
+            offset: Offset(0, 8 * (1 - t)),
+            child: inner,
+          ),
+        );
+      },
+      child: child,
+    );
+  }
+}

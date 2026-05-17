@@ -118,7 +118,7 @@ Future<LogEntry?> showQuickAddSheet(
       return Dialog(
         backgroundColor: Colors.transparent,
         insetPadding: const EdgeInsets.all(24),
-        child: _DialogEnterAnimation(
+        child: SheetDialogEnter(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 440, maxHeight: 640),
             child: ClipRRect(
@@ -130,32 +130,6 @@ Future<LogEntry?> showQuickAddSheet(
       );
     },
   );
-}
-
-/// T-016 dialog arrival animation — mirrors `LogEntrySheet`'s `_DialogEnterAnimation`.
-class _DialogEnterAnimation extends StatelessWidget {
-  const _DialogEnterAnimation({required this.child});
-
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    return TweenAnimationBuilder<double>(
-      tween: Tween<double>(begin: 0, end: 1),
-      duration: motion(context, const Duration(milliseconds: 200)),
-      curve: Curves.easeOutCubic,
-      builder: (context, t, inner) {
-        return Opacity(
-          opacity: t,
-          child: Transform.translate(
-            offset: Offset(0, 8 * (1 - t)),
-            child: inner,
-          ),
-        );
-      },
-      child: child,
-    );
-  }
 }
 
 /// Public body widget. Exposed so widget tests can pump it directly
