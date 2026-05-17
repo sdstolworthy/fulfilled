@@ -462,8 +462,52 @@ non-trivial.
 
 ## Ask 8 — Authentik / OIDC integration + provider-discovery endpoint *(P0 — user directive 2026-05-17)*
 
-Status: `open` — architect-reviewed 2026-05-17, see refinements at the
-top of this ask.
+Status: `done` — PR #5 merged as `24898c1`. Backend-as-RP OIDC code flow with PKCE, signed-cookie state, and one-time handoff-code ferry to the FE. Multi-method `AuthConfig` so local-creds (BE-008) and OIDC coexist. Live on `https://api.coolify.stolworthy.co`.
+
+**Backend reply — FE action items:**
+
+1. **Call `GET /api/v1/auth/providers` before rendering the login screen** (`security: []`, no bearer). Today returns:
+   ```json
+   {
+     "local": {"enabled": true},
+     "oidc": [{"id":"authentik","display_name":"Authentik","icon_url":"","start_url":"/api/v1/auth/oidc/authentik/start"}]
+   }
+   ```
+   - Render the username/password form only when `local.enabled === true`.
+   - For each entry in `oidc`, render a button labelled `display_name` (icon optional). Tap → navigate the browser to `start_url` (relative; prepend `https://api.coolify.stolworthy.co`). **Plain anchor + native navigation** — no fetch/XHR. Reason: the backend needs to set an `HttpOnly` cookie and 302 to Authentik; only a top-level navigation will follow.
+
+2. **Handle the callback landing.** After Authentik signs the user in, the backend redirects the browser to `<LOSEIT_FE_ORIGIN>/<next>?oidc_code=<43-char-base64url>`. On the FE side:
+   - At app boot (or on the login route), if the URL has `?oidc_code=<...>`, immediately:
+     ```
+     POST /api/v1/auth/oidc/exchange
+       body: {"code": "<the oidc_code from URL>"}
+       → 200 {token: string, expires_at: ISO-8601}   # same shape as /auth/login
+       → 401 if the handoff code is missing, expired (60s TTL), or already claimed
+     ```
+   - Store the returned `token` as the bearer (same as the local-creds flow), strip `?oidc_code=` from the URL, and route to wherever `?next=` pointed (today the start handler embeds it; the FE drops the qs after exchange).
+   - On 401, surface "OIDC sign-in failed, please try again" and return the user to `/login`.
+
+3. **Error path** — if Authentik denied consent or the user cancelled, the callback redirects with `?oidc_error=<authentik error code>` instead of `?oidc_code=`. Read it and show an inline error; no exchange call needed.
+
+4. **`next` query param** — the FE can pass `next=/today` (or any same-origin path) to `start_url` to control the post-sign-in landing page. Default is `/`. Anything outside `LOSEIT_FE_ORIGIN` returns 400 at `/start`.
+
+5. **No change to the rest of the API surface.** The token returned by `/auth/oidc/exchange` round-trips identically to a `/auth/login` token — same `Authorization: Bearer <token>` header, same expiry semantics, same revocation. `GET /me` works identically; user row's `issuer="authentik"`, `external_id=<sub from ID token>`.
+
+**Live verification (backend gates passing as of 2026-05-17 ~06:00 PDT):**
+
+- `GET /auth/providers` → 200 with the JSON above.
+- `GET /auth/oidc/authentik/start?next=/today` → 302 to `https://authentik.stolworthy.co/application/o/authorize/?response_type=code&client_id=...&redirect_uri=...&scope=openid+profile+email&state=...&nonce=...&code_challenge=...&code_challenge_method=S256` + `set-cookie: loseit_oidc_state=...; HttpOnly; SameSite=Lax; Path=/api/v1/auth/oidc; Max-Age=600`.
+- Local-creds `POST /auth/login` with `dev/dev` still returns 200 + bearer (BE-008 path unaffected).
+- `POST /auth/oidc/exchange` with a bogus code returns 401.
+
+**What FE still needs to test (cannot simulate via curl):** the full Authentik consent → callback → exchange → /me round trip with a real account. The Authentik test user is whichever account you've already provisioned in the `authentik.stolworthy.co` realm; the Fulfilled application is now visible there.
+
+**Two known follow-ups for daylight, NOT blockers tonight:**
+
+- `/auth/login` should be gated on `state.local_login_enabled` so disabling local-creds via env actually disables it (today it's only gated on `state.auth.is_some()`; inert because `LOSEIT_AUTH_LOCAL=true`).
+- The `env::var(...).unwrap_or_else(|_| default)` pattern in `config.rs::load_oidc_provider` doesn't filter empty strings, so Coolify-style `${VAR:-}` empty expansions skip the default. Already bit us on `OIDC_AUTHENTIK_JWKS_URL` and `OIDC_AUTHENTIK_SCOPES` (both set explicitly in Coolify env as workaround). Fix is one-line: `.ok().filter(|s| !s.is_empty())` on each of the four URL/scope vars.
+
+Design + task breakdown: `server/specs/be_oidc_integration_design.md`, `server/specs/be_oidc_integration_tasks.md`. 15 task commits (T01-T15) + spec commits, 245 tests passing workspace-wide.
 
 ### Architect refinements (2026-05-17)
 
