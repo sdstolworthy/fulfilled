@@ -1,5 +1,6 @@
 import 'package:decimal/decimal.dart';
 
+import '_eq.dart';
 import 'enums.dart';
 import 'serving.dart';
 import 'unit.dart';
@@ -159,8 +160,8 @@ class Food {
           other.isCustom == isCustom &&
           other.qualityScore == qualityScore &&
           other.nutriscore == nutriscore &&
-          _listEq(other.servings, servings) &&
-          _listEq(other.categoriesTags, categoriesTags) &&
+          listEquals(other.servings, servings) &&
+          listEquals(other.categoriesTags, categoriesTags) &&
           other.createdAt == createdAt;
 
   @override
@@ -403,11 +404,3 @@ class FoodCreate {
       };
 }
 
-bool _listEq<T>(List<T> a, List<T> b) {
-  if (identical(a, b)) return true;
-  if (a.length != b.length) return false;
-  for (var i = 0; i < a.length; i++) {
-    if (a[i] != b[i]) return false;
-  }
-  return true;
-}
