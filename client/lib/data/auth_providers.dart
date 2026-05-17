@@ -93,7 +93,17 @@ class OidcProviderMeta {
 /// creds.
 final authProvidersProvider = FutureProvider.autoDispose<AuthProviders>(
   (ref) async {
-    final api = ref.read(apiClientProvider);
+    // **Watch** the apiClient (not read). On mobile the base URL
+    // arrives late — via Hive after a prior sign-in OR via the
+    // login-form URL field (rule 4 in `apiBaseUrlProvider`). Without
+    // `watch`, the very first discovery fetch fires against an empty
+    // Dio base, the DioException is swallowed into
+    // `AuthProviders.empty`, and the cached empty result hides the
+    // OIDC button forever even after the user types a valid URL.
+    // `watch` rebuilds the provider whenever the URL changes, so the
+    // discovery fetch re-fires and the button list reflects the
+    // current backend.
+    final api = ref.watch(apiClientProvider);
     try {
       final res = await api.dio.get<dynamic>('/auth/providers');
       final data = res.data;
