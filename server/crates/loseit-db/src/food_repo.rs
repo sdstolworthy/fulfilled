@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use loseit_core::domain::{
-    Food, FoodDraft, FoodPatch, FoodSearchHit, FoodSource, NutriscoreGrade, NutritionPer100g,
-    Serving, ServingPreview, ServingSource,
+    Food, FoodDraft, FoodKind, FoodPatch, FoodSearchHit, FoodSource, NutriscoreGrade,
+    NutritionPer100g, Serving, ServingPreview, ServingSource,
 };
 use loseit_core::repo::food::{OffFoodUpsert, UpsertStats, QUICK_ADD_SENTINEL_NAME};
 use loseit_core::repo::FoodRepository;
@@ -29,6 +29,7 @@ impl PgFoodRepository {
 struct FoodRow {
     id: Uuid,
     source: String,
+    kind: String,
     owner_user_id: Option<Uuid>,
     barcode: Option<String>,
     fdc_id: Option<i64>,
@@ -61,6 +62,7 @@ impl From<FoodRow> for Food {
             // rather than panic mid-request. (In practice `parse` always
             // succeeds.)
             source: FoodSource::parse(&r.source).unwrap_or(FoodSource::User),
+            kind: FoodKind::parse(&r.kind).unwrap_or(FoodKind::Normal),
             owner_user_id: r.owner_user_id,
             barcode: r.barcode,
             fdc_id: r.fdc_id,
@@ -97,7 +99,7 @@ impl From<FoodRow> for Food {
 const SELECT_FOOD_COLS: &str = "id, source, owner_user_id, barcode, fdc_id, name, brands, \
     categories_tags, energy_kcal_100g, protein_100g, carbs_100g, fat_100g, fiber_100g, \
     sugar_100g, sodium_100g, saturated_fat_100g, nutriscore_grade, quality_score, \
-    extra_nutrients, last_import_batch_id, created_at, updated_at, data_type";
+    extra_nutrients, last_import_batch_id, created_at, updated_at, data_type, kind";
 
 /// Visibility predicate used by read paths. Implements the trait contract:
 /// OFF and USDA foods are visible to everyone; user-custom foods are
@@ -593,8 +595,8 @@ impl FoodRepository for PgFoodRepository {
         let food_sql = format!(
             "INSERT INTO foods ( \
                 source, owner_user_id, name, energy_kcal_100g, \
-                quality_score, categories_tags \
-             ) VALUES ('user', $1, '{sentinel}', 1, 0, ARRAY[]::text[]) \
+                quality_score, categories_tags, kind \
+             ) VALUES ('user', $1, '{sentinel}', 1, 0, ARRAY[]::text[], 'quick_add') \
              ON CONFLICT (owner_user_id) WHERE source = 'user' AND name = '{sentinel}' \
                DO UPDATE SET updated_at = now() \
              RETURNING {SELECT_FOOD_COLS}",

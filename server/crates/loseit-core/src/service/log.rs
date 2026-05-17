@@ -611,7 +611,7 @@ fn accumulate(acc: &mut (Decimal, bool), value: Option<Decimal>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{FoodSource, NutritionPer100g};
+    use crate::domain::{FoodKind, FoodSource, NutritionPer100g};
     use chrono::Utc;
 
     fn food_with_nutrition(n: NutritionPer100g) -> Food {
@@ -619,6 +619,7 @@ mod tests {
         Food {
             id: Uuid::new_v4(),
             source: FoodSource::Off,
+            kind: FoodKind::Normal,
             owner_user_id: None,
             barcode: None,
             fdc_id: None,
