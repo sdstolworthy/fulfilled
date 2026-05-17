@@ -48,7 +48,12 @@ Map<String, dynamic> _emptyWeightsPage() => <String, dynamic>{
   final repo = ProfileRepository(
     api: api,
     weightRepository: WeightRepository(api),
-    foodRepository: FoodRepository(api),
+    // Use the fixture-mode food repo here so `me()`'s
+    // `customFoodCount` derivation reads from the in-memory seed
+    // without needing the test to mock `/foods/mine`. The tests in
+    // this file specifically exercise `/me` decoding; food behavior
+    // is incidental to them.
+    foodRepository: FoodRepository(api, useFixtures: true),
   );
   return (repo: repo, adapter: adapter);
 }

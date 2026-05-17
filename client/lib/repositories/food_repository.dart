@@ -9,11 +9,13 @@ import '../domain/serving.dart';
 import '../domain/unit.dart';
 import '_fixtures.dart' as fx;
 
-/// Per Ask 10 the FE is racing ahead of the BE reshape — until the
-/// server emits the new `Serving` shape (amount + unit + per-serving
-/// nutrition), the repository serves seeded fixtures and the Dio
-/// surface below is dormant. Flip to `false` once the live API lands.
-const bool kUseFixtures = true;
+/// Ask 10 backend shipped (commit `51fd542`, deployed live). The
+/// repository now goes through Dio against the real API by default.
+/// Tests that need to exercise the in-memory fixture path
+/// (`buildSeedFoods`) construct the repo with `useFixtures: true` —
+/// the per-instance flag is preserved so the seam stays available
+/// for tooling, demos, or offline development.
+const bool kUseFixtures = false;
 
 /// Read + write surface for the `Food` and `Serving` resources. Mirrors
 /// the `/foods/*` + `/servings/*` paths in `specs/openapi.yaml`.

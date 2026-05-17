@@ -17,7 +17,9 @@ void main() {
 
   setUp(() {
     resetRepositoriesForTest();
-    repo = FoodRepository(buildTestApiClient());
+    // The quick-add filter is a fixture-store invariant — exercise
+    // the in-memory seed path explicitly.
+    repo = FoodRepository(buildTestApiClient(), useFixtures: true);
   });
 
   tearDown(teardownRepositoriesForTest);
