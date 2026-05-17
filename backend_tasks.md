@@ -369,7 +369,23 @@ agents wiring the repos see them):**
 
 ## Ask 7 — Live-deploy bugs found while wiring repos *(P1)*
 
-Status: `open`
+Status: `triaged` — queued behind BE-008 (auth login). Architect + 12-task
+breakdown for Ask 2 is mid-flight on `be-auth-login`
+(`server/specs/be_auth_login_design.md`,
+`server/specs/be_auth_login_tasks.md`); engineer dispatch starting now.
+Ask 7 picks up an architect once BE-008 engineers are off the queue —
+target inside the same overnight window. Per-sub-ask preliminary read:
+
+- **7a** (500 on `/log/copy`): treated as a server bug; architect will
+  reproduce locally and root-cause. Likely a service-layer panic on
+  empty-day copy or a sqlx error mapping miss.
+- **7b** (405 on `GET /foods/{id}/servings`): closing as
+  "FE works without it" + adding a one-line note to `openapi.yaml`
+  explaining `Food.servings` is the read path. No new endpoint.
+- **7c** (real UUID returned for quick-add food): tentatively picking
+  **(i)** — add `Food.kind: 'normal' | 'quick_add'` (default `'normal'`)
+  exposed on the wire; backfill existing sentinel rows. Confirms FE's
+  own preference. Will re-confirm at architect-spec time.
 
 The FE wired all 5 repos to the live API and curl'd every endpoint
 during the wire. Three reproducible bugs against
