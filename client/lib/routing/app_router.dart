@@ -9,6 +9,7 @@ import '../features/food_detail/food_detail_screen.dart';
 import '../features/goals/goals_screen.dart';
 import '../features/goals/widgets/new_goal_dialog.dart';
 import '../features/login/login_screen.dart';
+import '../features/login/oidc_callback_screen.dart';
 import '../features/my_foods/my_foods_screen.dart';
 import '../features/onboarding/onboarding_screen.dart';
 import '../features/profile/profile_screen.dart';
@@ -77,6 +78,11 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       final loc = state.matchedLocation;
       if (token == null) {
         if (loc == Routes.loginPath) return null;
+        // Ask 8 — `/login/callback` is the OIDC handoff landing. The
+        // user is still un-authed when they land here (the handoff
+        // code is what gets exchanged for the bearer); let them
+        // through so the exchange can run.
+        if (loc == Routes.oidcCallbackPath) return null;
         if (loc.startsWith('/onboarding/')) return null;
         return Routes.loginPath;
       }
@@ -224,6 +230,17 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         name: Routes.loginName,
         path: Routes.loginPath,
         builder: (_, __) => const LoginScreen(),
+      ),
+      // Ask 8 — OIDC callback landing. Outside the ShellRoute so the
+      // exchange-in-progress screen has no nav chrome. Reads the
+      // single-use handoff code off the query string and posts to
+      // `/auth/oidc/exchange` for the real opaque bearer.
+      GoRoute(
+        name: Routes.oidcCallbackName,
+        path: Routes.oidcCallbackPath,
+        builder: (context, state) => OidcCallbackScreen(
+          code: state.uri.queryParameters['code'] ?? '',
+        ),
       ),
     ],
     errorBuilder: (context, state) => Scaffold(

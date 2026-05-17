@@ -2,11 +2,13 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../data/auth_providers.dart';
 import '../../form_factor/breakpoints.dart';
 import '../../theme/context_extensions.dart';
 import 'login_controller.dart';
 import 'widgets/credentials_form.dart';
 import 'widgets/login_button.dart';
+import 'widgets/oidc_button.dart';
 import 'widgets/paste_jwt_disclosure.dart';
 import 'widgets/server_url_field.dart';
 import 'widgets/sign_up_link.dart';
@@ -157,6 +159,14 @@ class _LoginBody extends ConsumerWidget {
         ),
         // 4. Spacer above first field.
         SizedBox(height: space.x6),
+        // 4.5. OIDC provider buttons (Ask 8). Rendered above the
+        // credentials form when the discovery endpoint advertises any
+        // OIDC providers. The list is fetched once on mount via
+        // `authProvidersProvider` (autoDispose); on network failure
+        // or older-server-without-the-endpoint the provider returns
+        // `AuthProviders.empty` so the column collapses to the
+        // credentials-only form.
+        const _OidcButtonList(),
         // 5 + 6. URL field (mobile only — architect §6: omitted on web,
         // not zero-height-hidden). The `!kIsWeb` gate compiles to a
         // constant at build time; the web bundle never includes the
@@ -226,6 +236,63 @@ class _FormErrorRow extends StatelessWidget {
 // from the architect plan. v1.1 lifts both call sites to a shared
 // `AppLogo` widget. Until then this marker is the receipt.
 /// The accent-on-surface 84-px square favourite-heart logo. Inline
+/// Renders one [OidcButton] per provider returned by the discovery
+/// endpoint, with a "or" divider tying the OIDC stack to the
+/// credentials form below. Empty + invisible when no OIDC providers
+/// are configured on the server (the architect-approved degraded
+/// state — login still works via local creds).
+class _OidcButtonList extends ConsumerWidget {
+  const _OidcButtonList();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final async = ref.watch(authProvidersProvider);
+    return async.when(
+      // While loading we render nothing — the layout reflows the
+      // moment providers resolve, which is cheaper than reserving
+      // skeleton space for a list that's often empty.
+      loading: () => const SizedBox.shrink(),
+      error: (_, __) => const SizedBox.shrink(),
+      data: (providers) {
+        if (providers.oidc.isEmpty) {
+          return const SizedBox.shrink();
+        }
+        final space = context.space;
+        final colors = context.colors;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            for (final p in providers.oidc) ...<Widget>[
+              OidcButton(provider: p),
+              SizedBox(height: space.x3),
+            ],
+            // "or" divider between the OIDC stack and the local form.
+            // Only renders when local auth is also enabled — if local
+            // is off and OIDC is the only option, no divider needed.
+            if (providers.local)
+              Padding(
+                padding: EdgeInsets.symmetric(vertical: space.x2),
+                child: Row(
+                  children: <Widget>[
+                    Expanded(child: Divider(color: colors.line2, height: 1)),
+                    Padding(
+                      padding: EdgeInsets.symmetric(horizontal: space.x3),
+                      child: Text(
+                        'or',
+                        style: context.text.meta.copyWith(color: colors.ink3),
+                      ),
+                    ),
+                    Expanded(child: Divider(color: colors.line2, height: 1)),
+                  ],
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
 /// shape duplicated from `step_1_welcome.dart`. See the `// TODO v1.1`
 /// marker above for the hoist plan.
 class _Logo extends StatelessWidget {

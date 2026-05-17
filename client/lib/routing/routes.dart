@@ -44,6 +44,13 @@ class Routes {
   static const String loginName = 'login';
   static const String loginPath = '/login';
 
+  /// FE landing after the backend completes the OIDC code exchange.
+  /// Reads `?code=<handoff>` and `POST`s to `/auth/oidc/exchange` for
+  /// the opaque bearer token. Registered outside the `ShellRoute` so
+  /// the screen has no nav chrome.
+  static const String oidcCallbackName = 'login.callback';
+  static const String oidcCallbackPath = '/login/callback';
+
   static const String myFoodsName = 'foods.mine';
   static const String myFoodsPath = '/foods/mine';
 
