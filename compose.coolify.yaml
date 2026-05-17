@@ -64,6 +64,12 @@ services:
       OIDC_AUTHENTIK_CLIENT_SECRET: ${OIDC_AUTHENTIK_CLIENT_SECRET:-}
       OIDC_AUTHENTIK_REDIRECT_URI: ${OIDC_AUTHENTIK_REDIRECT_URI:-}
       OIDC_AUTHENTIK_JWKS_URL: ${OIDC_AUTHENTIK_JWKS_URL:-}
+      # Authentik publishes authorize + token at the root /application/o/,
+      # not under the per-app issuer, so set these explicitly. Defaults
+      # (`<issuer>/authorize/`, `<issuer>/token/`) work for IdPs that DO
+      # nest them under the issuer.
+      OIDC_AUTHENTIK_AUTHORIZE_URL: ${OIDC_AUTHENTIK_AUTHORIZE_URL:-}
+      OIDC_AUTHENTIK_TOKEN_URL: ${OIDC_AUTHENTIK_TOKEN_URL:-}
       OIDC_AUTHENTIK_ICON_URL: ${OIDC_AUTHENTIK_ICON_URL:-}
       OIDC_AUTHENTIK_SCOPES: ${OIDC_AUTHENTIK_SCOPES:-}
     healthcheck:
