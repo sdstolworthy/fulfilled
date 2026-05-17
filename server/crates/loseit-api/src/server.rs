@@ -13,7 +13,6 @@
 //!   call this directly with a state built from in-memory fakes.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use anyhow::{anyhow, Result};
 use axum::middleware;
@@ -35,8 +34,7 @@ use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
 use crate::auth::{
-    dev::DevAuthenticator, jwks::JwksAuthenticator, local::LocalAuthenticator, require_auth,
-    DynAuthenticator,
+    dev::DevAuthenticator, local::LocalAuthenticator, require_auth, DynAuthenticator,
 };
 use crate::config::{AppConfig, AuthConfig};
 use crate::routes;
@@ -54,6 +52,8 @@ pub struct AppState {
     pub logs: Arc<LogService>,
     pub authenticator: DynAuthenticator,
     pub auth: Option<Arc<AuthService>>,
+    /// None until T08 wires the OidcRegistry.
+    pub oidc: Option<Arc<()>>,
 }
 
 impl AppState {
@@ -86,6 +86,7 @@ impl AppState {
             logs: log_service,
             authenticator,
             auth: auth_service,
+            oidc: None, // T08 will populate OidcRegistry here
         }
     }
 }
@@ -151,56 +152,43 @@ pub async fn build_router(pool: PgPool, config: &AppConfig) -> Result<Router> {
     Ok(router(build_state(pool, config).await?))
 }
 
+// T07 minimal adapter — T08 will rewrite this into pick_authenticator with
+// full OidcRegistry wiring.
 async fn build_authenticator(
     cfg: &AuthConfig,
     env_name: &str,
     pool: PgPool,
 ) -> Result<(DynAuthenticator, Option<Arc<AuthService>>)> {
-    match cfg {
-        AuthConfig::DevBypass {
-            token,
-            issuer,
-            external_id,
-            email,
-            display_name,
-        } => {
-            if env_name == "production" {
-                return Err(anyhow!("dev auth bypass cannot be used in production"));
-            }
-            let identity = UserIdentity {
-                issuer: issuer.clone(),
-                external_id: external_id.clone(),
-                email: email.clone(),
-                display_name: display_name.clone(),
-            };
-            let authn: Arc<dyn Authenticator> =
-                Arc::new(DevAuthenticator::new(token.clone(), identity));
-            Ok((authn, None))
+    // Dev-bypass has highest precedence.
+    if let Some(dev) = &cfg.dev_bypass {
+        if env_name == "production" {
+            return Err(anyhow!("dev auth bypass cannot be used in production"));
         }
-        AuthConfig::Jwks {
-            issuer,
-            audience,
-            jwks_url,
-            cache_ttl_secs,
-        } => {
-            let auth = JwksAuthenticator::new(
-                issuer.clone(),
-                audience.clone(),
-                jwks_url.clone(),
-                Duration::from_secs(*cache_ttl_secs),
-            )
-            .await?;
-            let authn: Arc<dyn Authenticator> = Arc::new(auth);
-            Ok((authn, None))
-        }
-        AuthConfig::Local => {
-            let users: Arc<dyn UserRepository> = Arc::new(PgUserRepository::new(pool.clone()));
-            let local: Arc<dyn LocalAuthRepository> =
-                Arc::new(PgLocalAuthRepository::new(pool.clone()));
-            let auth_service = Arc::new(AuthService::new(users, local));
-            let authn: Arc<dyn Authenticator> =
-                Arc::new(LocalAuthenticator::new(auth_service.clone()));
-            Ok((authn, Some(auth_service)))
-        }
+        let identity = UserIdentity {
+            issuer: dev.issuer.clone(),
+            external_id: dev.external_id.clone(),
+            email: dev.email.clone(),
+            display_name: dev.display_name.clone(),
+        };
+        let authn: Arc<dyn Authenticator> =
+            Arc::new(DevAuthenticator::new(dev.token.clone(), identity));
+        return Ok((authn, None));
     }
+
+    // Local-creds (or OIDC-only) → resolve opaque tokens against
+    // local_auth_tokens via LocalAuthenticator.
+    if cfg.local.is_some() || !cfg.oidc.is_empty() {
+        let users: Arc<dyn UserRepository> = Arc::new(PgUserRepository::new(pool.clone()));
+        let local: Arc<dyn LocalAuthRepository> =
+            Arc::new(PgLocalAuthRepository::new(pool.clone()));
+        let auth_service = Arc::new(AuthService::new(users, local));
+        let authn: Arc<dyn Authenticator> =
+            Arc::new(LocalAuthenticator::new(auth_service.clone()));
+        // Return Some(auth_service) when local-creds is on; OIDC-only path
+        // also needs it (T08 will use it for mint_session_for).
+        return Ok((authn, Some(auth_service)));
+    }
+
+    // Should be unreachable — load_auth already enforced "at least one method".
+    Err(anyhow!("no auth method configured"))
 }

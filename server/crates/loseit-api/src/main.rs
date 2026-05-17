@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use loseit_api::build_router;
-use loseit_api::config::{AppConfig, AuthConfig};
+use loseit_api::config::AppConfig;
 use loseit_db::{build_pool, run_migrations, PoolConfig};
 use tokio::net::TcpListener;
 use tracing::info;
@@ -31,7 +31,7 @@ async fn main() -> Result<()> {
         run_migrations(&pool).await.context("running migrations")?;
     }
 
-    if matches!(config.auth, AuthConfig::Local)
+    if config.auth.local.is_some()
         && std::env::var("LOSEIT_SEED_DEV_AUTH")
             .map(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
             .unwrap_or(false)
