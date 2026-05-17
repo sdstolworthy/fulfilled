@@ -30,6 +30,14 @@ impl InMemoryLocalAuthRepository {
         let tokens = self.tokens.lock().unwrap();
         tokens.get(token_hash).map(|row| row.expires_at)
     }
+
+    /// Test-only helper that back-dates a token so it appears expired.
+    pub fn force_expire(&self, token_hash: &str) {
+        let mut tokens = self.tokens.lock().unwrap();
+        if let Some(row) = tokens.get_mut(token_hash) {
+            row.expires_at = chrono::Utc::now() - chrono::Duration::seconds(1);
+        }
+    }
 }
 
 #[async_trait]
