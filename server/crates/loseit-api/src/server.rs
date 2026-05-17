@@ -39,23 +39,11 @@ use crate::auth::{
     dev::DevAuthenticator, local::LocalAuthenticator, require_auth, DynAuthenticator,
 };
 use crate::auth::jwks::JwksVerifier;
-use crate::config::{AppConfig, AuthConfig, SecretBytes};
+use crate::auth::oidc::state::StateSigner;
+use crate::config::{AppConfig, AuthConfig};
 use crate::routes;
 
 // ── OIDC composition types ────────────────────────────────────────────────────
-
-/// Minimal stub for the state-cookie HMAC signer. T09 will fill in the
-/// real HMAC-SHA256 body; the constructor signature is intentionally
-/// stable so T09 can replace only the impl block.
-pub struct StateSigner {
-    _secret: SecretBytes,
-}
-
-impl StateSigner {
-    pub fn new(secret: SecretBytes) -> Self {
-        Self { _secret: secret }
-    }
-}
 
 /// A single OIDC provider's runtime state: its parsed config, a warmed
 /// JWKS verifier, and a per-provider HTTP client.
