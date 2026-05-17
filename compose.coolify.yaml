@@ -34,16 +34,22 @@ services:
       RUST_ENV: ${RUST_ENV:-staging}
       RUST_LOG: ${RUST_LOG:-info,tower_http=info,sqlx=warn}
 
-      # --- Auth: dev-bypass defaults; OIDC vars take over when set --------
-      # While DEV_AUTH_BYPASS=true the server skips JWKS and accepts the
-      # static DEV_AUTH_TOKEN. To switch to real OIDC, set DEV_AUTH_BYPASS=
-      # false in Coolify and provide the four OIDC_* vars below.
-      DEV_AUTH_BYPASS: ${DEV_AUTH_BYPASS:-true}
+      # --- Auth -------------------------------------------------------------
+      # Default flow: local credentials (POST /api/v1/auth/login → opaque
+      # bearer token). Set LOSEIT_AUTH_BACKEND=jwks and supply the four
+      # OIDC_* vars below to switch to OIDC/JWKS validation. Set
+      # DEV_AUTH_BYPASS=true to short-circuit both modes for local-dev or
+      # CI (accepts the static DEV_AUTH_TOKEN with no password check).
+      # See COOLIFY.md for the operator runbook and OIDC swap procedure.
+      DEV_AUTH_BYPASS: ${DEV_AUTH_BYPASS:-false}
       DEV_AUTH_TOKEN: ${DEV_AUTH_TOKEN:-dev-token}
       DEV_AUTH_ISSUER: ${DEV_AUTH_ISSUER:-dev}
       DEV_AUTH_USER_ID: ${DEV_AUTH_USER_ID:-dev-user}
       DEV_AUTH_EMAIL: ${DEV_AUTH_EMAIL:-dev@example.com}
       DEV_AUTH_DISPLAY_NAME: ${DEV_AUTH_DISPLAY_NAME:-Dev User}
+
+      LOSEIT_AUTH_BACKEND: ${LOSEIT_AUTH_BACKEND:-local}
+      LOSEIT_SEED_DEV_AUTH: ${LOSEIT_SEED_DEV_AUTH:-true}
 
       OIDC_ISSUER: ${OIDC_ISSUER:-}
       OIDC_AUDIENCE: ${OIDC_AUDIENCE:-}
