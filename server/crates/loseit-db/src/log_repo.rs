@@ -49,6 +49,8 @@ struct LogEntryRow {
     note: Option<String>,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
+    food_name: String,
+    serving_name: Option<String>,
 }
 
 impl From<LogEntryRow> for FoodLogEntry {
@@ -80,47 +82,59 @@ impl From<LogEntryRow> for FoodLogEntry {
             note: row.note,
             created_at: row.created_at,
             updated_at: row.updated_at,
+            food_name: row.food_name,
+            serving_name: row.serving_name,
         }
     }
 }
 
-const SELECT_COLS: &str = "id, user_id, food_id, serving_id, consumed_on, meal, \
-    quantity, grams_total, calories_kcal, protein_g, carbs_g, fat_g, fiber_g, \
-    sugar_g, sodium_mg, saturated_fat_g, note, created_at, updated_at";
+const SELECT_COLS: &str = "\
+    le.id, le.user_id, le.food_id, le.serving_id, le.consumed_on, le.meal, \
+    le.quantity, le.grams_total, le.calories_kcal, le.protein_g, le.carbs_g, le.fat_g, \
+    le.fiber_g, le.sugar_g, le.sodium_mg, le.saturated_fat_g, le.note, \
+    le.created_at, le.updated_at, \
+    COALESCE(f.name, '') AS food_name, \
+    s.label AS serving_name";
+
+const FROM_CLAUSE: &str = "\
+    food_log_entries le \
+    LEFT JOIN foods    f ON f.id = le.food_id \
+    LEFT JOIN servings s ON s.id = le.serving_id";
 
 #[async_trait]
 impl LogRepository for PgLogRepository {
     async fn create(&self, user_id: Uuid, entry: &PersistedLogEntry) -> CoreResult<FoodLogEntry> {
-        let sql = format!(
+        let id: Uuid = sqlx::query_scalar(
             "INSERT INTO food_log_entries (\
                 user_id, food_id, serving_id, consumed_on, meal, quantity, grams_total, \
                 calories_kcal, protein_g, carbs_g, fat_g, fiber_g, sugar_g, sodium_mg, \
                 saturated_fat_g, note\
              ) VALUES (\
                 $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16\
-             ) RETURNING {SELECT_COLS}"
-        );
-        let row: LogEntryRow = sqlx::query_as(&sql)
-            .bind(user_id)
-            .bind(entry.food_id)
-            .bind(entry.serving_id)
-            .bind(entry.consumed_on)
-            .bind(entry.meal.as_str())
-            .bind(entry.quantity)
-            .bind(entry.grams_total)
-            .bind(entry.snapshot.calories_kcal)
-            .bind(entry.snapshot.protein_g)
-            .bind(entry.snapshot.carbs_g)
-            .bind(entry.snapshot.fat_g)
-            .bind(entry.snapshot.fiber_g)
-            .bind(entry.snapshot.sugar_g)
-            .bind(entry.snapshot.sodium_mg)
-            .bind(entry.snapshot.saturated_fat_g)
-            .bind(entry.note.as_deref())
-            .fetch_one(&self.pool)
-            .await
-            .map_err(map_sqlx)?;
-        Ok(row.into())
+             ) RETURNING id",
+        )
+        .bind(user_id)
+        .bind(entry.food_id)
+        .bind(entry.serving_id)
+        .bind(entry.consumed_on)
+        .bind(entry.meal.as_str())
+        .bind(entry.quantity)
+        .bind(entry.grams_total)
+        .bind(entry.snapshot.calories_kcal)
+        .bind(entry.snapshot.protein_g)
+        .bind(entry.snapshot.carbs_g)
+        .bind(entry.snapshot.fat_g)
+        .bind(entry.snapshot.fiber_g)
+        .bind(entry.snapshot.sugar_g)
+        .bind(entry.snapshot.sodium_mg)
+        .bind(entry.snapshot.saturated_fat_g)
+        .bind(entry.note.as_deref())
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_sqlx)?;
+        self.find_by_id(user_id, id)
+            .await?
+            .ok_or(loseit_core::CoreError::NotFound)
     }
 
     async fn update(
@@ -159,7 +173,7 @@ impl LogRepository for PgLogRepository {
         let note_provided = patch.note.is_some();
         let note_value: Option<&str> = patch.note.as_ref().and_then(|inner| inner.as_deref());
 
-        let sql = format!(
+        let updated_id: Uuid = sqlx::query_scalar(
             "UPDATE food_log_entries SET \
                 serving_id      = COALESCE($3, serving_id), \
                 consumed_on     = COALESCE($4, consumed_on), \
@@ -176,30 +190,31 @@ impl LogRepository for PgLogRepository {
                 saturated_fat_g = COALESCE($15, saturated_fat_g), \
                 note            = CASE WHEN $16 THEN $17 ELSE note END \
              WHERE id = $1 AND user_id = $2 \
-             RETURNING {SELECT_COLS}"
-        );
-        let row: LogEntryRow = sqlx::query_as(&sql)
-            .bind(id)
-            .bind(user_id)
-            .bind(patch.serving_id)
-            .bind(patch.consumed_on)
-            .bind(patch.meal.map(|m| m.as_str()))
-            .bind(recompute_quantity)
-            .bind(recompute_grams_total)
-            .bind(recompute_calories)
-            .bind(recompute_protein)
-            .bind(recompute_carbs)
-            .bind(recompute_fat)
-            .bind(recompute_fiber)
-            .bind(recompute_sugar)
-            .bind(recompute_sodium)
-            .bind(recompute_saturated)
-            .bind(note_provided)
-            .bind(note_value)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(map_sqlx)?;
-        Ok(row.into())
+             RETURNING id",
+        )
+        .bind(id)
+        .bind(user_id)
+        .bind(patch.serving_id)
+        .bind(patch.consumed_on)
+        .bind(patch.meal.map(|m| m.as_str()))
+        .bind(recompute_quantity)
+        .bind(recompute_grams_total)
+        .bind(recompute_calories)
+        .bind(recompute_protein)
+        .bind(recompute_carbs)
+        .bind(recompute_fat)
+        .bind(recompute_fiber)
+        .bind(recompute_sugar)
+        .bind(recompute_sodium)
+        .bind(recompute_saturated)
+        .bind(note_provided)
+        .bind(note_value)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(map_sqlx)?;
+        self.find_by_id(user_id, updated_id)
+            .await?
+            .ok_or(loseit_core::CoreError::NotFound)
     }
 
     async fn delete(&self, user_id: Uuid, id: Uuid) -> CoreResult<()> {
@@ -217,8 +232,8 @@ impl LogRepository for PgLogRepository {
 
     async fn find_by_id(&self, user_id: Uuid, id: Uuid) -> CoreResult<Option<FoodLogEntry>> {
         let sql = format!(
-            "SELECT {SELECT_COLS} FROM food_log_entries \
-             WHERE id = $1 AND user_id = $2"
+            "SELECT {SELECT_COLS} FROM {FROM_CLAUSE} \
+             WHERE le.id = $1 AND le.user_id = $2"
         );
         let row: Option<LogEntryRow> = sqlx::query_as(&sql)
             .bind(id)
@@ -236,9 +251,9 @@ impl LogRepository for PgLogRepository {
         to: NaiveDate,
     ) -> CoreResult<Vec<FoodLogEntry>> {
         let sql = format!(
-            "SELECT {SELECT_COLS} FROM food_log_entries \
-             WHERE user_id = $1 AND consumed_on >= $2 AND consumed_on <= $3 \
-             ORDER BY consumed_on DESC, created_at DESC"
+            "SELECT {SELECT_COLS} FROM {FROM_CLAUSE} \
+             WHERE le.user_id = $1 AND le.consumed_on >= $2 AND le.consumed_on <= $3 \
+             ORDER BY le.consumed_on DESC, le.created_at DESC"
         );
         let rows: Vec<LogEntryRow> = sqlx::query_as(&sql)
             .bind(user_id)
@@ -254,9 +269,9 @@ impl LogRepository for PgLogRepository {
         // ORDER BY meal then created_at so the day summary can stream
         // entries in meal-grouped, chronological order without resorting.
         let sql = format!(
-            "SELECT {SELECT_COLS} FROM food_log_entries \
-             WHERE user_id = $1 AND consumed_on = $2 \
-             ORDER BY meal, created_at"
+            "SELECT {SELECT_COLS} FROM {FROM_CLAUSE} \
+             WHERE le.user_id = $1 AND le.consumed_on = $2 \
+             ORDER BY le.meal, le.created_at"
         );
         let rows: Vec<LogEntryRow> = sqlx::query_as(&sql)
             .bind(user_id)
@@ -354,11 +369,11 @@ impl LogRepository for PgLogRepository {
         // planner skip the date filter entirely when `from`/`to` are NULL while
         // still hitting `log_user_date_idx` on the `user_id` prefix.
         let sql = format!(
-            "SELECT {SELECT_COLS} FROM food_log_entries \
-             WHERE user_id = $1 \
-               AND ($2::date IS NULL OR consumed_on >= $2) \
-               AND ($3::date IS NULL OR consumed_on <= $3) \
-             ORDER BY consumed_on DESC, created_at DESC, id DESC \
+            "SELECT {SELECT_COLS} FROM {FROM_CLAUSE} \
+             WHERE le.user_id = $1 \
+               AND ($2::date IS NULL OR le.consumed_on >= $2) \
+               AND ($3::date IS NULL OR le.consumed_on <= $3) \
+             ORDER BY le.consumed_on DESC, le.created_at DESC, le.id DESC \
              LIMIT $4 OFFSET $5"
         );
         let rows: Vec<LogEntryRow> = sqlx::query_as(&sql)
@@ -446,7 +461,12 @@ impl LogRepository for PgLogRepository {
         // guarantee that RETURNING rows come back in the same order as the
         // input arrays — the trait contract promises input order, and T10
         // relies on that promise.
-        let sql = format!(
+        //
+        // INSERT … SELECT … FROM UNNEST … RETURNING supports column aliases on
+        // the inserted table but cannot JOIN to other tables inline. Per design
+        // §4 R2 we return only the new ids here, then re-fetch with the full
+        // LEFT JOIN SELECT in a single WHERE id = ANY($1) round-trip.
+        let insert_sql =
             "INSERT INTO food_log_entries (\
                 user_id, food_id, serving_id, consumed_on, meal, \
                 quantity, grams_total, \
@@ -482,11 +502,10 @@ impl LogRepository for PgLogRepository {
                 note, ord\
              ) \
              ORDER BY x.ord \
-             RETURNING {SELECT_COLS}"
-        );
+             RETURNING id";
 
         let mut tx = self.pool.begin().await.map_err(map_sqlx)?;
-        let rows: Vec<LogEntryRow> = sqlx::query_as(&sql)
+        let inserted_ids: Vec<Uuid> = sqlx::query_scalar(insert_sql)
             .bind(user_id)
             .bind(&food_ids)
             .bind(&serving_ids)
@@ -508,6 +527,20 @@ impl LogRepository for PgLogRepository {
             .map_err(map_sqlx)?;
         tx.commit().await.map_err(map_sqlx)?;
 
+        // Re-fetch with LEFT JOIN to populate food_name + serving_name.
+        // ORDER BY array position to preserve input order (T10 contract).
+        let fetch_sql = format!(
+            "SELECT {SELECT_COLS} FROM {FROM_CLAUSE} \
+             WHERE le.id = ANY($1) AND le.user_id = $2 \
+             ORDER BY array_position($1, le.id)"
+        );
+        let rows: Vec<LogEntryRow> = sqlx::query_as(&fetch_sql)
+            .bind(&inserted_ids)
+            .bind(user_id)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_sqlx)?;
+
         Ok(rows.into_iter().map(Into::into).collect())
     }
 }
@@ -522,9 +555,11 @@ mod tests {
         // causing "syntax error at end of input". This test catches that
         // regression by asserting the final SQL has no -- substring.
         //
-        // We reconstruct the SQL the same way the impl does, filling in
-        // SELECT_COLS where needed.
-        let sql = format!(
+        // We reconstruct the INSERT SQL the same way the impl does. The
+        // follow-up SELECT uses SELECT_COLS/FROM_CLAUSE (tested separately);
+        // the insert itself now returns only `id` — one plain identifier,
+        // no risk of line-continuation comment injection.
+        let sql =
             "INSERT INTO food_log_entries (\
                 user_id, food_id, serving_id, consumed_on, meal, \
                 quantity, grams_total, \
@@ -560,10 +595,7 @@ mod tests {
                 note, ord\
              ) \
              ORDER BY x.ord \
-             RETURNING id, user_id, food_id, serving_id, consumed_on, meal, quantity, grams_total, \
-             calories_kcal, protein_g, carbs_g, fat_g, fiber_g, sugar_g, sodium_mg, saturated_fat_g, \
-             note, created_at, updated_at"
-        );
+             RETURNING id";
         assert!(!sql.contains("--"), "SQL must not contain inline comments (--) to avoid comment-swallowing due to Rust line-continuation");
     }
 }
