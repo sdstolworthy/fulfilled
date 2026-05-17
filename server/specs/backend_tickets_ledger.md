@@ -300,6 +300,103 @@ year-of-history user.
 
 ---
 
+### BE-008  Canonical login endpoint `POST /auth/login`
+
+**Status**: pending
+**Source pack**: login (LOG-)
+**Source spec**: `pm_login.md` §8 BE-008;
+`architect_login.md` §3.3, §3.6, §11; `dev_tickets_login.md`
+"Backend ledger updates".
+
+**Goal**: add `POST /auth/login` (security: []) that takes
+`{username: string, password: string}` and returns
+`{token: string, expires_at?: ISO-8601-datetime}` on success, or
+`401` with the standard `Error` body on credential failure. The
+endpoint itself is un-credentialed (it's the credential
+exchange); all other endpoints continue to expect
+`Authorization: Bearer <token>` per the existing `bearerAuth`
+`securityScheme` (`openapi.yaml` lines 761–770).
+
+**Open question for the backend team**: does login validate
+against a JWKS-backed external IdP (in which case
+`/auth/login` is a pass-through to that IdP) or does Fulfilled
+grow a local-credential store (in which case `users` gains a
+`password_hash` column with argon2id)? The client behaviour is
+the same either way (POST username+password, receive a token),
+so the wire shape stands independent of the implementation
+choice.
+
+**Client workaround**: in place. The login screen ships a
+"paste your JWT as the password" disclosure that activates on
+404 from `/auth/login` (`LoginEndpointMissingError` in
+`client/lib/data/login_errors.dart`). The user pastes their JWT
+into the password field, the client treats it as the literal
+bearer, persists it via `secureTokenStoreProvider.write` +
+`authTokenProvider.signIn(token)`, and routes to `/today`. The
+disclosure flips off cleanly when BE-008 lands; the code path
+stays as the mixed-deployment fallback for customers running
+older Rust builds. PM/architect both flagged this workaround as
+acceptable for v1.0. The Flutter sweep ships via the LOG pool
+(Waves 1–6 in `dev_tickets_login.md`).
+
+**Blocking impact**: customer-facing self-hosted UX. Without
+BE-008 the operator mints a JWT out-of-band; with BE-008 the
+operator creates a user and the customer signs in with
+username + password directly. v1 ships either way.
+
+**Acceptance**: 200 returns a bearer that authenticates
+subsequent requests; wrong password / unknown username both
+return 401 (do not leak existence); endpoint declared in
+`openapi.yaml` with `security: []`. `expires_at` is optional on
+the response; v1 clients ignore it (architect §10.7 — refresh
+tokens deferred to v1.1+).
+
+---
+
+### BE-009  `/health` canonical mount + CORS confirmation
+
+**Status**: pending
+**Source pack**: login (LOG-)
+**Source spec**: `pm_login.md` §8 BE-009;
+`architect_login.md` §5.4, §11; `dev_tickets_login.md`
+"Backend ledger updates".
+
+**Goal**: confirm `/health` is mounted under `/api/v1` (so the
+client probes `<base>/api/v1/health` per `openapi.yaml` line 14
+*"All paths are served under the `/api/v1` prefix"* applied
+consistently with lines 67–89) and CORS allows the probe from
+arbitrary browser origins so the web tier can do the same probe
+without preflight failure.
+
+**Verification against current spec**: `openapi.yaml` line 14 +
+lines 67–89 read consistently — `/health` lives under
+`/api/v1`. The ticket is now **documentation-only**: confirm
+that the runtime matches the spec. If drifted, update either
+the runtime or the spec to align.
+
+**Client workaround**: in place — the client treats any 2xx
+`/health` response as success and falls back to probing the
+root URL if `/health` returns a 404 (the path could be either
+`<base>/api/v1/health` or `<base>/health` depending on mount).
+The fallback is one branch in `_DioHealthProbe.probe`
+(`client/lib/features/login/health_probe.dart`): a 404 on the
+primary path retries against `<originBase>/health` once before
+classifying the candidate as `HealthProbeErrorKind.notFound`.
+PM/architect both flagged this as the conservative shape until
+BE-009 lands. Once BE-009 confirms the canonical mount, the
+fallback branch becomes dead code; remove via v1.1 ticket.
+
+**Blocking impact**: none. The client ships against either
+mount; the fallback adds at most one extra round-trip on the
+first sign-in against a server with a non-canonical mount.
+
+**Acceptance**: `GET /api/v1/health` from an arbitrary browser
+origin returns 200 + `{status: "ok"}` + permissive
+`Access-Control-Allow-Origin` (`*` or echo-origin). Runtime
+behaviour matches the `openapi.yaml` declaration.
+
+---
+
 ## Cross-reference back to source packs
 
 For convenience, each canonical BE-NNN above is also pointer-linked
@@ -309,3 +406,4 @@ from the originating pack doc:
 - `dev_tickets_barcode.md` footer "Pre-backend window" → BE-002, BE-003 (same IDs).
 - `dev_tickets_qol.md` §QL-110 → BE-004 (relabel; backend work, not client).
 - `dev_tickets_ux_pack.md` "Backend coordination" → UX-pack BE-002 = BE-005, BE-003 = BE-006, BE-004 = BE-007.
+- `dev_tickets_login.md` "Backend ledger updates" → BE-008, BE-009 (same IDs).
