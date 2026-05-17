@@ -878,7 +878,7 @@ the text).
 
 ## LOG-005  `LoginController` + `HealthProbe` seam
 
-**Status**: pending
+**Status**: shipped (Wave 3)
 **Priority**: P0
 **Effort**: L
 **Depends on**: LOG-001, LOG-002, LOG-003, LOG-004
@@ -1709,7 +1709,7 @@ action, not a primary, but accent on text-button is allowed).
 
 ## LOG-009  Profile screen "Connected to ${server_url}" row + tenant addendum block
 
-**Status**: pending
+**Status**: shipped (Wave 3)
 **Priority**: P1
 **Effort**: S
 **Depends on**: LOG-003, LOG-004

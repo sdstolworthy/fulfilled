@@ -4,6 +4,7 @@ import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fulfilled/data/auth_config.dart';
 import 'package:fulfilled/domain/enums.dart';
 import 'package:fulfilled/domain/user.dart';
 import 'package:fulfilled/features/profile/profile_screen.dart';
@@ -13,6 +14,21 @@ import 'package:fulfilled/theme/theme_data.dart';
 import 'package:fulfilled/widgets/empty_state.dart';
 import 'package:fulfilled/widgets/height_stepper.dart';
 import 'package:fulfilled/widgets/skeleton.dart';
+import 'package:hive/hive.dart';
+
+class _FakeAuthConfigBox implements Box<String> {
+  _FakeAuthConfigBox([Map<String, String?>? values]) : _values = values ?? const <String, String?>{};
+  final Map<String, String?> _values;
+
+  @override
+  String? get(dynamic key, {String? defaultValue}) {
+    if (_values.containsKey(key)) return _values[key];
+    return defaultValue;
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
 
 User _mockUser({
   String? displayName = 'Spencer Stolworthy',
@@ -43,6 +59,7 @@ Widget _harness({
     overrides: <Override>[
       meProvider.overrideWith((ref) async => user),
       customFoodCountProvider.overrideWith((ref) async => customFoodCount),
+      authConfigBoxProvider.overrideWithValue(_FakeAuthConfigBox()),
     ],
     child: MaterialApp(
       theme: buildLightTheme(),
@@ -217,6 +234,7 @@ void main() {
         overrides: <Override>[
           meProvider.overrideWith((ref) => completer.future),
           customFoodCountProvider.overrideWith((ref) async => 0),
+          authConfigBoxProvider.overrideWithValue(_FakeAuthConfigBox()),
         ],
         child: MaterialApp(
           theme: buildLightTheme(),
@@ -243,6 +261,7 @@ void main() {
         overrides: <Override>[
           meProvider.overrideWith((_) async => throw Exception('boom')),
           customFoodCountProvider.overrideWith((_) async => 0),
+          authConfigBoxProvider.overrideWithValue(_FakeAuthConfigBox()),
         ],
         child: MaterialApp(
           theme: buildLightTheme(),

@@ -20,6 +20,7 @@ import 'widgets/activity_level_picker.dart';
 import 'widgets/birth_date_picker.dart';
 import 'widgets/current_weight_sheet.dart';
 import 'widgets/height_stepper_sheet.dart';
+import 'widgets/server_url_row.dart';
 import 'widgets/settings_card.dart';
 import 'widgets/settings_row.dart';
 import 'widgets/sex_picker.dart';
@@ -247,6 +248,14 @@ class _ProfileBody extends ConsumerWidget {
             ),
           ],
         ),
+
+        // LOG-009 / PM §10 punt-list-promotion — read-only "Server"
+        // row. Mounted as a sibling of the Data card (not inside) so
+        // the signed-out `SizedBox.shrink()` path doesn't leave a
+        // stray `SettingsCard` divider with no row below it.
+        // Informational only; the user changes server via sign-out
+        // → sign-in on the login screen (PM §10 anti-recommendation 10).
+        const ServerUrlRow(),
 
         SizedBox(height: space.x4),
 

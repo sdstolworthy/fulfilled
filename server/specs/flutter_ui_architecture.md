@@ -644,3 +644,20 @@ client/
 ```
 
 One screen = one feature folder. Shared widgets live in `widgets/`. If something is used by exactly one screen, it stays inside that feature folder.
+
+> **Addendum applied 2026-05-16 (login pack)** — see
+> `specs/architect_login.md`. No new tenant. T-15
+> form-factor-at-root covers the LoginScreen's compact /
+> expanded branch. T-24 Case 2 covers the post-login
+> `context.go('/today')` navigation; the existing wording
+> stands. The base-URL refactor relocates the compile-time
+> `--dart-define=API_BASE_URL` read to a runtime provider
+> (`apiBaseUrlProvider`); the dev-define survives as a
+> debug-only override. Risk 2 in
+> `pm_decisions_flutter_ui.md` is superseded — the "I
+> already have an account" link returns on onboarding step
+> 1; the architect amends Risk 2 in the same change.
+> Backend tickets BE-008 and BE-009 are pending; the
+> client ships a workaround for the absence of BE-008
+> (paste-a-JWT disclosure) that flips off cleanly when the
+> endpoint lands.

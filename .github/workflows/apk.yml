@@ -1,0 +1,107 @@
+name: Android APK
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17 (Temurin)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('client/pubspec.lock', 'client/pubspec.yaml') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
+
+      - name: Generate android platform folder
+        # android/ is gitignored (regenerable). Recreate from current pubspec.
+        working-directory: client
+        run: flutter create . --platforms=android
+
+      - name: Fetch packages
+        working-directory: client
+        run: flutter pub get
+
+      - name: Patch minSdkVersion to 23 (flutter_secure_storage requirement)
+        # Newer Flutter stable scaffolds emit Kotlin DSL (build.gradle.kts);
+        # older scaffolds emit Groovy (build.gradle). Handle either. The
+        # flutter.minSdkVersion default is currently 21; flutter_secure_storage
+        # 9.x needs 23 (Android Keystore APIs introduced in API 23 / 6.0).
+        working-directory: client
+        run: |
+          set -euxo pipefail
+          KTS="android/app/build.gradle.kts"
+          GRADLE="android/app/build.gradle"
+          if [ -f "$KTS" ]; then
+            # Kotlin DSL: `minSdk = flutter.minSdkVersion` or `minSdkVersion(flutter.minSdkVersion)`
+            sed -i -E 's/minSdk(Version)?\s*=\s*flutter\.minSdkVersion/minSdk = 23/' "$KTS"
+            sed -i -E 's/minSdkVersion\(\s*flutter\.minSdkVersion\s*\)/minSdkVersion(23)/' "$KTS"
+            echo "--- $KTS (minSdk lines) ---"
+            grep -nE 'minSdk' "$KTS" || true
+          elif [ -f "$GRADLE" ]; then
+            # Groovy DSL: `minSdkVersion flutter.minSdkVersion`
+            sed -i -E 's/minSdkVersion\s+flutter\.minSdkVersion/minSdkVersion 23/' "$GRADLE"
+            sed -i -E 's/minSdk\s+flutter\.minSdkVersion/minSdk 23/' "$GRADLE"
+            echo "--- $GRADLE (minSdk lines) ---"
+            grep -nE 'minSdk' "$GRADLE" || true
+          else
+            echo "No app-level Gradle build file found after flutter create" >&2
+            exit 1
+          fi
+
+      - name: Build release APK
+        # Unsigned release: Flutter falls back to the debug signing config
+        # when no signingConfigs.release is wired up. That's fine for
+        # sideload installs — the APK is installable, just not Play-Store
+        # ready. If --release ever starts failing in CI due to signing,
+        # swap to `flutter build apk --debug` and update the rename step.
+        working-directory: client
+        run: flutter build apk --release
+
+      - name: Rename APK to stable filename
+        working-directory: client
+        run: |
+          set -euxo pipefail
+          SRC="build/app/outputs/flutter-apk/app-release.apk"
+          OUT_DIR="build/app/outputs/flutter-apk"
+          cp "$SRC" "$OUT_DIR/fulfilled.apk"
+          cp "$SRC" "$OUT_DIR/fulfilled-${{ github.sha }}.apk"
+          ls -lh "$OUT_DIR"
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fulfilled-apk
+          path: |
+            client/build/app/outputs/flutter-apk/fulfilled.apk
+            client/build/app/outputs/flutter-apk/fulfilled-${{ github.sha }}.apk
+          if-no-files-found: error
