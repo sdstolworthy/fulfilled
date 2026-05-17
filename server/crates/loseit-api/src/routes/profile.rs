@@ -3,7 +3,7 @@ use axum::http::StatusCode;
 use axum::routing::{get, patch};
 use axum::{Json, Router};
 use chrono::{DateTime, NaiveDate, Utc};
-use loseit_core::domain::{ActivityLevel, ProfilePatch, Sex, User};
+use loseit_core::domain::{ActivityLevel, HeightUnit, ProfilePatch, Sex, User, WeightUnit};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -29,6 +29,8 @@ struct UserResponse {
     birth_date: Option<NaiveDate>,
     height_cm: Option<Decimal>,
     activity_level: Option<String>,
+    weight_unit: String,
+    height_unit: String,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -45,6 +47,8 @@ impl From<User> for UserResponse {
             birth_date: u.birth_date,
             height_cm: u.height_cm,
             activity_level: u.activity_level.map(|a| a.as_str().to_string()),
+            weight_unit: u.weight_unit.as_str().to_string(),
+            height_unit: u.height_unit.as_str().to_string(),
             created_at: u.created_at,
             updated_at: u.updated_at,
         }
@@ -59,6 +63,8 @@ struct ProfilePatchBody {
     birth_date: Option<NaiveDate>,
     height_cm: Option<Decimal>,
     activity_level: Option<String>,
+    weight_unit: Option<String>,
+    height_unit: Option<String>,
 }
 
 impl ProfilePatchBody {
@@ -74,6 +80,20 @@ impl ProfilePatchBody {
                     .ok_or_else(|| ApiError::bad_request("invalid activity_level"))?,
             ),
         };
+        let weight_unit = match self.weight_unit.as_deref() {
+            None => None,
+            Some(s) => Some(
+                WeightUnit::parse(s)
+                    .ok_or_else(|| ApiError::bad_request("invalid weight_unit"))?,
+            ),
+        };
+        let height_unit = match self.height_unit.as_deref() {
+            None => None,
+            Some(s) => Some(
+                HeightUnit::parse(s)
+                    .ok_or_else(|| ApiError::bad_request("invalid height_unit"))?,
+            ),
+        };
         Ok(ProfilePatch {
             email: self.email,
             display_name: self.display_name,
@@ -81,8 +101,8 @@ impl ProfilePatchBody {
             birth_date: self.birth_date,
             height_cm: self.height_cm,
             activity_level,
-            weight_unit: None,
-            height_unit: None,
+            weight_unit,
+            height_unit,
         })
     }
 }
