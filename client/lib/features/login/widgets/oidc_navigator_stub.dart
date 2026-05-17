@@ -14,6 +14,11 @@ class _StubNavigator implements OidcNavigator {
       'tracked for v1.1. Tried to navigate to: $url',
     );
   }
+
+  @override
+  void stripQueryParam(String name) {
+    // No-op on mobile — there's no document URL to clean.
+  }
 }
 
 const OidcNavigator navigatorImpl = _StubNavigator();
