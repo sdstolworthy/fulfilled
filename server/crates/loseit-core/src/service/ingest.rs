@@ -7,7 +7,7 @@ use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
 use uuid::Uuid;
 
-use crate::domain::{FoodDraft, NutriscoreGrade, NutritionPer100g, ServingDraft, ServingSource};
+use crate::domain::{FoodDraft, NutriscoreGrade, ServingDraft, ServingSource, Unit};
 use crate::repo::{
     BatchRepository, FoodRepository, OffFoodUpsert, OffServing, ServingRepository, SystemServing,
     UpsertStats,
@@ -48,15 +48,13 @@ pub trait FoodRecordSource: Send {
 }
 
 /// Chunk size hand-tuned to keep memory bounded and round-trip overhead
-/// amortized for the OFF dump (~3M rows). 500 was chosen so a single
-/// `find_ids_by_barcodes` call after the upsert fits comfortably in one
-/// statement.
+/// amortized for the OFF dump (~3M rows).
 pub const BATCH_SIZE: usize = 500;
-/// Sanity threshold for sodium per 100 g. OFF stores sodium in grams; >50g
+/// Sanity threshold for sodium per 100 g. OFF stores sodium in g/100g; >50g
 /// per 100g is implausible (almost certainly someone uploaded mg).
 pub const SODIUM_GRAMS_SANITY_THRESHOLD: f64 = 50.0;
 
-/// Streaming batch upsert orchestrator. Body lives here in T18.
+/// Streaming batch upsert orchestrator. T14 rewrites the normalizer body.
 pub struct IngestService {
     foods: Arc<dyn FoodRepository>,
     servings: Arc<dyn ServingRepository>,
@@ -103,8 +101,6 @@ impl IngestService {
             }
             Err(err) => {
                 let msg = err.to_string();
-                // Best-effort: surface the failure on the batch record but
-                // propagate the original error to the caller regardless.
                 let _ = self.batches.fail(batch.id, &msg).await;
                 Err(err)
             }
@@ -128,19 +124,12 @@ impl IngestService {
 
             let seen = chunk.len() as u64;
 
-            // Filter + normalize. Within a single chunk OFF occasionally
-            // duplicates barcodes; we dedupe (last write wins) so the
-            // upsert call has a clean set and the post-upsert barcode
-            // lookup is unambiguous.
             let mut accepted: Vec<OffFoodUpsert> = Vec::with_capacity(chunk.len());
             let mut seen_barcodes: HashSet<String> = HashSet::new();
             for record in chunk {
                 if let Some(upsert) = accept_and_normalize(record) {
-                    // dedupe within the chunk
                     if let Some(bc) = upsert.draft.barcode.clone() {
                         if !seen_barcodes.insert(bc) {
-                            // already have this barcode in this chunk
-                            // overwrite the previous entry
                             if let Some(slot) = accepted
                                 .iter_mut()
                                 .find(|u| u.draft.barcode == upsert.draft.barcode)
@@ -157,9 +146,6 @@ impl IngestService {
 
             let stats = self.foods.upsert_off_batch(batch_id, &accepted).await?;
 
-            // Look up the resulting food ids by barcode so we can wire up
-            // servings without N round-trips. NIL_USER for visibility
-            // because OFF foods are visible to everyone.
             let barcodes: Vec<&str> = accepted
                 .iter()
                 .filter_map(|u| u.draft.barcode.as_deref())
@@ -190,29 +176,17 @@ impl IngestService {
         Ok(total)
     }
 
-    /// Idempotently materialize the system 100 g serving + (optional) OFF
-    /// serving for a freshly upserted food. The in-memory repo's
-    /// `upsert_off_batch` already rebuilds servings for OFF foods; the Pg
-    /// path doesn't, so this is where the Pg side creates them. We avoid
-    /// duplicates by checking the existing serving set first.
+    /// Idempotently materialize system + OFF servings for a freshly upserted
+    /// food. T14 rewrites this to emit per-serving nutrition directly.
     async fn materialize_servings(&self, food_id: Uuid, upsert: &OffFoodUpsert) -> CoreResult<()> {
         let existing = self.servings.list_for_food(food_id).await?;
         let has_off_existing = existing.iter().any(|s| s.source == ServingSource::Off);
         let off_present = upsert.off_serving.is_some();
 
-        // Ensure a system 100 g serving exists.
         let system_id = match existing.iter().find(|s| s.source == ServingSource::System) {
             Some(s) => s.id,
             None => {
-                let draft = ServingDraft {
-                    label: upsert.system_100g_serving.label.clone(),
-                    grams: upsert.system_100g_serving.grams,
-                    // Default starts on the system row; the OFF row will
-                    // steal it via `set_default` below if present.
-                    is_default: !off_present,
-                    source: ServingSource::System,
-                    sort_order: 0,
-                };
+                let draft = make_system_serving_draft(&upsert.system_100g_serving, !off_present);
                 let s = self.servings.create(food_id, &draft).await?;
                 s.id
             }
@@ -220,18 +194,11 @@ impl IngestService {
 
         if let Some(off) = &upsert.off_serving {
             if !has_off_existing {
-                let draft = ServingDraft {
-                    label: off.label.clone(),
-                    grams: off.grams,
-                    is_default: true,
-                    source: ServingSource::Off,
-                    sort_order: 1,
-                };
+                let draft = make_off_serving_draft(off);
                 let off_serving = self.servings.create(food_id, &draft).await?;
                 self.servings.set_default(food_id, off_serving.id).await?;
             }
         } else if !existing.iter().any(|s| s.is_default) {
-            // No OFF serving and no existing default — pin the system row.
             self.servings.set_default(food_id, system_id).await?;
         }
 
@@ -239,11 +206,51 @@ impl IngestService {
     }
 }
 
+/// Build a `ServingDraft` for the system 100 g serving.
+/// T14 will replace this with per-serving nutrition from the new normalizer.
+fn make_system_serving_draft(sys: &SystemServing, is_default: bool) -> ServingDraft {
+    ServingDraft {
+        label: Some(sys.label.clone()),
+        amount: sys.grams,
+        unit: Unit::Gram,
+        kcal: Decimal::ZERO, // placeholder — T14 fills nutrition
+        protein_g: None,
+        carbs_g: None,
+        fat_g: None,
+        fiber_g: None,
+        sugar_g: None,
+        sodium_mg: None,
+        saturated_fat_g: None,
+        is_default,
+        source: ServingSource::System,
+        sort_order: 0,
+    }
+}
+
+/// Build a `ServingDraft` for an OFF-derived serving.
+/// T14 will replace this with per-serving nutrition from the new normalizer.
+fn make_off_serving_draft(off: &OffServing) -> ServingDraft {
+    ServingDraft {
+        label: Some(off.label.clone()),
+        amount: off.grams,
+        unit: Unit::Gram,
+        kcal: Decimal::ZERO, // placeholder — T14 fills nutrition
+        protein_g: None,
+        carbs_g: None,
+        fat_g: None,
+        fiber_g: None,
+        sugar_g: None,
+        sodium_mg: None,
+        saturated_fat_g: None,
+        is_default: true,
+        source: ServingSource::Off,
+        sort_order: 1,
+    }
+}
+
 /// Convert a raw [`OffFoodRecord`] into the storage-shaped
 /// [`OffFoodUpsert`], or `None` if the record fails minimum-viable
-/// validation (no barcode, no name, or no energy data — see T18 spec).
-/// Sodium > 50 g/100g is dropped (not the whole record) with a
-/// `tracing::warn!`.
+/// validation. T14 rewrites the normalizer to emit per-serving nutrition.
 pub fn accept_and_normalize(mut record: OffFoodRecord) -> Option<OffFoodUpsert> {
     if record.code.trim().is_empty() {
         return None;
@@ -253,8 +260,6 @@ pub fn accept_and_normalize(mut record: OffFoodRecord) -> Option<OffFoodUpsert> 
     }
     record.energy_kcal_100g?;
 
-    // Sodium sanity check. OFF stores sodium in g/100g; we keep that
-    // convention. >50g/100g is implausible — almost certainly mg-as-g.
     if let Some(sod) = record.sodium_100g {
         let as_f = sod.to_f64().unwrap_or(0.0);
         if as_f > SODIUM_GRAMS_SANITY_THRESHOLD {
@@ -270,29 +275,22 @@ pub fn accept_and_normalize(mut record: OffFoodRecord) -> Option<OffFoodUpsert> 
     let quality_score = score(&record);
     let (off_serving, _grams) = derive_off_serving(&record);
 
-    let nutrition = NutritionPer100g {
-        energy_kcal: record.energy_kcal_100g,
-        protein_g: record.protein_100g,
-        carbs_g: record.carbs_100g,
-        fat_g: record.fat_100g,
-        fiber_g: record.fiber_100g,
-        sugar_g: record.sugar_100g,
-        sodium_g: record.sodium_100g,
-        saturated_fat_g: record.saturated_fat_100g,
-    };
-
     let nutriscore_grade = record
         .nutriscore_grade
         .as_deref()
         .and_then(NutriscoreGrade::parse);
 
+    // T14 replaces FoodDraft.servings with real per-serving nutrition.
+    // For now we pass an empty servings list so the type compiles; the
+    // in-memory repo's upsert_off_batch rebuilds servings via
+    // materialize_servings above.
     let draft = FoodDraft {
         name: record.product_name.trim().to_string(),
         brands: record.brands.clone().filter(|s| !s.trim().is_empty()),
         barcode: Some(record.code.trim().to_string()),
         categories_tags: record.categories_tags.clone(),
-        nutrition,
         nutriscore_grade,
+        servings: vec![], // T14: emit actual ServingDraft rows
     };
 
     Some(OffFoodUpsert {
@@ -306,12 +304,8 @@ pub fn accept_and_normalize(mut record: OffFoodRecord) -> Option<OffFoodUpsert> 
     })
 }
 
-/// Derive an OFF-named serving from the record, if possible. Returns the
-/// `OffServing` plus the parsed grams (which the quality-score also
-/// consults).
+/// Derive an OFF-named serving from the record, if possible.
 fn derive_off_serving(record: &OffFoodRecord) -> (Option<OffServing>, Option<Decimal>) {
-    // Prefer the structured `serving_quantity` if present and positive,
-    // falling back to parsing `serving_size` ("30 g" / "1 cup (240 g)").
     let from_quantity = record.serving_quantity.filter(|q| *q > Decimal::ZERO);
 
     let from_size = record
@@ -334,30 +328,16 @@ fn derive_off_serving(record: &OffFoodRecord) -> (Option<OffServing>, Option<Dec
     }
 }
 
-/// Compute the 0..=100 quality score for an OFF record. The score is a
-/// rough proxy for "how usable is this record for a tracking app" and
-/// drives ranking in `/foods/search`.
-///
-/// Breakdown (max 100):
-///   - 40 pts: `nutriscore_grade` is Some and parses to a known grade.
-///   - 15 pts: `brands` is Some and non-empty after trim.
-///   - 15 pts: a usable OFF-derived serving exists (positive
-///     `serving_quantity` or `parse_serving_size_grams` succeeds).
-///   - 10 pts: ≥6 of the seven non-energy nutrient fields are populated.
-///     5 pts: 3..=5 of them populated.
-///   - up to 10 pts: `round(min(completeness, 1.0) * 10)`.
-///   - 10 pts: `categories_tags` non-empty.
+/// Compute the 0..=100 quality score for an OFF record.
 pub fn score(record: &OffFoodRecord) -> i16 {
     let mut total: i32 = 0;
 
-    // Nutriscore (40 pts).
     if let Some(g) = record.nutriscore_grade.as_deref() {
         if NutriscoreGrade::parse(g).is_some() {
             total += 40;
         }
     }
 
-    // Brand (15 pts).
     if record
         .brands
         .as_deref()
@@ -367,7 +347,6 @@ pub fn score(record: &OffFoodRecord) -> i16 {
         total += 15;
     }
 
-    // OFF-derived serving (15 pts).
     let has_off_serving = record
         .serving_quantity
         .filter(|q| *q > Decimal::ZERO)
@@ -382,7 +361,6 @@ pub fn score(record: &OffFoodRecord) -> i16 {
         total += 15;
     }
 
-    // Nutrient population (5 or 10 pts).
     let nutrients_filled = [
         record.protein_100g.is_some(),
         record.carbs_100g.is_some(),
@@ -401,13 +379,11 @@ pub fn score(record: &OffFoodRecord) -> i16 {
         total += 5;
     }
 
-    // Completeness (up to 10 pts).
     if let Some(c) = record.completeness {
         let clamped = c.clamp(0.0, 1.0);
         total += (clamped * 10.0).round() as i32;
     }
 
-    // Categories (10 pts).
     if !record.categories_tags.is_empty() {
         total += 10;
     }
@@ -415,25 +391,16 @@ pub fn score(record: &OffFoodRecord) -> i16 {
     total.clamp(0, 100) as i16
 }
 
-/// Parse a serving-size string to grams. Handles `"30 g"`, `"30g"`,
-/// `"30.5 g"`, `"1 cup (240 g)"`. Pure-ml entries return `None` (the v1
-/// scope skips volume-only servings since we don't track density).
-///
-/// Implementation: greedily scan for `(\d+\.?\d*)\s*g\b` patterns and take
-/// the **last** match, which is the disambiguating one in
-/// `"1 cup (240 g)"`. ASCII-only by design — the OFF dump puts non-ASCII
-/// volume units (cl, oz…) in plain text we can't trust.
+/// Parse a serving-size string to grams.
 pub fn parse_serving_size_grams(s: &str) -> Option<Decimal> {
     let bytes = s.as_bytes();
     let mut best: Option<Decimal> = None;
     let mut i = 0usize;
     while i < bytes.len() {
-        // Skip until we find an ASCII digit.
         if !bytes[i].is_ascii_digit() {
             i += 1;
             continue;
         }
-        // Consume the numeric run (digits and at most one dot).
         let start = i;
         let mut saw_dot = false;
         while i < bytes.len() {
@@ -450,13 +417,9 @@ pub fn parse_serving_size_grams(s: &str) -> Option<Decimal> {
         let num_end = i;
         let num_str = &s[start..num_end];
 
-        // Skip optional whitespace between number and unit.
         while i < bytes.len() && bytes[i] == b' ' {
             i += 1;
         }
-        // Check the unit. We accept `g`, `G`, `gr`, `grams` (case-insensitive),
-        // but reject `gal`, `gallon`, etc. by requiring the unit to end at
-        // a non-letter boundary.
         let unit_start = i;
         while i < bytes.len() && bytes[i].is_ascii_alphabetic() {
             i += 1;
@@ -468,7 +431,6 @@ pub fn parse_serving_size_grams(s: &str) -> Option<Decimal> {
                 best = Some(parsed);
             }
         }
-        // continue scanning
     }
     best
 }

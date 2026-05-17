@@ -3,12 +3,12 @@ use rust_decimal::Decimal;
 use uuid::Uuid;
 
 use crate::domain::meal::Meal;
+use crate::domain::unit::Unit;
 
 /// Nutrition values snapshotted onto a single log entry. `calories_kcal`
-/// is required (NOT NULL in the schema); everything else is optional. The
-/// service computes these from the food's per-100g columns scaled by
-/// `grams_total / 100`, and converts sodium from grams (food.sodium_g) to
-/// milligrams (snapshot.sodium_mg).
+/// is required (NOT NULL in the schema); everything else is optional.
+/// Computed as `quantity * serving.<nutrient>`. No per-100g math; no g↔mg
+/// conversion — `sodium_mg` is mg-native on the serving row.
 #[derive(Debug, Clone)]
 pub struct NutritionSnapshot {
     pub calories_kcal: Decimal,
@@ -32,37 +32,40 @@ pub struct FoodLogEntry {
     pub consumed_on: NaiveDate,
     pub meal: Meal,
     pub quantity: Decimal,
-    pub grams_total: Decimal,
+    pub entered_amount: Decimal,    // what the user typed at entry time
+    pub entered_unit: Unit,         // what the user typed at entry time
     pub snapshot: NutritionSnapshot,
     pub note: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
 
-/// Handler-facing draft. Service computes `grams_total` and the snapshot
-/// before persisting.
+/// Handler-facing draft. Service derives `quantity` from
+/// `entered_amount` / `entered_unit` + the serving's `{amount, unit}`.
 #[derive(Debug, Clone)]
 pub struct LogDraft {
     pub food_id: Uuid,
     pub serving_id: Uuid,
     pub consumed_on: NaiveDate,
     pub meal: Meal,
-    pub quantity: Decimal,
+    pub entered_amount: Decimal,    // required from the wire
+    pub entered_unit: Unit,         // required from the wire
     pub note: Option<String>,
 }
 
-/// Handler-facing patch. Service decides whether the snapshot needs
-/// recomputation (any change to `serving_id` or `quantity` triggers it).
+/// Handler-facing patch. Service re-runs the conversion pipeline when
+/// `entered_amount`, `entered_unit`, or `serving_id` changes.
 #[derive(Debug, Clone, Default)]
 pub struct LogPatch {
     pub serving_id: Option<Uuid>,
     pub consumed_on: Option<NaiveDate>,
     pub meal: Option<Meal>,
-    pub quantity: Option<Decimal>,
+    pub entered_amount: Option<Decimal>,
+    pub entered_unit: Option<Unit>,
     pub note: Option<Option<String>>,
 }
 
-/// Repo-facing persisted shape — the snapshot has already been computed.
+/// Repo-facing persisted shape — snapshot has already been computed.
 /// Repositories are dumb storage; they trust this struct's values.
 #[derive(Debug, Clone)]
 pub struct PersistedLogEntry {
@@ -71,15 +74,16 @@ pub struct PersistedLogEntry {
     pub consumed_on: NaiveDate,
     pub meal: Meal,
     pub quantity: Decimal,
-    pub grams_total: Decimal,
+    pub entered_amount: Decimal,
+    pub entered_unit: Unit,
     pub snapshot: NutritionSnapshot,
     pub note: Option<String>,
 }
 
 /// Repo-facing patch. `serving_id`, `consumed_on`, `meal`, `note` are
-/// pass-through; `quantity_and_grams_total` and `snapshot` are bundled so
-/// repos cannot persist a quantity change without the matching recomputed
-/// snapshot — a safety property the type system enforces.
+/// pass-through; `recompute` bundles `quantity` + `entered_amount` +
+/// `entered_unit` + `snapshot` atomically so repos cannot persist a
+/// quantity change without the matching recomputed snapshot.
 #[derive(Debug, Clone, Default)]
 pub struct PersistedLogPatch {
     pub serving_id: Option<Uuid>,
@@ -92,6 +96,7 @@ pub struct PersistedLogPatch {
 #[derive(Debug, Clone)]
 pub struct RecomputedSnapshot {
     pub quantity: Decimal,
-    pub grams_total: Decimal,
+    pub entered_amount: Decimal,
+    pub entered_unit: Unit,
     pub snapshot: NutritionSnapshot,
 }
