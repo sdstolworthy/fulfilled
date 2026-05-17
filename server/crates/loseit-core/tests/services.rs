@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use chrono::NaiveDate;
-use loseit_core::domain::{GoalDraft, ProfilePatch, Sex, UserIdentity, WeightDraft};
+use loseit_core::domain::{GoalDraft, HeightUnit, ProfilePatch, Sex, UserIdentity, WeightDraft, WeightUnit};
 use loseit_core::service::{GoalService, UserService, WeightService};
 use loseit_testing::{InMemoryGoalRepository, InMemoryUserRepository, InMemoryWeightRepository};
 use rust_decimal::Decimal;
@@ -51,6 +51,105 @@ async fn profile_patch_applies_provided_fields_only() {
     assert_eq!(updated.height_cm, Some(Decimal::new(17000, 2)));
     // email/display_name from the original identity were not touched.
     assert_eq!(updated.identity.email.as_deref(), Some("test@example.com"));
+}
+
+#[tokio::test]
+async fn new_user_defaults_to_kg_and_cm() {
+    let repo = Arc::new(InMemoryUserRepository::new());
+    let users = UserService::new(repo);
+
+    let user = users.ensure_user(&dev_identity()).await.unwrap();
+    assert_eq!(user.weight_unit, WeightUnit::Kg);
+    assert_eq!(user.height_unit, HeightUnit::Cm);
+}
+
+#[tokio::test]
+async fn update_profile_persists_weight_unit_roundtrip() {
+    let repo = Arc::new(InMemoryUserRepository::new());
+    let users = UserService::new(repo);
+
+    let user = users.ensure_user(&dev_identity()).await.unwrap();
+
+    let updated = users
+        .update_profile(
+            user.id,
+            ProfilePatch {
+                weight_unit: Some(WeightUnit::Lb),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(updated.weight_unit, WeightUnit::Lb);
+
+    // Subsequent patch with weight_unit: None preserves the previous value
+    // (COALESCE semantics).
+    let untouched = users
+        .update_profile(
+            user.id,
+            ProfilePatch {
+                display_name: Some("Renamed".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(untouched.weight_unit, WeightUnit::Lb);
+}
+
+#[tokio::test]
+async fn update_profile_persists_height_unit_roundtrip() {
+    let repo = Arc::new(InMemoryUserRepository::new());
+    let users = UserService::new(repo);
+
+    let user = users.ensure_user(&dev_identity()).await.unwrap();
+
+    let updated = users
+        .update_profile(
+            user.id,
+            ProfilePatch {
+                height_unit: Some(HeightUnit::FtIn),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(updated.height_unit, HeightUnit::FtIn);
+
+    // Omitted on the next patch — preserved.
+    let untouched = users
+        .update_profile(
+            user.id,
+            ProfilePatch {
+                display_name: Some("Renamed".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(untouched.height_unit, HeightUnit::FtIn);
+}
+
+#[tokio::test]
+async fn update_profile_changes_both_units_atomically() {
+    let repo = Arc::new(InMemoryUserRepository::new());
+    let users = UserService::new(repo);
+
+    let user = users.ensure_user(&dev_identity()).await.unwrap();
+
+    let updated = users
+        .update_profile(
+            user.id,
+            ProfilePatch {
+                weight_unit: Some(WeightUnit::St),
+                height_unit: Some(HeightUnit::FtIn),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(updated.weight_unit, WeightUnit::St);
+    assert_eq!(updated.height_unit, HeightUnit::FtIn);
 }
 
 #[tokio::test]
