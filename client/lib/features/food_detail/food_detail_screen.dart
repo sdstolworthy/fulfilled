@@ -166,15 +166,12 @@ class _DetailBody extends StatelessWidget {
           FoodSummaryCard(food: food),
           _Section(
             title: 'Servings',
-            child: ServingList(
-              servings: food.servings,
-              nutritionPer100g: food.nutritionPer100g,
-            ),
+            child: ServingList(servings: food.servings),
           ),
           _Section(
             title: 'Nutrition',
             child: NutritionTable(
-              nutrition: food.nutritionPer100g,
+              serving: food.defaultServing,
               source: food.source,
               qualityScore: food.qualityScore,
             ),

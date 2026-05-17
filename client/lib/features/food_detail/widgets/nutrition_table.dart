@@ -2,48 +2,36 @@ import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
 
 import '../../../domain/enums.dart';
-import '../../../domain/nutrition.dart';
+import '../../../domain/serving.dart';
+import '../../../domain/unit.dart';
 import '../../../domain/units/units.dart';
 import '../../../theme/context_extensions.dart';
 
-/// Per-100 g nutrition panel.
+/// Per-serving nutrition panel. Per Ask 10 nutrition lives on each
+/// [Serving] — the panel header reads the serving's label (or its
+/// rendered amount+unit) instead of the old "Per 100 g."
 ///
 /// **T-21 (Display Units Principle).** Sodium renders via [formatSodiumMg]
 /// suffixed with ` mg`. Macros render via [formatGrams] suffixed with ` g`.
-/// Energy renders via [formatKcal] suffixed with ` kcal`. The presentation
-/// model (`NutritionPer100g`) already exposes `sodiumMg` — no inline
-/// conversions in this widget.
+/// Energy renders via [formatKcal] suffixed with ` kcal`.
 ///
-/// **Per-100 g basis is non-negotiable** (PM Display Units Principle).
-/// The panel header literally reads "Per 100 g" — never "per serving".
-///
-/// **Source-aware meta (PM §10 #10 ruling — quality score hidden in v1).**
-/// Top-right meta shows just the source label:
-///   - `FoodSource.off`  → `'OFF data'`
-///   - `FoodSource.usda` → `'USDA data'`
-///   - `FoodSource.user` → `'Your food'`
-/// The numeric quality score is intentionally hidden. The DTO field
-/// (`Food.qualityScore`) stays on the wire for v2 sorting / debug
-/// surfaces; we just don't render it. See dev_tickets.md T-011.
+/// **Source-aware meta (PM §10 #10 — quality score hidden in v1).**
 class NutritionTable extends StatelessWidget {
   const NutritionTable({
-    required this.nutrition,
+    required this.serving,
     required this.source,
     this.qualityScore,
     super.key,
   });
 
-  final NutritionPer100g nutrition;
+  final Serving serving;
   final FoodSource source;
-
-  /// API integer 0..100. Quality score hidden in v1 per PM ruling §10
-  /// item 10. Score stays on the DTO (Food.qualityScore) for v2 sorting /
-  /// debug. See dev_tickets.md T-011. Param retained on the widget so
-  /// callers don't change shape; intentionally not rendered.
   final int? qualityScore;
 
   @override
   Widget build(BuildContext context) {
+    final headerLabel = serving.label ??
+        'Per ${formatAmountUnit(serving.amount, serving.unit)}';
     return Container(
       decoration: BoxDecoration(
         color: context.colors.surface,
@@ -57,59 +45,59 @@ class NutritionTable extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
-          _Header(source: source),
+          _Header(headerLabel: headerLabel, source: source),
           _DividerLine(color: context.colors.line2),
           _Row(
             label: 'Calories',
-            value: nutrition.energyKcal,
+            value: serving.kcal,
             unit: 'kcal',
             formatter: formatKcal,
           ),
           _Row(
             label: 'Protein',
-            value: nutrition.proteinG,
+            value: serving.proteinG,
             unit: 'g',
             formatter: formatGrams,
           ),
           _Row(
             label: 'Carbohydrate',
-            value: nutrition.carbsG,
+            value: serving.carbsG,
             unit: 'g',
             formatter: formatGrams,
           ),
-          if (nutrition.sugarG != null)
+          if (serving.sugarG != null)
             _Row(
               label: 'of which sugars',
-              value: nutrition.sugarG,
+              value: serving.sugarG,
               unit: 'g',
               formatter: formatGrams,
               sub: true,
             ),
           _Row(
             label: 'Fat',
-            value: nutrition.fatG,
+            value: serving.fatG,
             unit: 'g',
             formatter: formatGrams,
           ),
-          if (nutrition.saturatedFatG != null)
+          if (serving.saturatedFatG != null)
             _Row(
               label: 'saturated',
-              value: nutrition.saturatedFatG,
+              value: serving.saturatedFatG,
               unit: 'g',
               formatter: formatGrams,
               sub: true,
             ),
-          if (nutrition.fiberG != null)
+          if (serving.fiberG != null)
             _Row(
               label: 'Fiber',
-              value: nutrition.fiberG,
+              value: serving.fiberG,
               unit: 'g',
               formatter: formatGrams,
             ),
-          if (nutrition.sodiumMg != null)
+          if (serving.sodiumMg != null)
             _Row(
               label: 'Sodium',
-              value: nutrition.sodiumMg,
+              value: serving.sodiumMg,
               unit: 'mg',
               formatter: formatSodiumMg,
               isLast: true,
@@ -121,8 +109,9 @@ class NutritionTable extends StatelessWidget {
 }
 
 class _Header extends StatelessWidget {
-  const _Header({required this.source});
+  const _Header({required this.headerLabel, required this.source});
 
+  final String headerLabel;
   final FoodSource source;
 
   @override
@@ -136,7 +125,7 @@ class _Header extends StatelessWidget {
         children: <Widget>[
           Expanded(
             child: Text(
-              'Per 100 g',
+              headerLabel,
               style: context.text.bodyStrong.copyWith(fontSize: 13),
             ),
           ),
@@ -150,14 +139,6 @@ class _Header extends StatelessWidget {
     );
   }
 
-  // Quality score hidden in v1 per PM ruling §10 item 10. Score stays
-  // on the DTO (Food.qualityScore) for v2 sorting / debug. See
-  // dev_tickets.md T-011. Source-only labels per the ruling:
-  //   off  → 'OFF data'
-  //   usda → 'USDA data'
-  //   user → 'Your food' (was: no meta; PM ruling makes the label
-  //          explicit so the eyebrow on the hero and the panel meta
-  //          agree on the source's display name).
   static String? _metaText(FoodSource source) {
     switch (source) {
       case FoodSource.off:

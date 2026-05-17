@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../../../domain/food.dart';
 import '../../../domain/serving.dart';
+import '../../../domain/unit.dart';
 import '../../../domain/units/units.dart';
 import '../../../theme/context_extensions.dart';
 
@@ -39,7 +40,10 @@ class FoodSummaryCard extends StatelessWidget {
               child: _KcalBlock(
                 kcal: perServingKcal,
                 servingLabel: defaultServing?.name,
-                servingGrams: defaultServing?.grams,
+                amountLabel: defaultServing == null
+                    ? null
+                    : formatAmountUnit(
+                        defaultServing.amount, defaultServing.unit),
               ),
             ),
             if (macros != null)
@@ -62,16 +66,14 @@ class FoodSummaryCard extends StatelessWidget {
     return food.servings.first;
   }
 
+  /// Per Ask 10 nutrition lives on the serving — no per-100g math.
+  /// `food` retained on the signature for source-compat.
   static _Macros? _macrosForServing(Food food, Serving? serving) {
     if (serving == null) return null;
-    final ratio = (serving.grams / Decimal.fromInt(100))
-        .toDecimal(scaleOnInfinitePrecision: 6);
-    Decimal? scale(Decimal? per100) =>
-        per100 == null ? null : per100 * ratio;
     return _Macros(
-      proteinG: scale(food.nutritionPer100g.proteinG),
-      carbsG: scale(food.nutritionPer100g.carbsG),
-      fatG: scale(food.nutritionPer100g.fatG),
+      proteinG: serving.proteinG,
+      carbsG: serving.carbsG,
+      fatG: serving.fatG,
     );
   }
 }
@@ -87,21 +89,19 @@ class _KcalBlock extends StatelessWidget {
   const _KcalBlock({
     required this.kcal,
     required this.servingLabel,
-    required this.servingGrams,
+    required this.amountLabel,
   });
 
   final Decimal? kcal;
   final String? servingLabel;
-  final Decimal? servingGrams;
+  final String? amountLabel;
 
   @override
   Widget build(BuildContext context) {
     final kcalText = kcal == null ? '—' : formatKcal(kcal!);
-    final gramsText =
-        servingGrams == null ? null : formatGrams(servingGrams!);
     final sub = <String?>[
       if (servingLabel != null) 'per $servingLabel',
-      if (gramsText != null) '$gramsText g',
+      if (amountLabel != null && amountLabel != servingLabel) amountLabel,
     ].whereType<String>().join(' · ');
 
     return Column(

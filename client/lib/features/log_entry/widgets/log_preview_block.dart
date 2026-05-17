@@ -34,16 +34,9 @@ class LogPreviewBlock extends StatelessWidget {
   final Serving serving;
   final Decimal quantity;
 
-  /// Multiplier from per-100 g to "this entry": grams / 100 × quantity.
-  Decimal get _multiplier {
-    final ratio = (serving.grams / Decimal.fromInt(100))
-        .toDecimal(scaleOnInfinitePrecision: 6);
-    return ratio * quantity;
-  }
-
-  Decimal _scaledOrZero(Decimal? per100) {
-    if (per100 == null) return Decimal.zero;
-    return per100 * _multiplier;
+  Decimal _scaledOrZero(Decimal? perServing) {
+    if (perServing == null) return Decimal.zero;
+    return perServing * quantity;
   }
 
   @override
@@ -52,12 +45,13 @@ class LogPreviewBlock extends StatelessWidget {
     final radius = context.radius;
     final space = context.space;
 
-    final n = food.nutritionPer100g;
-    final mult = _multiplier;
-    final kcal = (n.energyKcal ?? Decimal.zero) * mult;
-    final protein = _scaledOrZero(n.proteinG);
-    final carbs = _scaledOrZero(n.carbsG);
-    final fat = _scaledOrZero(n.fatG);
+    // Per Ask 10 nutrition lives on the serving; entry math is just
+    // `serving.<field> × quantity`. `food` stays on the signature for
+    // source-compat with call-sites.
+    final kcal = serving.kcal * quantity;
+    final protein = _scaledOrZero(serving.proteinG);
+    final carbs = _scaledOrZero(serving.carbsG);
+    final fat = _scaledOrZero(serving.fatG);
 
     return Container(
       decoration: BoxDecoration(

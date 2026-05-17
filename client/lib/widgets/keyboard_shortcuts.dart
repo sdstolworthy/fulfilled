@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 
 import '../features/log_entry/log_entry_sheet.dart';
 import '../form_factor/form_factor.dart';
+import '../domain/food.dart';
 import '../providers/food_providers.dart';
 import '../providers/search_focus_provider.dart';
 import '../routing/routes.dart';
@@ -104,7 +105,7 @@ class _KeyboardShortcutsState extends ConsumerState<KeyboardShortcuts> {
     final recents = ref.read(recentFoodsProvider);
     final list = recents.maybeWhen(
       data: (foods) => foods,
-      orElse: () => const [],
+      orElse: () => const <Food>[],
     );
     if (list.isEmpty) {
       if (!context.mounted) return;
