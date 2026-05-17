@@ -469,12 +469,24 @@ class FoodRepository {
     // No-op against fixtures; the live-mode path also no-ops.
   }
 
-  /// Reset the fixture store. Tests call this between cases.
-  void resetForTesting() {
+  /// Per-instance reset for fixture-mode tests. Clears the store +
+  /// cache and re-seeds. Static-style call sites (test/_harness.dart)
+  /// use [resetForTesting] (the static no-op below) — every new
+  /// `FoodRepository` instance auto-seeds in its constructor, so the
+  /// "between tests" semantics are preserved without needing to share
+  /// a singleton instance.
+  void resetInstanceForTesting() {
     _store.clear();
     _byIdCache.clear();
     if (kUseFixtures) _seedFixtureStore();
   }
+
+  /// No-op static reset retained for source compat with the pre-Ask-10
+  /// `test/repositories/_harness.dart` that calls
+  /// `FoodRepository.resetForTesting()`. Fixture state is now
+  /// per-instance, so constructing a new repo gives a clean store —
+  /// nothing to reset at the class level.
+  static void resetForTesting() {}
 
   // -------- Live-mode decoders (dormant under kUseFixtures) --------
 

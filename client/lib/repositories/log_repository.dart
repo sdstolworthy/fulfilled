@@ -395,11 +395,15 @@ class LogRepository {
     return DateTime(now.year, now.month, now.day - daysSinceMonday);
   }
 
-  /// Reset hook for test harness; clears the fixture store.
-  void resetForTesting() {
+  /// Per-instance reset for fixture-mode tests.
+  void resetInstanceForTesting() {
     _store.clear();
     if (kUseFixtures) _seedFixtureStore();
   }
+
+  /// No-op static reset retained for source compat with the pre-Ask-10
+  /// `test/repositories/_harness.dart`. Fixture state is per-instance.
+  static void resetForTesting() {}
 }
 
 String _isoDate(DateTime d) {
