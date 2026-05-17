@@ -460,6 +460,166 @@ non-trivial.
 
 ---
 
+## Ask 8 — Authentik / OIDC integration + provider-discovery endpoint *(P0 — user directive 2026-05-17)*
+
+Status: `open`
+
+**Frontend ask (user directive):** the deployed app should support OIDC
+sign-in via Authentik. Per the user: "Ask the backend to create an
+integration with Authentik and to expose a method for the frontend to
+learn about the configured OIDC providers. Then, once the backend has
+successfully integrated with Authentik, update the login page to show
+a button for each OIDC provider enabled for the server."
+
+The login pack already shipped `/auth/login` for local-creds (BE-008,
+Ask 2). OIDC was deferred to v1.1 in Ask 1 — this ask reopens it for
+v1. The architecture must support **multiple auth methods coexisting
+on the same deploy**: dev-bypass (local dev), local-creds (existing
+v1 ship), and one-or-more OIDC providers.
+
+### Sub-asks
+
+**8a — Authentik blueprint** *(P0)*
+
+Create an Authentik **blueprint** (declarative YAML at
+`/blueprints/instances/fulfilled.yaml` in the Authentik instance, or
+mounted via the Authentik container's blueprints volume) that
+provisions:
+- An OAuth2/OpenID provider for "Fulfilled" with:
+  - `client_id` and `client_secret` (the latter exposed to the
+    backend only — never to the FE)
+  - Redirect URIs that match both the dev (`http://localhost:8080/...`)
+    and prod (`https://api.coolify.stolworthy.co/api/v1/auth/oidc/callback`,
+    or the equivalent for FE-side OIDC if you pick that shape — see
+    architectural choice below)
+  - Scopes: `openid`, `profile`, `email`
+  - Signing alg: `RS256` (Authentik's default; matches the existing
+    `JwksAuthenticator` path)
+- An Authentik application bound to the provider, named "Fulfilled."
+- A test user (e.g. `dev@stolworthy.co` / strong password set out-of-
+  band) for end-to-end verification.
+
+Check the result of `curl https://<authentik>/application/o/fulfilled/.well-known/openid-configuration`
+returns the OIDC discovery doc with `authorization_endpoint`,
+`token_endpoint`, `jwks_uri`, etc.
+
+**8b — Register OIDC provider with the Coolify api service** *(P0)*
+
+Wire the api service (Coolify env vars) to use the Authentik issuer
+as an *additional* auth backend (do NOT remove the local-creds path —
+both should coexist):
+- `OIDC_ISSUER=https://<authentik-host>/application/o/fulfilled/`
+- `OIDC_AUDIENCE=<the client_id from blueprint 8a>`
+- `OIDC_JWKS_URL=https://<authentik-host>/application/o/fulfilled/jwks/`
+- For server-as-RP shape (see 8c), also: `OIDC_CLIENT_SECRET=<from 8a>`
+  and `OIDC_REDIRECT_URI=<the callback URL>`.
+
+Today the existing `LOSEIT_AUTH_BACKEND=jwks` mode is a *replacement*
+for local-creds. That has to change — both must coexist. The
+`AuthConfig` enum needs a `Multi { local: Option<LocalConfig>,
+oidc: Vec<OidcProviderConfig> }` shape, or equivalent. The compose
+default keeps local-creds on; the Coolify deploy adds Authentik on
+top via the env vars.
+
+**8c — Architectural choice: who is the OIDC relying party?** *(P0 — gates 8d/8e)*
+
+Two shapes, pick one in your reply:
+
+- **(i) Backend-as-RP (server-side flow).** Most secure. FE has only
+  a button per provider; the button hits
+  `GET /api/v1/auth/oidc/<provider>/start`; backend 302 → Authentik
+  authorize URL; Authentik 302 → backend callback
+  `/api/v1/auth/oidc/<provider>/callback?code=...`; backend exchanges
+  the code for tokens, verifies the ID token, ensures a local `users`
+  row exists (issuer=`authentik`, external_id=`<sub>`), mints an
+  opaque token (same shape as BE-008), and 302s the browser to a FE
+  URL (e.g. `https://app.coolify.stolworthy.co/login/callback?token=<opaque>`).
+  FE picks the token off the query string and stores it.
+  **Pros:** client_secret stays server-side; opaque-token model
+  matches BE-008. **Cons:** more BE work (one route start + one
+  callback per provider + PKCE state management).
+
+- **(ii) Frontend-as-RP with PKCE (browser-side flow).** FE redirects
+  directly to Authentik with PKCE; FE handles callback in-browser;
+  FE sends the Authentik ID token to backend's
+  `POST /api/v1/auth/oidc/<provider>/exchange`; backend verifies via
+  JWKS, mints an opaque token, returns it. **Pros:** simpler backend
+  (extend existing JWKS verifier; no callback hosting). **Cons:**
+  FE rebuild needed for redirect URI changes; client_secret can't be
+  used; only PKCE.
+
+**Backend, pick one in your reply.** FE prefers (i) for the
+opaque-token consistency and less Flutter web complexity — but will
+implement either.
+
+**8d — Provider-discovery endpoint** *(P0)*
+
+Expose `GET /api/v1/auth/providers` (or `GET /api/v1/auth/config` —
+your call on the URL) returning the list of configured auth
+providers + their UI metadata. Suggested shape:
+
+```json
+{
+  "local": {"enabled": true},
+  "oidc": [
+    {
+      "id": "authentik",
+      "display_name": "Authentik",
+      "icon": null,
+      "start_url": "/api/v1/auth/oidc/authentik/start"  // (i) only
+      // OR for (ii):
+      // "authorization_endpoint": "https://<authentik>/application/o/authorize/",
+      // "client_id": "<client_id>",
+      // "scopes": ["openid","profile","email"]
+    }
+  ]
+}
+```
+
+`security: []` on this endpoint — the FE calls it before the user is
+signed in.
+
+Acceptance:
+```bash
+curl https://api.coolify.stolworthy.co/api/v1/auth/providers
+# → 200 with the JSON above, listing `authentik` as one OIDC provider
+```
+
+**8e — OpenAPI delta** *(P1)*
+
+Add the new routes (`/auth/providers`, `/auth/oidc/<provider>/start`
++ `/callback` if shape (i)) to `openapi.yaml`.
+
+### Acceptance (end-to-end against the deploy)
+
+1. `curl https://api.coolify.stolworthy.co/api/v1/auth/providers`
+   returns a JSON with `local.enabled = true` and `oidc[0].id = "authentik"`.
+2. Hitting the FE login page shows a primary "Sign in with Authentik"
+   button alongside the existing username/password form.
+3. Tapping the button completes the OIDC flow end-to-end: user lands
+   on Authentik's login page, signs in with the test user, gets
+   redirected back to the FE, and ends up at `/today` with real data
+   from `/me` populated from the Authentik identity.
+4. The local-creds flow (`dev`/`dev` against `/auth/login`) continues
+   to work — both auth paths coexist on the same deploy.
+
+### Notify
+
+**Please notify FE (by flipping this ask's Status to `done` + posting
+a `Backend reply:` paragraph here) when:**
+- The Authentik blueprint is applied and the provider's
+  `.well-known/openid-configuration` is reachable.
+- The Coolify api service has been redeployed with the OIDC env vars.
+- `/auth/providers` returns the expected JSON.
+- The architectural choice (i) vs (ii) is settled (so FE knows
+  whether to expect `start_url` redirect-based buttons or
+  in-browser PKCE flow).
+
+FE will then immediately wire the login page's per-provider button
+rendering against the discovery endpoint.
+
+---
+
 ## Done / Acknowledged
 
 *(Backend team: move tasks here once shipped or rejected. Include a
