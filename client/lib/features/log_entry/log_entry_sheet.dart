@@ -10,7 +10,6 @@ import '../../data/outbox/log_outbox_notifier.dart';
 import '../../domain/food.dart';
 import '../../domain/log_entry.dart';
 import '../../domain/meal.dart';
-import '../../domain/nutrition.dart';
 import '../../domain/serving.dart';
 import '../../domain/unit.dart';
 import '../../form_factor/form_factor.dart';
@@ -245,6 +244,13 @@ class _LogEntrySheetBodyState extends ConsumerState<LogEntrySheetBody> {
   late Meal _meal;
   late Serving _serving;
   late DateTime _date;
+
+  /// Unit the user is currently entering the amount in. Must share a
+  /// family with [_serving.unit] (the dropdown only surfaces
+  /// same-family options). Defaults to the serving's own unit in
+  /// create mode and the entry's `entered_unit` in edit mode.
+  late Unit _enteredUnit;
+
   final TextEditingController _noteCtrl = TextEditingController();
   bool _submitting = false;
 
@@ -266,6 +272,15 @@ class _LogEntrySheetBodyState extends ConsumerState<LogEntrySheetBody> {
       (s) => s.id == seedServingId,
       orElse: () => widget.food.servings.first,
     );
+    // In edit mode the entry carries the unit the user originally
+    // entered in; preserve it iff it's same-family as the serving
+    // (defensive — server-side validation should already enforce this
+    // but the entry could have been edited to a different serving).
+    final exEnteredUnit = ex?.enteredUnit;
+    _enteredUnit = (exEnteredUnit != null &&
+            exEnteredUnit.family == _serving.unit.family)
+        ? exEnteredUnit
+        : _serving.unit;
     // Seed precedence:
     //   1. `widget.initialDate` (test-only seam — overrides edit-mode's
     //      `existing.consumedOn` so QL-105's date-shift router test can
@@ -336,19 +351,22 @@ class _LogEntrySheetBodyState extends ConsumerState<LogEntrySheetBody> {
   LogCreate _buildLogCreate() {
     final quantity = ref.read(quantityProvider);
     final note = _noteCtrl.text.trim();
-    // Per Ask 10 we record `entered_amount` + `entered_unit` so the row
-    // preserves what the user typed at log time. The sheet's default
-    // entry surface is "N of <serving>" so we record `serving.amount *
-    // quantity` in the serving's own unit. A future unit toggle will
-    // replace these two with the user's same-family pick.
+    // Per Ask 10 we record what the user actually typed: the amount
+    // in [_enteredUnit] (which the dropdown gates to a unit in the
+    // serving's family). `quantity` stays as the serving-multiplier so
+    // the snapshot math (`serving.kcal × quantity`) remains stable.
+    final servingAmountTotal = _serving.amount * quantity;
+    final displayAmount = _enteredUnit == _serving.unit
+        ? servingAmountTotal
+        : convertUnit(servingAmountTotal, _serving.unit, _enteredUnit);
     return LogCreate(
       foodId: widget.food.id,
       servingId: _serving.id,
       consumedOn: _date,
       meal: _meal,
       quantity: quantity,
-      enteredAmount: _serving.amount * quantity,
-      enteredUnit: _serving.unit,
+      enteredAmount: displayAmount,
+      enteredUnit: _enteredUnit,
       note: note.isEmpty ? null : note,
     );
   }
@@ -581,44 +599,6 @@ class _LogEntrySheetBodyState extends ConsumerState<LogEntrySheetBody> {
     }
   }
 
-  /// Build an optimistic [LogEntry] mirroring what the server will
-  /// compute. Same math as `LogRepository.create` — kept here because
-  /// the outbox path returns *immediately* before any server roundtrip.
-  LogEntry _optimisticEntry(LogCreate data) {
-    // Per Ask 10 the snapshot is `serving.<field> × quantity` —
-    // no per-100g math, no grams_total.
-    Decimal? scaled(Decimal? perServing) =>
-        perServing == null ? null : perServing * data.quantity;
-
-    final now = DateTime.now();
-    final snapshot = NutritionSnapshot(
-      caloriesKcal: _serving.kcal * data.quantity,
-      proteinG: scaled(_serving.proteinG),
-      carbsG: scaled(_serving.carbsG),
-      fatG: scaled(_serving.fatG),
-      fiberG: scaled(_serving.fiberG),
-      sugarG: scaled(_serving.sugarG),
-      sodiumMg: scaled(_serving.sodiumMg),
-      saturatedFatG: scaled(_serving.saturatedFatG),
-    );
-    return LogEntry(
-      id: 'optimistic_${now.microsecondsSinceEpoch}',
-      foodId: widget.food.id,
-      foodName: widget.food.name,
-      servingId: _serving.id,
-      servingName: _serving.name,
-      consumedOn: data.consumedOn,
-      meal: data.meal,
-      quantity: data.quantity,
-      enteredAmount: data.enteredAmount,
-      enteredUnit: data.enteredUnit,
-      nutritionSnapshot: snapshot,
-      note: data.note,
-      createdAt: now,
-      updatedAt: now,
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final colors = context.colors;
@@ -675,27 +655,21 @@ class _LogEntrySheetBodyState extends ConsumerState<LogEntrySheetBody> {
                     onChanged: (s) => setState(() => _serving = s),
                   ),
                   SizedBox(height: space.x4 + 2),
-                  _SectionLabel(text: 'QUANTITY'),
+                  _SectionLabel(text: 'AMOUNT'),
                   SizedBox(height: space.x2),
-                  // Consumer bridge: the lifted `QuantityStepper` is
-                  // callback-shaped (T-15 — same render regardless of
-                  // who drives state). The sheet keeps its scoped
-                  // `quantityProvider`; this wrapper forwards both ways.
-                  Consumer(
-                    builder: (context, ref, _) {
-                      final value = ref.watch(quantityProvider);
-                      return QuantityStepper(
-                        key: const Key('log_entry_quantity_field_host'),
-                        value: value,
-                        step: Decimal.parse('0.5'),
-                        min: Decimal.parse('0.5'),
-                        autofocus: autofocusQuantity,
-                        onChanged: (next) {
-                          if (next == null) return;
-                          ref.read(quantityProvider.notifier).state = next;
-                        },
-                      );
-                    },
+                  // Per Ask 10 the user picks an amount in any unit
+                  // that shares a family with the serving. The stepper
+                  // shows the amount in the chosen unit; the underlying
+                  // `quantityProvider` (the wire's `quantity`
+                  // multiplier on the serving) is back-derived via
+                  // [convertUnit]. Family invariant: the unit
+                  // dropdown only surfaces same-family options, so
+                  // `convertUnit` never throws.
+                  _AmountAndUnitRow(
+                    serving: _serving,
+                    enteredUnit: _enteredUnit,
+                    autofocusAmount: autofocusQuantity,
+                    onUnitChanged: (u) => setState(() => _enteredUnit = u),
                   ),
                   SizedBox(height: space.x2),
                   const QuickMultiplierChips(),
@@ -1154,4 +1128,149 @@ LogCreate _logCreateFromPayload(Map<String, dynamic> json) {
     enteredUnit: Unit.fromWire(json['entered_unit'] as String),
     note: json['note'] as String?,
   );
+}
+
+/// Amount stepper + Unit dropdown side-by-side. The dropdown only
+/// surfaces same-family units; for count-family servings the
+/// dropdown collapses to a plain unit label (count units don't
+/// auto-convert between each other, per Ask 10).
+///
+/// State source-of-truth is the scoped [quantityProvider]
+/// (multiplier on the serving). The displayed amount is
+/// `serving.amount × quantity` converted into the user's chosen
+/// unit; editing the amount back-computes a new quantity via the
+/// inverse conversion.
+class _AmountAndUnitRow extends ConsumerWidget {
+  const _AmountAndUnitRow({
+    required this.serving,
+    required this.enteredUnit,
+    required this.onUnitChanged,
+    this.autofocusAmount = false,
+  });
+
+  final Serving serving;
+  final Unit enteredUnit;
+  final ValueChanged<Unit> onUnitChanged;
+  final bool autofocusAmount;
+
+  /// Units we offer in the dropdown given the serving's family. Count
+  /// family returns a single-element list (just the serving's own
+  /// unit) — count units don't auto-convert.
+  List<Unit> _unitsInFamily() {
+    if (serving.unit.family == UnitFamily.count) {
+      return <Unit>[serving.unit];
+    }
+    return <Unit>[
+      for (final u in Unit.values)
+        if (u.family == serving.unit.family) u,
+    ];
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final quantity = ref.watch(quantityProvider);
+    final colors = context.colors;
+    final radius = context.radius;
+    final space = context.space;
+
+    final servingAmountTotal = serving.amount * quantity;
+    final displayAmount = enteredUnit == serving.unit
+        ? servingAmountTotal
+        : convertUnit(servingAmountTotal, serving.unit, enteredUnit);
+
+    final units = _unitsInFamily();
+    final showDropdown = units.length > 1;
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Expanded(
+          flex: showDropdown ? 6 : 8,
+          child: QuantityStepper(
+            key: const Key('log_entry_amount_field_host'),
+            value: displayAmount,
+            step: _stepFor(enteredUnit),
+            min: Decimal.zero,
+            unitSuffix: enteredUnit.shortLabel,
+            autofocus: autofocusAmount,
+            onChanged: (next) {
+              if (next == null) return;
+              // Convert the user's typed amount back to the serving's
+              // own unit, then divide by the serving's amount to get
+              // the new quantity multiplier. Same-family invariant
+              // makes `convertUnit` safe here.
+              final inServingUnit = enteredUnit == serving.unit
+                  ? next
+                  : convertUnit(next, enteredUnit, serving.unit);
+              final newQuantity = (inServingUnit / serving.amount)
+                  .toDecimal(scaleOnInfinitePrecision: 6);
+              ref.read(quantityProvider.notifier).state = newQuantity;
+            },
+          ),
+        ),
+        if (showDropdown) ...<Widget>[
+          SizedBox(width: space.x2),
+          Expanded(
+            flex: 3,
+            child: Container(
+              height: 44,
+              decoration: BoxDecoration(
+                color: colors.surface,
+                borderRadius: BorderRadius.circular(radius.r1 + 2),
+                border: Border.all(color: colors.line, width: 1),
+              ),
+              padding: EdgeInsets.symmetric(horizontal: space.x2),
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<Unit>(
+                  key: const Key('log_entry_unit_dropdown'),
+                  value: enteredUnit,
+                  isExpanded: true,
+                  isDense: true,
+                  icon: Icon(Icons.expand_more, size: 18, color: colors.ink2),
+                  style: context.text.body.copyWith(color: colors.ink),
+                  dropdownColor: colors.surface,
+                  items: <DropdownMenuItem<Unit>>[
+                    for (final u in units)
+                      DropdownMenuItem<Unit>(
+                        value: u,
+                        child: Text(u.shortLabel),
+                      ),
+                  ],
+                  onChanged: (v) {
+                    if (v == null || v == enteredUnit) return;
+                    onUnitChanged(v);
+                  },
+                ),
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  /// Per-unit step size. Mass/volume canonical units get fine-grained
+  /// steps (1 g / 1 ml); coarser units (cup, lb) step by 0.25. Count
+  /// units step by 0.5 (matches the original quantity-stepper behavior).
+  Decimal _stepFor(Unit unit) {
+    switch (unit) {
+      case Unit.g:
+      case Unit.ml:
+        return Decimal.one;
+      case Unit.kg:
+      case Unit.l:
+      case Unit.lb:
+        return Decimal.parse('0.1');
+      case Unit.oz:
+      case Unit.cup:
+      case Unit.flOz:
+        return Decimal.parse('0.25');
+      case Unit.tbsp:
+      case Unit.tsp:
+        return Decimal.parse('0.5');
+      case Unit.serving:
+      case Unit.piece:
+        return Decimal.parse('0.5');
+    }
+  }
 }

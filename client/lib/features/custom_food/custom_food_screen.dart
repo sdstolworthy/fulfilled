@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -479,7 +478,7 @@ class _TextAction extends StatelessWidget {
   }
 }
 
-enum _Step { details, nutrition, servings }
+enum _Step { details, servings }
 
 class _StepIndicator extends StatelessWidget {
   const _StepIndicator({required this.activeStep});
@@ -630,6 +629,3 @@ class _ButtonSkeleton extends StatelessWidget {
   }
 }
 
-// `kDebugMode` symbol kept so the existing imports' analyzer warning
-// doesn't fire under foundation.dart — used by asserts above.
-const _kDebug = kDebugMode;
