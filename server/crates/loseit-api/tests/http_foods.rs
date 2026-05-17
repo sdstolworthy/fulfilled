@@ -297,6 +297,24 @@ async fn test_get_food_by_id_404_for_unknown() {
 }
 
 #[tokio::test]
+async fn test_get_food_by_id_400_for_non_uuid() {
+    // F2-T2: lock-in for axum's `Path<Uuid>` rejection behaviour. A
+    // non-UUID path segment (e.g. `"new"`) is rejected with 400 *before*
+    // `get_by_id` ever runs — the `PathRejection` short-circuits with
+    // axum's default plaintext body. The FE relies on this distinction
+    // post-F2-T1 (its FriendlyError mapper treats 400 and 404 the same
+    // way for this route, but the BE contract must stay 400 so a future
+    // "helpful" refactor that switches to 404 doesn't silently flip the
+    // shape the FE depends on).
+    let (app, _alice) = build_test_app_with(|_f, _s, _l, _u| Box::pin(async move {})).await;
+    let resp = app
+        .oneshot(authed_request("GET", "/api/v1/foods/new"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn test_get_food_by_id_404_when_custom_owned_by_other_user() {
     use std::sync::OnceLock;
     let other_user = Uuid::new_v4();
