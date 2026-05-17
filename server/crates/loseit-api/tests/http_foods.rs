@@ -841,3 +841,67 @@ async fn test_delete_food_409_when_logs_reference_it() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::CONFLICT);
 }
+
+// -- Tests: FoodDetailResponse.kind (T06) ------------------------------------
+
+#[tokio::test]
+async fn food_detail_kind_normal_for_custom_food() {
+    // POST a custom food, then GET /foods/:id and assert kind == "normal".
+    let (app, _alice) = build_test_app_with(|_f, _s, _l, _u| Box::pin(async move {})).await;
+
+    let body = serde_json::json!({
+        "name": "Kind Test Custom Food",
+        "nutrition": {
+            "energy_kcal": 200,
+        },
+    });
+    let resp = app
+        .clone()
+        .oneshot(authed_json_request("POST", "/api/v1/foods", body))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let created = read_json(resp.into_body()).await;
+    let food_id = created["id"].as_str().unwrap().to_string();
+
+    let resp = app
+        .oneshot(authed_request("GET", &format!("/api/v1/foods/{food_id}")))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = read_json(resp.into_body()).await;
+    assert_eq!(body["kind"], "normal", "custom food must report kind=normal");
+}
+
+#[tokio::test]
+async fn food_detail_kind_quick_add_for_sentinel() {
+    // POST /log/quick_add triggers find_or_create_quick_add; the returned
+    // log entry carries food_id. GET /foods/:food_id and assert kind ==
+    // "quick_add".
+    let (app, _alice) = build_test_app_with(|_f, _s, _l, _u| Box::pin(async move {})).await;
+
+    let body = serde_json::json!({
+        "calories_kcal": "300",
+        "meal": "lunch",
+        "consumed_on": "2024-06-01",
+    });
+    let resp = app
+        .clone()
+        .oneshot(authed_json_request("POST", "/api/v1/log/quick_add", body))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let entry = read_json(resp.into_body()).await;
+    let food_id = entry["food_id"].as_str().unwrap().to_string();
+
+    let resp = app
+        .oneshot(authed_request("GET", &format!("/api/v1/foods/{food_id}")))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = read_json(resp.into_body()).await;
+    assert_eq!(
+        body["kind"], "quick_add",
+        "quick_add sentinel must report kind=quick_add"
+    );
+}
