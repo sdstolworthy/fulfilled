@@ -66,11 +66,27 @@ class AuthTokenNotifier extends Notifier<String?> {
   /// `Authorization` header — the server will 401 and the existing
   /// interceptor surfaces that. In debug we fall back to `dev-bypass`
   /// so the local dev loop works against `DEV_AUTH_BYPASS`.
+  ///
+  /// Order (per architect_login.md §7.3):
+  ///   1. compile-time `DEV_AUTH_TOKEN` wins if non-empty;
+  ///   2. else if `kDebugMode && !DEV_AUTH_BYPASS_DISABLE` → `'dev-bypass'`
+  ///      (the LOG-007 dev-loop trapdoor: a dev exercising the login
+  ///      flow runs `flutter run --dart-define=DEV_AUTH_BYPASS_DISABLE=1`
+  ///      to opt out of the seed without recompiling against
+  ///      `kDebugMode`);
+  ///   3. else `null`. **Release builds always return `null`** — the
+  ///      `kDebugMode` gate means the dev-bypass branch is dead code
+  ///      under release and the user lands on `/login`.
   static String? _seedToken() {
-    const compileTime = String.fromEnvironment('DEV_AUTH_TOKEN');
-    if (compileTime.isNotEmpty) return compileTime;
-    if (kReleaseMode) return null;
-    return 'dev-bypass';
+    const fromDartDefine =
+        String.fromEnvironment('DEV_AUTH_TOKEN', defaultValue: '');
+    if (fromDartDefine.isNotEmpty) return fromDartDefine;
+    const bypassDisable =
+        bool.fromEnvironment('DEV_AUTH_BYPASS_DISABLE', defaultValue: false);
+    // Debug-only — `kDebugMode` is `false` under release, so the
+    // `'dev-bypass'` branch is unreachable in shipped builds.
+    if (kDebugMode && !bypassDisable) return 'dev-bypass';
+    return null;
   }
 
   /// Set the token to [token]. The next API request picks the new value

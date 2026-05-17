@@ -1446,7 +1446,7 @@ field has a `Semantics` label; submit reads "Sign in to
 
 ## LOG-007  Router redirect rule + `_AuthListenable` + dev-bypass trapdoor
 
-**Status**: pending
+**Status**: shipped (Wave 5)
 **Priority**: P0
 **Effort**: M
 **Depends on**: LOG-003, LOG-006

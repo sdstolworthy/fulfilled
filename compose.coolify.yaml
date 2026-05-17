@@ -65,8 +65,17 @@ services:
         # The Flutter app reads API_BASE_URL at *compile* time via
         # `String.fromEnvironment`, so this is a build-arg, not a runtime
         # env. Coolify will rebuild the web service whenever this changes.
-        # Set this in Coolify's UI to the api service's public URL plus
-        # `/api/v1`, e.g. https://api.example.com/api/v1.
+        #
+        # Must be **absolute** — `apiBaseUrlProvider` rule 1 ignores
+        # relative values (Dio can't use a path-only base URL). Two
+        # deploy shapes (see `deploy_tasks.md`):
+        # - Single-FQDN (shape a, reverse-proxy on app FQDN): leave the
+        #   default; the Flutter web bundle's runtime
+        #   `Uri.base.origin + '/api/v1'` resolves correctly same-origin.
+        # - Separate FQDN (shape b, current production): set to the
+        #   absolute api URL, e.g.
+        #   `https://api.coolify.stolworthy.co/api/v1`. Rule 1 picks it
+        #   up in release builds.
         API_BASE_URL: ${API_BASE_URL:-/api/v1}
     expose:
       - "80"

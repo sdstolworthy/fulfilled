@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../data/auth_token.dart';
 import '../domain/enums.dart';
 import '../features/custom_food/custom_food_screen.dart';
 import '../features/food_detail/food_detail_screen.dart';
@@ -47,9 +48,41 @@ import 'routes.dart';
 /// `/foods/new?barcode=…` (404) per T-021.
 
 final appRouterProvider = Provider<GoRouter>((ref) {
+  // LOG-007 — the auth-gate.
+  //
+  // `_AuthListenable` observes `authTokenProvider` and notifies on every
+  // flip; `GoRouter` re-evaluates `redirect` on the next frame. The
+  // subscription returned by `ref.listen` lives for the Provider's
+  // lifetime — the `appRouterProvider` is unauto-disposed and lives for
+  // the app's lifetime, so there's nothing to dispose by hand.
+  final authListenable = _AuthListenable(ref);
   return GoRouter(
     initialLocation: Routes.todayPath,
     debugLogDiagnostics: false,
+    refreshListenable: authListenable,
+    // LOG-007 — synchronous redirect (go_router requires sync). Five
+    // rules per architect_login.md §7.2, in this exact order:
+    //
+    //   1. no token + /login          → allow (return null)
+    //   2. no token + /onboarding/*   → allow
+    //   3. no token + anything else   → /login
+    //   4. has token + /login         → /today
+    //   5. has token + anything else  → allow
+    //
+    // Token read via `ref.read` (not `ref.watch`) — the
+    // `refreshListenable` above is what triggers re-evaluation when the
+    // token flips.
+    redirect: (context, state) {
+      final token = ref.read(authTokenProvider);
+      final loc = state.matchedLocation;
+      if (token == null) {
+        if (loc == Routes.loginPath) return null;
+        if (loc.startsWith('/onboarding/')) return null;
+        return Routes.loginPath;
+      }
+      if (loc == Routes.loginPath) return Routes.todayPath;
+      return null;
+    },
     routes: <RouteBase>[
       ShellRoute(
         // T-015: wrap the shell in `KeyboardShortcuts`. The wrapper itself
@@ -204,6 +237,28 @@ final appRouterProvider = Provider<GoRouter>((ref) {
     ),
   );
 });
+
+// ---------------------------------------------------------------------------
+// LOG-007 — Auth-gate refresh listenable.
+// ---------------------------------------------------------------------------
+
+/// Bridges `authTokenProvider` (Riverpod) to `GoRouter.refreshListenable`
+/// (Flutter `Listenable`). Subscribes once at construction; every token
+/// flip calls `notifyListeners()`, which prompts go_router to re-run its
+/// `redirect` callback on the next frame.
+///
+/// The subscription returned by `ref.listen` lives for the lifetime of the
+/// owning Provider — `appRouterProvider` is unauto-disposed, so it lives
+/// for the app's lifetime. No manual cleanup needed.
+class _AuthListenable extends ChangeNotifier {
+  _AuthListenable(this._ref) {
+    _ref.listen<String?>(authTokenProvider, (prev, next) {
+      notifyListeners();
+    });
+  }
+
+  final Ref _ref;
+}
 
 // ---------------------------------------------------------------------------
 // T-016 — High-traffic route transitions.

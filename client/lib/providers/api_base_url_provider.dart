@@ -7,12 +7,16 @@ import '../data/auth_config.dart';
 ///
 /// Resolves the API base URL via three rules, in this exact order:
 ///
-///   1. **Debug-only dev override.** If `kDebugMode` and a non-empty
-///      `--dart-define=API_BASE_URL=...` was supplied at build time,
-///      return that. This is the **only** `String.fromEnvironment(
-///      'API_BASE_URL')` call site in the codebase. It keeps the
+///   1. **Compile-time absolute override.** If a non-empty,
+///      absolute (`http://` or `https://`) `--dart-define=API_BASE_URL=...`
+///      was supplied at build time, return that. Applies in any build
+///      mode — release web builds honor it so the `compose.coolify.yaml`
+///      `API_BASE_URL` build-arg flows through to production. The
 ///      `flutter run --dart-define=API_BASE_URL=http://localhost:8080/api/v1`
-///      dev loop working unchanged.
+///      dev loop continues to work unchanged. **Relative values are
+///      ignored** (the old `/api/v1` default falls through to rule 2 so
+///      the web Uri-derived path still wins — a relative bare path is
+///      not a useful base URL for Dio).
 ///   2. **Web** (any build mode). `Uri.base.origin + '/api/v1'`. The
 ///      customer typed the URL into their browser; `Uri.base` is
 ///      canonical. NOTE: v1 strips path prefixes — operators behind
@@ -81,8 +85,14 @@ final kDebugModeProvider = Provider<bool>((_) => kDebugMode);
 /// `client/lib/data/auth_config.dart` (LOG-003). The box is opened in
 /// `main.dart` and installed via `overrideWithValue`.
 final apiBaseUrlProvider = Provider<String?>((ref) {
-  // Rule 1: debug-only dart-define override.
-  if (ref.watch(kDebugModeProvider) && _baseUrlFromEnv.isNotEmpty) {
+  // Rule 1: compile-time absolute dart-define. Applies in any mode so
+  // the `compose.coolify.yaml` build-arg flows through to release web
+  // builds (the deploy went with shape (b) — separate api/app FQDNs —
+  // so the web image must bake the api FQDN at build time). Relative
+  // values (e.g. the legacy `/api/v1` default) fall through to rule 2
+  // because Dio can't use a base URL without an origin.
+  if (_baseUrlFromEnv.startsWith('http://') ||
+      _baseUrlFromEnv.startsWith('https://')) {
     return _baseUrlFromEnv;
   }
 
