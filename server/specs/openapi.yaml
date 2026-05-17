@@ -963,9 +963,22 @@ components:
       properties:
         code:
           type: string
-          description: Stable, machine-readable error identifier.
+          description: |
+            Stable, machine-readable error identifier. Known codes:
+
+            | Code | HTTP | Description |
+            |---|---|---|
+            | `bad_request` | 400 | Malformed input or failed domain validation. |
+            | `unit_family_mismatch` | 400 | The `entered_unit` belongs to a different unit family than the referenced serving's unit (e.g. mass unit on a volume serving). |
+            | `unauthorized` | 401 | Missing or invalid credentials. |
+            | `forbidden` | 403 | Authenticated but not allowed to perform this action. |
+            | `not_found` | 404 | Resource does not exist or is not visible to the caller. |
+            | `conflict` | 409 | Domain invariant prevents the operation. |
+            | `upstream_error` | 502 | Upstream dependency failure. |
+            | `internal_error` | 500 | Unexpected server-side error. |
           examples:
             - bad_request
+            - unit_family_mismatch
             - unauthorized
             - forbidden
             - not_found
@@ -1213,42 +1226,64 @@ components:
         carbs_g_target: { $ref: "#/components/schemas/Decimal" }
         fat_g_target: { $ref: "#/components/schemas/Decimal" }
 
-    NutritionPer100g:
-      type: object
-      description: Per-100g nutrition. All fields are optional/nullable.
-      properties:
-        energy_kcal: { $ref: "#/components/schemas/Decimal" }
-        protein_g: { $ref: "#/components/schemas/Decimal" }
-        carbs_g: { $ref: "#/components/schemas/Decimal" }
-        fat_g: { $ref: "#/components/schemas/Decimal" }
-        fiber_g: { $ref: "#/components/schemas/Decimal" }
-        sugar_g: { $ref: "#/components/schemas/Decimal" }
-        sodium_g:
-          allOf:
-            - $ref: "#/components/schemas/Decimal"
-          description: |
-            Sodium in grams per 100 g (OFF convention). Clients should
-            multiply by 1000 to display as milligrams, which is the
-            customer-expected unit.
-        saturated_fat_g: { $ref: "#/components/schemas/Decimal" }
+    Unit:
+      type: string
+      enum: [g, kg, oz, lb, ml, l, cup, fl_oz, tbsp, tsp, serving, piece]
+      description: |
+        Unit of measure on a serving. Mass (g, kg, oz, lb), volume
+        (ml, l, cup, fl_oz, tbsp, tsp), or count (serving, piece).
 
     Serving:
       type: object
-      required: [id, label, grams, is_default, source, sort_order]
+      required: [id, amount, unit, kcal, is_default, source, sort_order]
       properties:
         id: { type: string, format: uuid }
-        label: { type: string }
-        grams: { $ref: "#/components/schemas/Decimal" }
+        label:
+          type: [string, "null"]
+        amount: { type: number }
+        unit: { $ref: "#/components/schemas/Unit" }
+        kcal: { type: number }
+        protein_g:
+          type: [number, "null"]
+        carbs_g:
+          type: [number, "null"]
+        fat_g:
+          type: [number, "null"]
+        fiber_g:
+          type: [number, "null"]
+        sugar_g:
+          type: [number, "null"]
+        sodium_mg:
+          type: [number, "null"]
+        saturated_fat_g:
+          type: [number, "null"]
         is_default: { type: boolean }
         source: { $ref: "#/components/schemas/ServingSource" }
         sort_order: { type: integer, format: int32 }
 
     ServingCreate:
       type: object
-      required: [label, grams]
+      required: [amount, unit, kcal]
       properties:
-        label: { type: string }
-        grams: { $ref: "#/components/schemas/Decimal" }
+        label:
+          type: [string, "null"]
+        amount: { type: number }
+        unit: { $ref: "#/components/schemas/Unit" }
+        kcal: { type: number }
+        protein_g:
+          type: [number, "null"]
+        carbs_g:
+          type: [number, "null"]
+        fat_g:
+          type: [number, "null"]
+        fiber_g:
+          type: [number, "null"]
+        sugar_g:
+          type: [number, "null"]
+        sodium_mg:
+          type: [number, "null"]
+        saturated_fat_g:
+          type: [number, "null"]
         is_default: { type: boolean, default: false }
         source:
           allOf:
@@ -1262,8 +1297,25 @@ components:
         Partial update of a serving. Toggling `is_default` is done via the
         dedicated `POST /servings/{id}/default` endpoint, not this one.
       properties:
-        label: { type: string }
-        grams: { $ref: "#/components/schemas/Decimal" }
+        label:
+          type: [string, "null"]
+        amount: { type: number }
+        unit: { $ref: "#/components/schemas/Unit" }
+        kcal: { type: number }
+        protein_g:
+          type: [number, "null"]
+        carbs_g:
+          type: [number, "null"]
+        fat_g:
+          type: [number, "null"]
+        fiber_g:
+          type: [number, "null"]
+        sugar_g:
+          type: [number, "null"]
+        sodium_mg:
+          type: [number, "null"]
+        saturated_fat_g:
+          type: [number, "null"]
         sort_order: { type: integer, format: int32 }
 
     ServingPreview:
@@ -1282,7 +1334,6 @@ components:
         - kind
         - name
         - categories_tags
-        - nutrition
         - quality_score
         - servings
       properties:
@@ -1304,7 +1355,6 @@ components:
         categories_tags:
           type: array
           items: { type: string }
-        nutrition: { $ref: "#/components/schemas/NutritionPer100g" }
         nutriscore:
           oneOf:
             - $ref: "#/components/schemas/NutriscoreGrade"
@@ -1314,6 +1364,7 @@ components:
           description: Free-form JSON of additional nutrients, if any.
         servings:
           type: array
+          minItems: 1
           description: |
             Authoritative list of this food's servings. Clients reading
             servings should fetch the parent food — there is no separate
@@ -1322,7 +1373,7 @@ components:
 
     FoodCreate:
       type: object
-      required: [name, nutrition]
+      required: [name, servings]
       description: |
         Create a new user-custom food. The name `__quick_add__` is reserved
         for the internal quick-add sentinel and returns 400.
@@ -1334,8 +1385,11 @@ components:
           type: array
           items: { type: string }
           default: []
-        nutrition: { $ref: "#/components/schemas/NutritionPer100g" }
         nutriscore_grade: { $ref: "#/components/schemas/NutriscoreGrade" }
+        servings:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/ServingCreate" }
 
     QuickAddBody:
       type: object
@@ -1373,7 +1427,12 @@ components:
 
     FoodPatch:
       type: object
-      description: Any omitted field is left unchanged.
+      description: |
+        Any omitted field is left unchanged. When `servings` is present it
+        performs a full-list replace — existing servings are deleted and the
+        new list is inserted atomically. This invalidates any log entry's
+        `serving_id` for this food (those entries retain their denormalized
+        `serving_name` and frozen nutrition snapshot).
       properties:
         name: { type: string }
         brands: { type: string }
@@ -1381,8 +1440,10 @@ components:
         categories_tags:
           type: array
           items: { type: string }
-        nutrition: { $ref: "#/components/schemas/NutritionPer100g" }
         nutriscore_grade: { $ref: "#/components/schemas/NutriscoreGrade" }
+        servings:
+          type: array
+          items: { $ref: "#/components/schemas/ServingCreate" }
 
     FoodSearchHit:
       type: object
@@ -1460,7 +1521,8 @@ components:
         - consumed_on
         - meal
         - quantity
-        - grams_total
+        - entered_amount
+        - entered_unit
         - calories_kcal
         - created_at
         - updated_at
@@ -1476,7 +1538,8 @@ components:
         consumed_on: { type: string, format: date }
         meal: { $ref: "#/components/schemas/Meal" }
         quantity: { $ref: "#/components/schemas/Decimal" }
-        grams_total: { $ref: "#/components/schemas/Decimal" }
+        entered_amount: { $ref: "#/components/schemas/Decimal" }
+        entered_unit: { $ref: "#/components/schemas/Unit" }
         calories_kcal: { $ref: "#/components/schemas/Decimal" }
         protein_g:
           $ref: "#/components/schemas/NullableDecimal"
@@ -1499,13 +1562,14 @@ components:
 
     LogCreate:
       type: object
-      required: [food_id, serving_id, consumed_on, meal, quantity]
+      required: [food_id, serving_id, consumed_on, meal, entered_amount, entered_unit]
       properties:
         food_id: { type: string, format: uuid }
         serving_id: { type: string, format: uuid }
         consumed_on: { type: string, format: date }
         meal: { $ref: "#/components/schemas/Meal" }
-        quantity: { $ref: "#/components/schemas/Decimal" }
+        entered_amount: { $ref: "#/components/schemas/Decimal" }
+        entered_unit: { $ref: "#/components/schemas/Unit" }
         note: { type: string }
 
     LogPatch:
@@ -1517,7 +1581,8 @@ components:
         serving_id: { type: string, format: uuid }
         consumed_on: { type: string, format: date }
         meal: { $ref: "#/components/schemas/Meal" }
-        quantity: { $ref: "#/components/schemas/Decimal" }
+        entered_amount: { $ref: "#/components/schemas/Decimal" }
+        entered_unit: { $ref: "#/components/schemas/Unit" }
         note:
           type: [string, "null"]
 
