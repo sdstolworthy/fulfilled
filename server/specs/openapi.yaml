@@ -46,6 +46,8 @@ security:
   - bearerAuth: []
 
 tags:
+  - name: Auth
+    description: Sign-in and token issuance.
   - name: Health
     description: Liveness probes for orchestration and monitoring.
   - name: Profile
@@ -87,6 +89,31 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      operationId: login
+      summary: Sign in with username + password
+      description: |
+        Exchanges a local username + password for an opaque server-issued
+        bearer token. Use the returned `token` in `Authorization: Bearer
+        <token>` headers on subsequent requests. Tokens have a sliding-
+        window expiry refreshed on each authenticated request.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginRequest" }
+      responses:
+        "200":
+          description: Credentials accepted; token issued.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LoginResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "422": { $ref: "#/components/responses/BadRequest" }
 
   /me:
     get:
@@ -862,6 +889,27 @@ components:
     HeightUnit:
       type: string
       enum: [cm, ft_in]
+
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username: { type: string, minLength: 1, maxLength: 64 }
+        password: { type: string, minLength: 1 }
+
+    LoginResponse:
+      type: object
+      required: [token, expires_at]
+      properties:
+        token:
+          type: string
+          description: |
+            Opaque bearer token. Send back as
+            `Authorization: Bearer <token>` on subsequent requests.
+        expires_at:
+          type: string
+          format: date-time
+          description: Absolute kill date for the token, in UTC.
 
     User:
       type: object

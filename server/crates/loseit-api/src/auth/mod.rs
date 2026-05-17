@@ -9,6 +9,7 @@
 
 pub mod dev;
 pub mod jwks;
+pub mod local;
 
 use std::sync::Arc;
 

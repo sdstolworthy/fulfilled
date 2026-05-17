@@ -1,3 +1,4 @@
+pub mod auth;
 pub mod foods;
 pub mod goals;
 pub mod health;

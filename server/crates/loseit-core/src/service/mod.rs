@@ -3,6 +3,7 @@
 //! are constructed at the composition root with the repository
 //! implementations they need.
 
+pub mod auth;
 pub mod food;
 pub mod goal;
 pub mod ingest;
@@ -12,6 +13,7 @@ pub mod serving;
 pub mod user;
 pub mod weight;
 
+pub use auth::{AuthService, TOKEN_TTL};
 pub use food::FoodService;
 pub use goal::GoalService;
 pub use ingest::{FoodRecordSource, IngestService, OffFoodRecord};
