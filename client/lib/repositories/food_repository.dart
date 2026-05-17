@@ -528,7 +528,7 @@ class FoodRepository {
 
     final source = FoodSource.fromWire(json['source'] as String);
     final defServing = json['default_serving'] as Map<String, dynamic>?;
-    final kcalPerServing = dec(json['calories_per_serving']);
+    final kcalPerServing = dec(json['calories_per_serving'] ?? defServing?['kcal']);
 
     final servings = <Serving>[];
     if (defServing != null && kcalPerServing != null) {

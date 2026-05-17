@@ -275,7 +275,7 @@ class FoodSearchHit {
       defaultServingLabel: defServing?['label'] as String?,
       defaultServingAmount: dec(defServing?['amount']),
       defaultServingUnit: unitWire == null ? null : Unit.fromWire(unitWire),
-      caloriesPerServing: dec(json['calories_per_serving']),
+      caloriesPerServing: dec(json['calories_per_serving'] ?? defServing?['kcal']),
     );
   }
 
