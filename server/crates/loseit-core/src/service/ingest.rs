@@ -48,6 +48,13 @@ pub struct UsdaFoodPortion {
     /// Lower sequence numbers are "first". Portion with the lowest
     /// `sequence_number` gets `is_default = true`.
     pub sequence_number: i32,
+    /// Pre-composed human-readable label, e.g. `"1 cup, drained"` or
+    /// `"2 tablespoon"`. The adapter (`loseit-ingest`) composes this from
+    /// the FDC JSON's `portionDescription` (when present) or from
+    /// `value + measureUnit.name [+ modifier]`. `None` means no label
+    /// could be derived — the normaliser will fall through to
+    /// `formatAmountUnit` on the FE.
+    pub label: Option<String>,
 }
 
 /// Normalized USDA record consumed by the ingest pipeline.
@@ -477,7 +484,7 @@ pub fn accept_and_normalize_usda(record: UsdaFoodRecord) -> Option<FoodDraftWith
         let is_default = idx == 0;
 
         servings.push(ServingDraft {
-            label: None,
+            label: portion.label.clone(),
             amount,
             unit,
             kcal,
@@ -495,6 +502,33 @@ pub fn accept_and_normalize_usda(record: UsdaFoodRecord) -> Option<FoodDraftWith
             // the OFF normalizer's auto-companion gram serving).
             source: ServingSource::System,
             sort_order: idx as i32,
+        });
+    }
+
+    // F4-T1: if we produced at least one FDC-derived serving, append a labelless
+    // 100 g companion so power users always get a per-100 g baseline (and the
+    // FE renders both the human label and `100 g`). This is non-default — the
+    // first FDC portion wins `is_default`. If `food_portions` was empty (or all
+    // portions were filtered out upstream e.g. RACC drop), fall through to the
+    // empty-fallback block below — that path takes `is_default = true`.
+    if !servings.is_empty() && record.energy_kcal_100g.is_some() {
+        let sodium_mg = record.sodium_mg_100g;
+        let sort_order = servings.len() as i32;
+        servings.push(ServingDraft {
+            label: None,
+            amount: dec!(100),
+            unit: Unit::Gram,
+            kcal: kcal_100g,
+            protein_g: record.protein_100g,
+            carbs_g: record.carbs_100g,
+            fat_g: record.fat_100g,
+            fiber_g: record.fiber_100g,
+            sugar_g: record.sugar_100g,
+            sodium_mg,
+            saturated_fat_g: record.saturated_fat_100g,
+            is_default: false,
+            source: ServingSource::System,
+            sort_order,
         });
     }
 
@@ -517,7 +551,7 @@ pub fn accept_and_normalize_usda(record: UsdaFoodRecord) -> Option<FoodDraftWith
             sodium_mg,
             saturated_fat_g: record.saturated_fat_100g,
             is_default: true,
-            source: ServingSource::Usda,
+            source: ServingSource::System,
             sort_order: 0,
         });
     }
@@ -962,7 +996,7 @@ mod tests {
     // ---- USDA cases ----
 
     /// §8 usda_tablespoon_maps: portion {gramWeight:15.0, measureUnit:"tablespoon"} →
-    /// {1, Tablespoon}.
+    /// {1, Tablespoon}. F4-T1: also asserts the composed label and the 100 g companion.
     #[test]
     fn usda_tablespoon_maps() {
         let r = UsdaFoodRecord {
@@ -974,6 +1008,7 @@ mod tests {
                 gram_weight: dec!(14.2),
                 measure_unit_name: "tablespoon".to_string(),
                 sequence_number: 1,
+                label: Some("1 tablespoon".to_string()),
             }],
             energy_kcal_100g: Some(dec!(717)),
             protein_100g: Some(dec!(0.85)),
@@ -983,10 +1018,20 @@ mod tests {
         };
 
         let out = accept_and_normalize_usda(r).expect("should accept");
+        // F4-T1: 1 FDC portion + 1 system 100 g companion = 2 servings.
+        assert_eq!(out.servings.len(), 2);
         let s = &out.servings[0];
         assert_eq!(s.unit, Unit::Tablespoon);
         assert_eq!(s.amount, Decimal::ONE);
         assert!(s.is_default);
+        assert_eq!(s.label.as_deref(), Some("1 tablespoon"));
+        // Companion: labelless 100 g, non-default, system source.
+        let companion = &out.servings[1];
+        assert_eq!(companion.unit, Unit::Gram);
+        assert_eq!(companion.amount, dec!(100));
+        assert!(!companion.is_default);
+        assert!(companion.label.is_none());
+        assert_eq!(companion.source, ServingSource::System);
     }
 
     /// §8 usda_unmapped_fallback_grams: measureUnit:"foobar" →
@@ -1002,6 +1047,7 @@ mod tests {
                 gram_weight: dec!(45),
                 measure_unit_name: "foobar".to_string(),
                 sequence_number: 1,
+                label: None,
             }],
             energy_kcal_100g: Some(dec!(200)),
             ..Default::default()
@@ -1011,6 +1057,83 @@ mod tests {
         let s = &out.servings[0];
         assert_eq!(s.unit, Unit::Gram);
         assert_eq!(s.amount, dec!(45));
+    }
+
+    /// F4-T1: per-portion composed label is threaded through into the
+    /// `ServingDraft.label`, and a labelless 100 g companion is appended
+    /// after the FDC portions with `is_default = false`.
+    #[test]
+    fn usda_label_with_modifier_composed() {
+        let r = UsdaFoodRecord {
+            fdc_id: 321611,
+            data_type: "foundation_food".into(),
+            description: "Beans, snap, green, canned".into(),
+            brand_owner: None,
+            food_portions: vec![UsdaFoodPortion {
+                gram_weight: dec!(129),
+                measure_unit_name: "cup".into(),
+                sequence_number: 1,
+                label: Some("1 cup, drained".into()),
+            }],
+            energy_kcal_100g: Some(dec!(28)),
+            ..Default::default()
+        };
+
+        let out = accept_and_normalize_usda(r).expect("should accept");
+        // 1 FDC portion + 1 system 100 g companion.
+        assert_eq!(out.servings.len(), 2);
+
+        // Portion: cup, default, labelled.
+        let portion = out
+            .servings
+            .iter()
+            .find(|s| s.unit == Unit::Cup)
+            .expect("cup portion present");
+        assert_eq!(portion.label.as_deref(), Some("1 cup, drained"));
+        assert!(portion.is_default);
+        assert_eq!(portion.source, ServingSource::System);
+
+        // Companion: 100 g, labelless, non-default.
+        let companion = out
+            .servings
+            .iter()
+            .find(|s| s.unit == Unit::Gram && s.amount == dec!(100))
+            .expect("100 g companion present");
+        assert!(companion.label.is_none());
+        assert!(!companion.is_default);
+        assert_eq!(companion.source, ServingSource::System);
+
+        // Exactly one default across all servings (matches the partial
+        // unique index `servings_one_default_per_food`).
+        assert_eq!(
+            out.servings.iter().filter(|s| s.is_default).count(),
+            1,
+            "exactly one is_default = true serving per food"
+        );
+    }
+
+    /// F4-T1: if all FDC portions are filtered out upstream (e.g. all RACC),
+    /// the empty-fallback block emits the 100 g serving as default.
+    #[test]
+    fn usda_empty_portions_emits_default_companion() {
+        let r = UsdaFoodRecord {
+            fdc_id: 1004,
+            data_type: "foundation_food".into(),
+            description: "kcal-only food".into(),
+            brand_owner: None,
+            food_portions: vec![],
+            energy_kcal_100g: Some(dec!(120)),
+            ..Default::default()
+        };
+
+        let out = accept_and_normalize_usda(r).expect("should accept");
+        assert_eq!(out.servings.len(), 1);
+        let s = &out.servings[0];
+        assert_eq!(s.unit, Unit::Gram);
+        assert_eq!(s.amount, dec!(100));
+        assert!(s.is_default);
+        assert!(s.label.is_none());
+        assert_eq!(s.source, ServingSource::System);
     }
 
     /// §8 usda_empty_portions_no_kcal_dropped: foodPortions=[] + no energy-kcal → None.

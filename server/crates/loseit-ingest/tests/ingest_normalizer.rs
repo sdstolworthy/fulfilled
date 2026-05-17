@@ -238,7 +238,8 @@ fn off_round_trip_fixture_4_rows() {
 #[test]
 fn usda_round_trip_fixture_3_records() {
     let records = vec![
-        // Record A: 2 portions with different measureUnit names.
+        // Record A: 2 portions with different measureUnit names, both with
+        // pre-composed labels (F4-T1).
         UsdaFoodRecord {
             fdc_id: 9001,
             data_type: "sr_legacy_food".into(),
@@ -249,18 +250,20 @@ fn usda_round_trip_fixture_3_records() {
                     gram_weight: dec!(13.5),
                     measure_unit_name: "tablespoon".into(),
                     sequence_number: 1,
+                    label: Some("1 tablespoon".into()),
                 },
                 UsdaFoodPortion {
                     gram_weight: dec!(216),
                     measure_unit_name: "cup".into(),
                     sequence_number: 2,
+                    label: Some("1 cup".into()),
                 },
             ],
             energy_kcal_100g: Some(dec!(884)),
             fat_100g: Some(dec!(100)),
             ..Default::default()
         },
-        // Record B: unmapped unit → fallback {gramWeight, Gram}.
+        // Record B: unmapped unit → fallback {gramWeight, Gram}. No label.
         UsdaFoodRecord {
             fdc_id: 9002,
             data_type: "branded_food".into(),
@@ -270,6 +273,7 @@ fn usda_round_trip_fixture_3_records() {
                 gram_weight: dec!(28),
                 measure_unit_name: "scoop".into(),
                 sequence_number: 1,
+                label: None,
             }],
             energy_kcal_100g: Some(dec!(370)),
             protein_100g: Some(dec!(80)),
@@ -294,13 +298,15 @@ fn usda_round_trip_fixture_3_records() {
     // Record C dropped.
     assert_eq!(accepted.len(), 2, "2 of 3 records must be accepted");
 
-    // Record A: Olive Oil — 2 servings, first is tablespoon (default).
+    // Record A: Olive Oil — 2 FDC portions + 1 system 100 g companion (F4-T1).
     let a = accepted.iter().find(|r| r.draft.name == "Olive Oil").unwrap();
-    assert_eq!(a.servings.len(), 2);
+    assert_eq!(a.servings.len(), 3);
     let tbsp = &a.servings[0];
     assert_eq!(tbsp.unit, Unit::Tablespoon);
     assert_eq!(tbsp.amount, Decimal::ONE);
     assert!(tbsp.is_default);
+    // F4-T1: label round-trips through accept_and_normalize_usda.
+    assert_eq!(tbsp.label.as_deref(), Some("1 tablespoon"));
     // kcal = 884 * 13.5 / 100 = 119.34
     let expected_kcal = dec!(884) * dec!(13.5) / dec!(100);
     assert_eq!(tbsp.kcal, expected_kcal);
@@ -308,14 +314,33 @@ fn usda_round_trip_fixture_3_records() {
     let cup = &a.servings[1];
     assert_eq!(cup.unit, Unit::Cup);
     assert!(!cup.is_default);
+    assert_eq!(cup.label.as_deref(), Some("1 cup"));
 
-    // Record B: Mystery Powder — unmapped "scoop" → {28, Gram}.
+    // F4-T1: 100 g system companion — labelless, non-default.
+    let companion = &a.servings[2];
+    assert_eq!(companion.unit, Unit::Gram);
+    assert_eq!(companion.amount, dec!(100));
+    assert!(!companion.is_default);
+    assert!(companion.label.is_none());
+    assert_eq!(companion.source, ServingSource::System);
+    // Exactly one default per food.
+    assert_eq!(a.servings.iter().filter(|s| s.is_default).count(), 1);
+
+    // Record B: Mystery Powder — unmapped "scoop" → {28, Gram}, no label.
+    // FDC portion + 100 g companion = 2 servings.
     let b = accepted.iter().find(|r| r.draft.name == "Mystery Powder").unwrap();
-    assert_eq!(b.servings.len(), 1);
+    assert_eq!(b.servings.len(), 2);
     let s_b = &b.servings[0];
     assert_eq!(s_b.unit, Unit::Gram);
     assert_eq!(s_b.amount, dec!(28));
     assert!(s_b.is_default);
+    assert!(s_b.label.is_none());
+    // Companion 100 g — labelless, non-default.
+    let b_companion = &b.servings[1];
+    assert_eq!(b_companion.unit, Unit::Gram);
+    assert_eq!(b_companion.amount, dec!(100));
+    assert!(!b_companion.is_default);
+    assert!(b_companion.label.is_none());
 }
 
 // ---------------------------------------------------------------------------
@@ -467,6 +492,7 @@ async fn usda_ingest_service_round_trip_2_records() {
                 gram_weight: dec!(244),
                 measure_unit_name: "cup".into(),
                 sequence_number: 1,
+                label: Some("1 cup".into()),
             }],
             energy_kcal_100g: Some(dec!(61)),
             protein_100g: Some(dec!(3.2)),
@@ -483,6 +509,7 @@ async fn usda_ingest_service_round_trip_2_records() {
                 gram_weight: dec!(28),
                 measure_unit_name: "oz".into(),
                 sequence_number: 1,
+                label: Some("1 oz".into()),
             }],
             energy_kcal_100g: Some(dec!(403)),
             protein_100g: Some(dec!(25)),
@@ -521,13 +548,32 @@ async fn usda_ingest_service_round_trip_2_records() {
     assert_eq!(milk_food.name, "Whole Milk");
 
     let milk_servings = servings.list_for_food(milk_food.id).await.unwrap();
-    assert_eq!(milk_servings.len(), 1);
-    let ms = &milk_servings[0];
-    assert_eq!(ms.unit, Unit::Cup);
+    // F4-T1: 1 FDC portion + 1 system 100 g companion = 2 servings.
+    assert_eq!(milk_servings.len(), 2);
+    let ms = milk_servings
+        .iter()
+        .find(|s| s.unit == Unit::Cup)
+        .expect("cup serving present");
     assert_eq!(ms.amount, Decimal::ONE);
     assert!(ms.is_default);
-    assert_eq!(ms.source, ServingSource::Usda);
+    // F4-T1: USDA-imported portion servings ride the OpenAPI `system` enum
+    // variant (the `Usda` Rust variant broke the FE decoder when shipped).
+    assert_eq!(ms.source, ServingSource::System);
+    // F4-T1: label survives end-to-end through IngestService::run_usda.
+    assert_eq!(ms.label.as_deref(), Some("1 cup"));
     // kcal = 61 * 244 / 100 = 148.84
     let expected_milk_kcal = dec!(61) * dec!(244) / dec!(100);
     assert_eq!(ms.kcal, expected_milk_kcal);
+
+    // 100 g companion: labelless, non-default.
+    let milk_companion = milk_servings
+        .iter()
+        .find(|s| s.unit == Unit::Gram && s.amount == dec!(100))
+        .expect("100 g companion present");
+    assert!(!milk_companion.is_default);
+    assert!(milk_companion.label.is_none());
+    assert_eq!(milk_companion.source, ServingSource::System);
+
+    // Exactly one default per food (matches partial unique index).
+    assert_eq!(milk_servings.iter().filter(|s| s.is_default).count(), 1);
 }
