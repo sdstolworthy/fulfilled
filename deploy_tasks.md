@@ -107,7 +107,7 @@ removed from DNS.
 
 ## Task 4 — Set `API_BASE_URL` build-arg on Coolify web service *(P0 — blocks real-data on the deploy)*
 
-Status: `open`
+Status: `done` — verified by curling the rebuilt `main.dart.js` from `https://app.coolify.stolworthy.co/main.dart.js`; the bundle has `https://api.coolify.stolworthy.co/api/v1` baked in. Coolify env var `API_BASE_URL` is set with `is_buildtime=true`, so the rebuild triggered alongside the BE-008 redeploy (uuid `senj72y8`) picked it up.
 
 The Flutter web release build is gated on an **absolute** `API_BASE_URL`
 dart-define value (per the LOG-001 amendment in commit
@@ -140,7 +140,7 @@ Network tab). Today it incorrectly requests
 
 ## Task 5 — Set `DEV_AUTH_BYPASS=false` on Coolify api service *(P0 — blocks real sign-in)*
 
-Status: `open`
+Status: `done` — Coolify env patched via API at 09:28 UTC; redeploy `senj72y8` picked it up. Live acceptance gate (per Ask 2 in `backend_tasks.md`) passes — POST `/auth/login` with dev/dev returns 200 + 43-char opaque token; wrong-creds returns 401; bearer round-trips against `/me` returning the seeded dev user. **Preview environment** still has `DEV_AUTH_BYPASS=true` — left intact since it isn't reachable from the public deploy.
 
 BE-008 shipped (`POST /api/v1/auth/login` route, local-creds auth,
 opaque token table — see `backend_tickets_ledger.md` Ask 2). The

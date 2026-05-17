@@ -29,7 +29,7 @@ real-API calls tonight.
 
 ## Ask 1 — Decide auth posture for the deploy: dev-bypass vs OIDC vs local-creds *(P0 — gates Ask 2)*
 
-Status: `in-progress` — architect → TPM → engineers pipeline running for (b)
+Status: `done` — option (b) local-creds shipped and live. See Ask 2 for the live-deploy acceptance.
 
 **Frontend follow-up (user directive, 2026-05-17):** the closed-beta
 "paste a static token" flow does not meet the bar for "real sign in"
@@ -109,7 +109,22 @@ re-files Ask 2 with the right shape based on the answer.
 
 ## Ask 2 — `POST /api/v1/auth/login` shipped (BE-008) *(P0 — depends on Ask 1)*
 
-Status: `in-progress` — architect → TPM → engineers pipeline running on branch `be-auth-login`
+Status: `done` — PR #3 merged as `77fe74a`; redeploy `senj72y8` shipped with `DEV_AUTH_BYPASS=false` (Coolify env flipped). Live acceptance gate verified against `https://api.coolify.stolworthy.co`:
+
+- `POST /auth/login {"username":"dev","password":"dev"}` → **200** `{"token":"HTpN8l4STZqonE_4mFEqymse0LB6ZZC-y4m7f4FIAu4","expires_at":"2026-06-16T..."}` (43-char base64url-no-pad token, 30-day TTL).
+- `GET /me` with that bearer → **200** returning the seeded dev user (`issuer="dev"`, `external_id="dev-user"`, the existing UUID `6eb64609-...`).
+- `POST /auth/login {"username":"dev","password":"WRONG"}` → **401**.
+- `POST /auth/login {"username":"ghost","password":"x"}` → **401**.
+
+Implementation notes:
+
+- Tokens are opaque (32 random bytes base64url-no-pad, sha256-hex hashed at rest in `local_auth_tokens`). Sliding-window TTL refreshed on each authed call.
+- Schema: `users_local_auth` + `local_auth_tokens`, both `ON DELETE CASCADE` from `users(id)`. Migration `0007_local_auth.sql`.
+- argon2id with `Argon2::default()` (m=19456, t=2, p=1) — OWASP 2023 minimum.
+- Backend select: `LOSEIT_AUTH_BACKEND=local|jwks` (default `local`); `DEV_AUTH_BYPASS=true` still wins as escape hatch. JWKS path untouched for future OIDC swap.
+- Production safety: `main.rs` hard-fails on startup if `RUST_ENV=production` and `LOSEIT_SEED_DEV_AUTH=true` together — operator must unset the seed flag before flipping `RUST_ENV` to production.
+- Design + task breakdown: `server/specs/be_auth_login_design.md`, `server/specs/be_auth_login_tasks.md`. 26 new tests (208 workspace total).
+- `LoginResponse.expires_at` is required on the wire (FE design §10 noted this could go optional — flipped to required since the handler always emits it).
 
 **Frontend follow-up (user directive, 2026-05-17):** Ask 1 picked (b)
 local-creds, so this ask transitions from "no-op-for-now" to "ship
