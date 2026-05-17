@@ -24,6 +24,24 @@ ApiClient buildTestApiClient() => ApiClient(
       baseUrl: 'https://test.example/api/v1',
     );
 
+/// Construct a [FoodRepository] that talks to the live (mocked) Dio
+/// surface. Used by repo unit tests that install a [FakeDioAdapter]
+/// and assert on the wire shape. Skips the fixture-mode short-circuit
+/// so the Dio path actually runs.
+FoodRepository buildLiveFoodRepository(ApiClient api) =>
+    FoodRepository(api, useFixtures: false);
+
+/// Construct a [LogRepository] in live (mocked-Dio) mode. The food +
+/// goal repos are also wired up live so end-to-end flows that consult
+/// them (e.g. `LogRepository.create` looking up the seed food) reach
+/// the same adapter.
+LogRepository buildLiveLogRepository(ApiClient api) => LogRepository(
+      api: api,
+      foodRepository: FoodRepository(api, useFixtures: false),
+      goalRepository: GoalRepository(api),
+      useFixtures: false,
+    );
+
 /// Reset every repository's in-memory state to the seed and shrink the
 /// mock latency to (effectively) zero so the awaits inside the mocks
 /// don't slow the suite. Call in `setUp`.
