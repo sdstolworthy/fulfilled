@@ -1,6 +1,7 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use loseit_core::domain::{Serving, ServingDraft, ServingPatch, ServingSource};
+use loseit_core::domain::unit::Unit;
 use loseit_core::repo::ServingRepository;
 use loseit_core::{CoreError, CoreResult};
 use rust_decimal::Decimal;
@@ -23,12 +24,22 @@ impl PgServingRepository {
 struct ServingRow {
     id: Uuid,
     food_id: Uuid,
-    label: String,
-    grams: Decimal,
-    is_default: bool,
+    label: Option<String>,
+    amount: Decimal,
     // Stored as TEXT with a CHECK constraint in the DB; we keep it as
-    // String here and convert through `ServingSource::parse` so the
-    // domain enum stays the single source of truth.
+    // String here and convert through `Unit::parse` so the domain enum
+    // stays the single source of truth.
+    unit: String,
+    kcal: Decimal,
+    protein_g: Option<Decimal>,
+    carbs_g: Option<Decimal>,
+    fat_g: Option<Decimal>,
+    fiber_g: Option<Decimal>,
+    sugar_g: Option<Decimal>,
+    sodium_mg: Option<Decimal>,
+    saturated_fat_g: Option<Decimal>,
+    is_default: bool,
+    // Stored as TEXT with a CHECK constraint; convert via ServingSource::parse.
     source: String,
     sort_order: i32,
     created_at: DateTime<Utc>,
@@ -37,15 +48,25 @@ struct ServingRow {
 
 impl From<ServingRow> for Serving {
     fn from(row: ServingRow) -> Self {
-        // The CHECK constraint guarantees the string is one of the three
-        // valid variants. If it isn't (e.g., a migration drift), fall back
-        // to `System` rather than panicking — the row is still useful.
+        // DB CHECK constraint guarantees the string is a valid unit variant.
+        let unit = Unit::parse(&row.unit)
+            .expect("DB CHECK ensures unit invariant");
+        // DB CHECK constraint guarantees the string is a valid source variant.
         let source = ServingSource::parse(&row.source).unwrap_or(ServingSource::System);
         Serving {
             id: row.id,
             food_id: row.food_id,
             label: row.label,
-            grams: row.grams,
+            amount: row.amount,
+            unit,
+            kcal: row.kcal,
+            protein_g: row.protein_g,
+            carbs_g: row.carbs_g,
+            fat_g: row.fat_g,
+            fiber_g: row.fiber_g,
+            sugar_g: row.sugar_g,
+            sodium_mg: row.sodium_mg,
+            saturated_fat_g: row.saturated_fat_g,
             is_default: row.is_default,
             source,
             sort_order: row.sort_order,
@@ -55,8 +76,10 @@ impl From<ServingRow> for Serving {
     }
 }
 
-const SELECT_COLS: &str = "id, food_id, label, grams, is_default, source, \
-    sort_order, created_at, updated_at";
+const SELECT_COLS: &str =
+    "id, food_id, label, amount, unit, kcal, protein_g, carbs_g, fat_g, \
+     fiber_g, sugar_g, sodium_mg, saturated_fat_g, is_default, source, \
+     sort_order, created_at, updated_at";
 
 #[async_trait]
 impl ServingRepository for PgServingRepository {
@@ -87,14 +110,24 @@ impl ServingRepository for PgServingRepository {
     async fn create(&self, food_id: Uuid, draft: &ServingDraft) -> CoreResult<Serving> {
         let sql = format!(
             "INSERT INTO servings \
-                (food_id, label, grams, is_default, source, sort_order) \
-             VALUES ($1, $2, $3, $4, $5, $6) \
+                (food_id, label, amount, unit, kcal, protein_g, carbs_g, fat_g, \
+                 fiber_g, sugar_g, sodium_mg, saturated_fat_g, is_default, source, sort_order) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) \
              RETURNING {SELECT_COLS}"
         );
         let row: ServingRow = sqlx::query_as(&sql)
             .bind(food_id)
             .bind(&draft.label)
-            .bind(draft.grams)
+            .bind(draft.amount)
+            .bind(draft.unit.as_str())
+            .bind(draft.kcal)
+            .bind(draft.protein_g)
+            .bind(draft.carbs_g)
+            .bind(draft.fat_g)
+            .bind(draft.fiber_g)
+            .bind(draft.sugar_g)
+            .bind(draft.sodium_mg)
+            .bind(draft.saturated_fat_g)
             .bind(draft.is_default)
             .bind(draft.source.as_str())
             .bind(draft.sort_order)
@@ -108,18 +141,55 @@ impl ServingRepository for PgServingRepository {
         // `is_default` is intentionally absent from the patch: flipping the
         // default is an atomic operation handled by `set_default` so the
         // partial unique index invariant always holds.
+        //
+        // Double-Option fields (nullable patch): outer None = don't touch,
+        // inner None = set to NULL. We can't use COALESCE for those because
+        // COALESCE($n, col) can't distinguish "caller passed NULL to clear the
+        // field" from "caller passed no value". Instead we use the pattern:
+        //   col = CASE WHEN $n_flag THEN $n_value ELSE col END
+        // where $n_flag is a bool bound from patch.field.is_some().
         let sql = format!(
             "UPDATE servings SET \
-                label      = COALESCE($2, label), \
-                grams      = COALESCE($3, grams), \
-                sort_order = COALESCE($4, sort_order) \
+                label           = CASE WHEN $2  THEN $3  ELSE label           END, \
+                amount          = COALESCE($4,  amount), \
+                unit            = COALESCE($5,  unit), \
+                kcal            = COALESCE($6,  kcal), \
+                protein_g       = CASE WHEN $7  THEN $8  ELSE protein_g       END, \
+                carbs_g         = CASE WHEN $9  THEN $10 ELSE carbs_g         END, \
+                fat_g           = CASE WHEN $11 THEN $12 ELSE fat_g           END, \
+                fiber_g         = CASE WHEN $13 THEN $14 ELSE fiber_g         END, \
+                sugar_g         = CASE WHEN $15 THEN $16 ELSE sugar_g         END, \
+                sodium_mg       = CASE WHEN $17 THEN $18 ELSE sodium_mg       END, \
+                saturated_fat_g = CASE WHEN $19 THEN $20 ELSE saturated_fat_g END, \
+                sort_order      = COALESCE($21, sort_order) \
              WHERE id = $1 \
              RETURNING {SELECT_COLS}"
         );
         let row: ServingRow = sqlx::query_as(&sql)
             .bind(id)
-            .bind(patch.label.as_deref())
-            .bind(patch.grams)
+            // label: double-Option nullable patch
+            .bind(patch.label.is_some())
+            .bind(patch.label.as_ref().and_then(|o| o.as_deref()))
+            // amount, unit, kcal: simple COALESCE
+            .bind(patch.amount)
+            .bind(patch.unit.map(|u| u.as_str()))
+            .bind(patch.kcal)
+            // nullable macro fields
+            .bind(patch.protein_g.is_some())
+            .bind(patch.protein_g.flatten())
+            .bind(patch.carbs_g.is_some())
+            .bind(patch.carbs_g.flatten())
+            .bind(patch.fat_g.is_some())
+            .bind(patch.fat_g.flatten())
+            .bind(patch.fiber_g.is_some())
+            .bind(patch.fiber_g.flatten())
+            .bind(patch.sugar_g.is_some())
+            .bind(patch.sugar_g.flatten())
+            .bind(patch.sodium_mg.is_some())
+            .bind(patch.sodium_mg.flatten())
+            .bind(patch.saturated_fat_g.is_some())
+            .bind(patch.saturated_fat_g.flatten())
+            // sort_order: simple COALESCE
             .bind(patch.sort_order)
             .fetch_one(&self.pool)
             .await
