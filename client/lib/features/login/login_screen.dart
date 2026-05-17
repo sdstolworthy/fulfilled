@@ -1,14 +1,20 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
+import '../../data/api_client.dart';
 import '../../data/auth_providers.dart';
+import '../../data/auth_token.dart';
 import '../../form_factor/breakpoints.dart';
+import '../../routing/routes.dart';
 import '../../theme/context_extensions.dart';
 import 'login_controller.dart';
 import 'widgets/credentials_form.dart';
 import 'widgets/login_button.dart';
 import 'widgets/oidc_button.dart';
+import 'widgets/oidc_navigator.dart';
 import 'widgets/paste_jwt_disclosure.dart';
 import 'widgets/server_url_field.dart';
 import 'widgets/sign_up_link.dart';
@@ -51,19 +57,116 @@ import 'widgets/sign_up_link.dart';
 /// errors — no SnackBar), T-14 (deep-linkable route), T-15
 /// (form-factor at root), T-20 (Semantics on every field), T-24 Case 2
 /// (`context.go` on success).
-class LoginScreen extends StatelessWidget {
+class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({super.key});
+
+  @override
+  ConsumerState<LoginScreen> createState() => _LoginScreenState();
+}
+
+class _LoginScreenState extends ConsumerState<LoginScreen> {
+  /// Set when the backend redirected us back from the OIDC callback
+  /// with `?oidc_code=<handoff>` on the document URL (Ask 8). When
+  /// non-null we render the "Completing sign-in…" body instead of the
+  /// credentials form; on success [signIn] flips
+  /// `authTokenProvider` and the router redirect rule moves us to
+  /// `/today`. On error we render an inline retry CTA and the user
+  /// can either retry the IdP click or fall back to local creds.
+  String? _exchangeError;
+  bool _exchanging = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // `Uri.base` on Flutter web returns the document URL including
+    // page-level query params (the part before `#`). The backend's
+    // redirect target is
+    // `<LOSEIT_FE_ORIGIN>/?oidc_code=<handoff>#/login`, so we read
+    // the param off `Uri.base.queryParameters` even though the
+    // hash-routed location is `/login`.
+    final oidcCode = Uri.base.queryParameters['oidc_code'];
+    if (oidcCode != null && oidcCode.isNotEmpty) {
+      _exchanging = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _runExchange(oidcCode);
+      });
+    }
+  }
+
+  Future<void> _runExchange(String handoff) async {
+    // Strip `oidc_code` off the document URL **before** the exchange
+    // fires so a browser refresh during the round-trip doesn't double-
+    // submit a code the server has already redeemed (single-use, 60s
+    // TTL). The fragment route survives the replace.
+    OidcNavigator.instance.stripQueryParam('oidc_code');
+    try {
+      final dio = ref.read(apiClientProvider).dio;
+      final res = await dio.post<dynamic>(
+        '/auth/oidc/exchange',
+        data: <String, String>{'code': handoff},
+      );
+      final body = res.data;
+      if (body is! Map ||
+          body['token'] is! String ||
+          (body['token'] as String).isEmpty) {
+        if (!mounted) return;
+        setState(() {
+          _exchanging = false;
+          _exchangeError =
+              'Sign-in completed but the server returned no token. '
+              'Please try again.';
+        });
+        return;
+      }
+      final token = body['token'] as String;
+      await ref.read(authTokenProvider.notifier).signIn(token);
+      if (!mounted) return;
+      // The LOG-007 router redirect rule will catch
+      // `has-token + /login → /today` on the next frame anyway, but
+      // an explicit go gets us there one frame sooner.
+      context.go(Routes.todayPath);
+    } on DioException catch (e) {
+      if (!mounted) return;
+      final status = e.response?.statusCode;
+      final message = _extractServerMessage(e.response?.data) ??
+          (status == null
+              ? "Couldn't reach the server. Check your connection and "
+                  'try again.'
+              : 'Sign-in failed (server returned $status).');
+      setState(() {
+        _exchanging = false;
+        _exchangeError = message;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _exchanging = false;
+        _exchangeError = 'An unexpected error occurred. Please try again.';
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final width = MediaQuery.sizeOf(context).width;
     final isExpanded = width >= Breakpoints.mediumMax;
-    // T-15 — form-factor branch at the screen root. Both arms share
-    // `_LoginBody` so the column structure lives in one place.
-    if (isExpanded) {
-      return const _LoginExpanded(child: _LoginBody());
+    final Widget body;
+    if (_exchanging) {
+      body = const _OidcExchangingBody();
+    } else if (_exchangeError != null) {
+      body = _OidcErrorBody(
+        message: _exchangeError!,
+        onRetry: () => setState(() => _exchangeError = null),
+      );
+    } else {
+      body = const _LoginBody();
     }
-    return const _LoginCompact(child: _LoginBody());
+    // T-15 — form-factor branch at the screen root. Both arms share
+    // the body so the column structure lives in one place.
+    if (isExpanded) {
+      return _LoginExpanded(child: body);
+    }
+    return _LoginCompact(child: body);
   }
 }
 
@@ -317,4 +420,96 @@ class _Logo extends StatelessWidget {
       ),
     );
   }
+}
+
+/// "Completing sign-in…" body rendered while the OIDC handoff code is
+/// being exchanged for an opaque bearer token. T-08 — no spinner; a
+/// static skeleton + text. The exchange settles in <1s in practice
+/// (single round-trip to the api).
+class _OidcExchangingBody extends StatelessWidget {
+  const _OidcExchangingBody();
+
+  @override
+  Widget build(BuildContext context) {
+    final space = context.space;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        const Center(child: _Logo()),
+        SizedBox(height: space.x6),
+        Text(
+          'Completing sign-in…',
+          style: context.text.hero,
+          textAlign: TextAlign.center,
+        ),
+        SizedBox(height: space.x3),
+        Text(
+          'Exchanging your handoff code for a session token.',
+          style: context.text.meta,
+          textAlign: TextAlign.center,
+        ),
+      ],
+    );
+  }
+}
+
+/// Inline error body for an OIDC exchange that failed (bad handoff,
+/// server 5xx, network blip). T-11 — non-modal warning + "Try again"
+/// CTA that re-enters the credentials form so the user can either
+/// retry the IdP click or fall back to local creds.
+class _OidcErrorBody extends StatelessWidget {
+  const _OidcErrorBody({required this.message, required this.onRetry});
+
+  final String message;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.colors;
+    final space = context.space;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        Center(
+          child: Icon(
+            Icons.warning_amber_rounded,
+            size: 40,
+            color: colors.danger,
+          ),
+        ),
+        SizedBox(height: space.x3),
+        Text(
+          "Sign-in didn't complete",
+          style: context.text.hero,
+          textAlign: TextAlign.center,
+        ),
+        SizedBox(height: space.x3),
+        Text(
+          message,
+          style: context.text.body,
+          textAlign: TextAlign.center,
+        ),
+        SizedBox(height: space.x5),
+        SizedBox(
+          height: 54,
+          child: FilledButton(
+            onPressed: onRetry,
+            child: const Text('Back to sign in'),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Pull a human-readable error message off a typical `Error` response
+/// body. The server emits `{code, message?}` on errors; we surface
+/// `message` verbatim when present.
+String? _extractServerMessage(Object? data) {
+  if (data is Map && data['message'] is String) {
+    return data['message'] as String;
+  }
+  return null;
 }

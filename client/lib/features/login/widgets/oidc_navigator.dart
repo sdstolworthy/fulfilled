@@ -17,5 +17,11 @@ abstract class OidcNavigator {
   /// caller does after this is moot.
   void redirect(String url);
 
+  /// Strip a single query-string parameter from the document URL via
+  /// `window.history.replaceState` (web only). Used after the FE
+  /// consumes the `oidc_code` handoff so a browser refresh doesn't
+  /// re-submit the now-spent code. No-op on non-web.
+  void stripQueryParam(String name);
+
   static OidcNavigator get instance => navigatorImpl;
 }
