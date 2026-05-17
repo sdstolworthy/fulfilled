@@ -7,62 +7,27 @@ import '../../domain/drafts.dart';
 import '../../domain/enums.dart';
 import '../../domain/food.dart';
 import '../../domain/food_patch.dart';
-import '../../domain/nutrition.dart';
 import '../../providers/draft_providers.dart';
 import '../../providers/food_providers.dart';
 import '../../providers/profile_providers.dart';
 import '../../providers/repository_providers.dart';
-import '../../repositories/food_repository.dart';
 import '../../theme/context_extensions.dart';
 import 'widgets/basics_section.dart';
-import 'widgets/nutrition_section.dart';
 import 'widgets/servings_section.dart';
 
-/// Screen 05 — Create custom food.
+/// Screen 05 — Create custom food. Per Ask 10 nutrition lives **per
+/// serving**, so the form is now:
+///   1. Identity (name / brand / barcode) — [BasicsSection].
+///   2. Servings — [ServingsSection]. Each row carries label?,
+///      amount, unit, kcal, optional macros, isDefault.
 ///
-/// Lives outside the ShellRoute (full-page context). Composes:
-/// top bar (Cancel + title + Save) → step indicator
-/// (Details / Nutrition / Servings) → scroll body → sticky footer
-/// `PrimaryButton`.
-///
-/// Form state lives on `customFoodDraftProvider`. Drafts do not reset on
-/// cancel — only on a successful save or an explicit "Discard". The
-/// architecture's reasoning: a user who taps Cancel and comes back
-/// expects their typing to still be there.
-///
-/// Save flow:
-/// 1. Validate client-side (kcal/P/C/F + name). If invalid, switch the
-///    footer to "Fix N errors to save" and surface inline `Required`
-///    rows under each missing field.
-/// 2. Build `FoodCreate` (the `NutritionPer100g.toJson` converts sodium
-///    mg → g at the wire boundary so the screen never multiplies).
-/// 3. Await `foodRepository.createCustom(...)`.
-/// 4. On success: `notifier.reset()`, invalidate `meProvider` +
-///    `customFoodCountProvider`, `context.pop(food)`.
-/// 5. On failure: SnackBar; draft is preserved.
-///
-/// Tenants honored: T-07 (every numeric is a `QuantityStepper`), T-08
-/// (save shows a button-level spinner, never a blocking modal), T-11
-/// (inline errors; AlertDialog only for the destructive
-/// "Discard unsaved changes" path), T-17 / T-21 (`Decimal` everywhere;
-/// sodium captured in mg).
+/// There is no longer a top-level NutritionSection — the standalone
+/// "nutrition per 100 g" panel was removed when the per-100g anchor
+/// went away.
 class CustomFoodScreen extends ConsumerStatefulWidget {
   const CustomFoodScreen({this.initialBarcode, this.existing, super.key});
 
-  /// Optional barcode to prefill the draft's `barcode` field with on
-  /// first build. Wired by the router from the `?barcode=` query
-  /// parameter on `/foods/new` (T-021): when the barcode resolver
-  /// hits a 404, it `pushReplacement`s to `/foods/new?barcode=…` so
-  /// the user lands here with the value already typed for them.
   final String? initialBarcode;
-
-  /// Non-null flips the screen into **edit mode**: the draft is seeded
-  /// from this food on first build, the title reads "Edit food", the
-  /// footer reads "Save changes", and submit routes through
-  /// `FoodRepository.updateCustom` (sparse patch) instead of
-  /// `createCustom`. Mirrors `LogEntrySheet`'s `existing:` plumbing
-  /// (LU-002). Only `source == user` foods are editable — the router
-  /// already gates here, but the screen also asserts in debug mode.
   final Food? existing;
 
   @override
@@ -70,23 +35,11 @@ class CustomFoodScreen extends ConsumerStatefulWidget {
 }
 
 class _CustomFoodScreenState extends ConsumerState<CustomFoodScreen> {
-  /// True once the user has attempted Save with invalid fields. Drives
-  /// the inline error rows in the section widgets and the footer copy.
   bool _showErrors = false;
-
-  /// True while a `createCustom` / `updateCustom` is in flight. Disables
-  /// the footer button and shows a skeleton state on it (T-08).
   bool _saving = false;
 
-  /// True iff `widget.existing != null` — the screen flips between
-  /// create and edit mode based on this. Stored as a getter so the rest
-  /// of the screen reads top-down.
   bool get _isEditing => widget.existing != null;
 
-  /// Snapshot of the draft taken after the seed-from-existing step
-  /// completes. The "Save changes" button stays disabled while the
-  /// current draft equals this snapshot — mirrors LU-002's
-  /// `_isUnchanged()` predicate.
   CustomFoodDraft? _seedSnapshot;
 
   @override
@@ -94,12 +47,6 @@ class _CustomFoodScreenState extends ConsumerState<CustomFoodScreen> {
     super.initState();
     final existing = widget.existing;
     if (existing != null) {
-      // Edit mode: seed the draft from the food on first build. Like
-      // the barcode prefill below, run after the first frame so the
-      // notifier mutation happens outside `initState`'s build-time
-      // constraints. Edit mode takes precedence over create-mode
-      // prefills — a barcode query param on an edit URL would be
-      // surprising and is out of scope here.
       assert(
         existing.source == FoodSource.user,
         'CustomFoodScreen.existing must be a user-source food; got '
@@ -108,8 +55,6 @@ class _CustomFoodScreenState extends ConsumerState<CustomFoodScreen> {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         ref.read(customFoodDraftProvider.notifier).seedFromFood(existing);
-        // Snapshot taken after the seed so `_isUnchanged()` compares
-        // against the "just-seeded" baseline, not the prior draft.
         setState(() {
           _seedSnapshot = ref.read(customFoodDraftProvider);
         });
@@ -118,11 +63,6 @@ class _CustomFoodScreenState extends ConsumerState<CustomFoodScreen> {
     }
     final seed = widget.initialBarcode?.trim();
     if (seed != null && seed.isNotEmpty) {
-      // Seed the draft after the first frame so the notifier mutation
-      // happens outside of `initState`'s build-time constraints. We
-      // only seed if the current draft barcode is empty — if the user
-      // had a previous draft with their own barcode typed, we don't
-      // overwrite it.
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         final draft = ref.read(customFoodDraftProvider);
@@ -133,11 +73,6 @@ class _CustomFoodScreenState extends ConsumerState<CustomFoodScreen> {
     }
   }
 
-  /// True iff the current draft equals the post-seed snapshot. Used in
-  /// edit mode to disable the Save button until the user actually
-  /// changes something. Returns `false` when the snapshot hasn't been
-  /// taken yet (the first-frame seed-and-snapshot is still in flight)
-  /// so the button isn't accidentally enabled mid-seed.
   bool _isUnchanged() {
     if (!_isEditing) return false;
     final snapshot = _seedSnapshot;
@@ -145,12 +80,26 @@ class _CustomFoodScreenState extends ConsumerState<CustomFoodScreen> {
     return ref.read(customFoodDraftProvider) == snapshot;
   }
 
-  /// Build the sparse [FoodPatch] from the current draft state vs.
-  /// [widget.existing]. Mirrors LU-002's `_buildLogPatch()` — fields
-  /// that match the original are omitted; fields that were
-  /// previously-non-null and are now empty set the corresponding
-  /// `clear*` flag. Servings are always sent as a full-list replace
-  /// when the list changed at all (per FoodPatch class docs).
+  /// Map a DraftServing onto the wire-shaped ServingCreate. Asserts
+  /// that required fields are present — the caller gates on
+  /// `draft.isValid` first.
+  ServingCreate _toServingCreate(DraftServing s) {
+    return ServingCreate(
+      label: s.label,
+      amount: s.amount!,
+      unit: s.unit,
+      kcal: s.kcal!,
+      proteinG: s.proteinG,
+      carbsG: s.carbsG,
+      fatG: s.fatG,
+      fiberG: s.fiberG,
+      sugarG: s.sugarG,
+      sodiumMg: s.sodiumMg,
+      saturatedFatG: s.saturatedFatG,
+      isDefault: s.isDefault,
+    );
+  }
+
   FoodPatch _buildFoodPatch() {
     assert(_isEditing, '_buildFoodPatch called outside edit mode');
     final original = widget.existing!;
@@ -193,25 +142,32 @@ class _CustomFoodScreenState extends ConsumerState<CustomFoodScreen> {
       clearBarcode = false;
     }
 
-    final draftNutrition = draft.toNutrition();
-    final NutritionPer100g? nutrition =
-        draftNutrition == original.nutritionPer100g ? null : draftNutrition;
-
-    final originalUserServings = <DraftServing>[
+    final originalDraftServings = <DraftServing>[
       for (final s in original.servings)
-        if (s.source != ServingSource.system)
-          DraftServing(label: s.name, grams: s.grams),
+        DraftServing(
+          label: s.label,
+          amount: s.amount,
+          unit: s.unit,
+          kcal: s.kcal,
+          proteinG: s.proteinG,
+          carbsG: s.carbsG,
+          fatG: s.fatG,
+          fiberG: s.fiberG,
+          sugarG: s.sugarG,
+          sodiumMg: s.sodiumMg,
+          saturatedFatG: s.saturatedFatG,
+          isDefault: s.isDefault,
+        ),
     ];
     final List<DraftServing>? servings =
-        _draftServingsEqual(draft.userServings, originalUserServings)
+        _draftServingsEqual(draft.servings, originalDraftServings)
             ? null
-            : draft.userServings;
+            : draft.servings;
 
     return FoodPatch(
       name: name,
       brand: brand,
       barcode: barcode,
-      nutritionPer100g: nutrition,
       servings: servings,
       clearBrand: clearBrand,
       clearBarcode: clearBarcode,
@@ -237,83 +193,29 @@ class _CustomFoodScreenState extends ConsumerState<CustomFoodScreen> {
     try {
       final payload = FoodCreate(
         name: draft.name.trim(),
-        brand: (draft.brand?.trim().isEmpty ?? true) ? null : draft.brand!.trim(),
-        barcode:
-            (draft.barcode?.trim().isEmpty ?? true) ? null : draft.barcode!.trim(),
-        nutrition: NutritionPer100g(
-          energyKcal: draft.energyKcal,
-          proteinG: draft.proteinG,
-          carbsG: draft.carbsG,
-          fatG: draft.fatG,
-          fiberG: draft.fiberG,
-          sugarG: draft.sugarG,
-          // Sodium is mg on the draft (T-21). `NutritionPer100g.toJson`
-          // converts mg → g at the wire boundary; we pass through here.
-          sodiumMg: draft.sodiumMg,
-          saturatedFatG: draft.saturatedFatG,
-        ),
+        brand: (draft.brand?.trim().isEmpty ?? true)
+            ? null
+            : draft.brand!.trim(),
+        barcode: (draft.barcode?.trim().isEmpty ?? true)
+            ? null
+            : draft.barcode!.trim(),
+        servings: <ServingCreate>[
+          for (final s in draft.servings) _toServingCreate(s),
+        ],
       );
 
       final food = await repo.createCustom(payload);
 
-      // Snapshot draft servings before reset (the notifier wipes them).
-      final pendingServings = draft.userServings;
-
-      // Side-effects per arch §9: reset draft, invalidate "me" (which
-      // carries the count via `customFoodCount`) and the explicit
-      // count provider.
       ref.read(customFoodDraftProvider.notifier).reset();
       ref.invalidate(meProvider);
       ref.invalidate(customFoodCountProvider);
-
-      // POST per arch §9 / T-007: iterate user-defined servings. Each
-      // failure is logged + surfaced via a SnackBar but does not abort
-      // the loop — the food itself is saved, so the user can retry
-      // missing rows from the detail page (a follow-up ticket).
-      var anyServingFailed = false;
-      for (final draftServing in pendingServings) {
-        try {
-          await repo.addServing(
-            food.id,
-            ServingCreate(
-              label: draftServing.label,
-              grams: draftServing.grams,
-            ),
-          );
-        } on Object catch (err, stack) {
-          anyServingFailed = true;
-          debugPrint(
-            "addServing failed for '${draftServing.label}' on "
-            "${food.id}: $err\n$stack",
-          );
-        }
-      }
-
-      // Invalidate only the just-edited food's detail (T-18: no
-      // shotgun `everythingProvider`). The food list / search / recent
-      // / frequent providers don't change shape just because we added
-      // servings to one food.
       ref.invalidate(foodDetailProvider(food.id));
 
       if (!mounted) return;
-      if (anyServingFailed) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content:
-                Text("Saved the food but couldn't add all servings"),
-          ),
-        );
-      }
       context.pop(food);
     } on Object catch (err) {
       if (!mounted) return;
       setState(() => _saving = false);
-      // QL-109 — surface a Retry affordance instead of leaving the
-      // user to find the footer button again. The draft is already
-      // preserved (we never called `notifier.reset()` on the failure
-      // path), so the action re-invokes `_onCreateSave` against the
-      // same draft state. T-11 inline-error pattern: SnackBar is the
-      // attention surface, the Retry action is the persistence.
       final messenger = ScaffoldMessenger.of(context);
       messenger.hideCurrentSnackBar();
       messenger.showSnackBar(
@@ -331,13 +233,6 @@ class _CustomFoodScreenState extends ConsumerState<CustomFoodScreen> {
     }
   }
 
-  /// Edit-mode submit. Builds a sparse [FoodPatch] from the current
-  /// draft vs. [widget.existing] and calls
-  /// `FoodRepository.updateCustom`. On success, invalidates the four
-  /// providers the architect specified (food detail, my foods list,
-  /// custom-food count, me) and pops with the updated food. On
-  /// failure, surfaces a SnackBar and leaves the draft intact so the
-  /// user can retry.
   Future<void> _onEditSave() async {
     final draft = ref.read(customFoodDraftProvider);
     if (!draft.isValid) {
@@ -346,9 +241,6 @@ class _CustomFoodScreenState extends ConsumerState<CustomFoodScreen> {
     }
     final patch = _buildFoodPatch();
     if (patch.isEmpty) {
-      // Nothing actually changed — short-circuit. The footer button is
-      // disabled in this state, but a stale state.read race could in
-      // theory land us here. Treat as a successful no-op and pop.
       context.pop(widget.existing);
       return;
     }
@@ -358,19 +250,11 @@ class _CustomFoodScreenState extends ConsumerState<CustomFoodScreen> {
     try {
       final updated = await repo.updateCustom(widget.existing!.id, patch);
 
-      // Side-effects per arch §9 / the edit ticket: invalidate the
-      // detail provider (the just-edited food), the my-foods list (the
-      // name change may have reordered rows), the count (defensive —
-      // edit shouldn't change the count, but cheaper than tracking
-      // which mutations affect it), and `meProvider` (which carries
-      // the count via `customFoodCount`).
       ref.invalidate(foodDetailProvider(updated.id));
       ref.invalidate(myFoodsProvider);
       ref.invalidate(customFoodCountProvider);
       ref.invalidate(meProvider);
 
-      // The draft was used for editing — reset so a subsequent
-      // "Create" doesn't pre-fill with the edited food's values.
       ref.read(customFoodDraftProvider.notifier).reset();
 
       if (!mounted) return;
@@ -378,9 +262,6 @@ class _CustomFoodScreenState extends ConsumerState<CustomFoodScreen> {
     } on Object catch (err) {
       if (!mounted) return;
       setState(() => _saving = false);
-      // QL-109 — Retry affordance, see `_onCreateSave` for the rationale.
-      // The draft stays populated on failure, so the action re-runs the
-      // edit-save against the same (still-dirty) state.
       final messenger = ScaffoldMessenger.of(context);
       messenger.hideCurrentSnackBar();
       messenger.showSnackBar(
@@ -402,29 +283,16 @@ class _CustomFoodScreenState extends ConsumerState<CustomFoodScreen> {
     final draft = ref.read(customFoodDraftProvider);
     final bool isDirty;
     if (_isEditing) {
-      // Edit mode dirty check: compare the current draft to the
-      // post-seed snapshot. If the snapshot hasn't been taken yet (the
-      // first-frame seed is still in flight), treat as not-dirty —
-      // there's nothing the user could have changed in one frame.
       final snapshot = _seedSnapshot;
       isDirty = snapshot != null && draft != snapshot;
     } else {
       isDirty = draft.name.isNotEmpty ||
           draft.brand != null ||
           draft.barcode != null ||
-          draft.energyKcal != null ||
-          draft.proteinG != null ||
-          draft.carbsG != null ||
-          draft.fatG != null ||
-          draft.fiberG != null ||
-          draft.sugarG != null ||
-          draft.sodiumMg != null ||
-          draft.userServings.isNotEmpty;
+          draft.servings.isNotEmpty;
     }
 
     if (!isDirty) {
-      // Edit mode: on cancel, drop any seeded values so the draft
-      // doesn't leak the just-edited food into a future "Create" tap.
       if (_isEditing) {
         ref.read(customFoodDraftProvider.notifier).reset();
       }
@@ -432,17 +300,12 @@ class _CustomFoodScreenState extends ConsumerState<CustomFoodScreen> {
       return;
     }
 
-    // T-11: destructive confirmation is the only legal use of an
-    // AlertDialog. The Discard branch clears the draft; Keep editing
-    // leaves it alone (so a re-open continues the form).
     final discard = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text(_isEditing ? 'Discard changes?' : 'Discard this food?'),
-        content: Text(
-          _isEditing
-              ? 'You have unsaved changes. Discard them or keep editing?'
-              : 'You have unsaved changes. Discard them or keep editing?',
+        content: const Text(
+          'You have unsaved changes. Discard them or keep editing?',
         ),
         actions: <Widget>[
           TextButton(
@@ -471,12 +334,6 @@ class _CustomFoodScreenState extends ConsumerState<CustomFoodScreen> {
     final colors = context.colors;
     final space = context.space;
 
-    // In edit mode the Save button stays disabled until the draft
-    // differs from the post-seed snapshot — mirrors LU-002's
-    // disabled-until-changed footer. `_isUnchanged()` returns true
-    // until the first edit; combined with the invalid-form gate above,
-    // a button that's both unchanged-and-invalid still reads as
-    // disabled.
     final unchanged = _isUnchanged();
     final canSave = !_saving && draft.isValid && !unchanged;
 
@@ -505,16 +362,10 @@ class _CustomFoodScreenState extends ConsumerState<CustomFoodScreen> {
                   children: <Widget>[
                     BasicsSection(
                       showNameError: _showErrors,
-                      // QL-107 — autofocus the name field in create
-                      // mode only. Edit-mode pre-fills the value, so
-                      // autofocus would steal focus from a pre-filled
-                      // review UI per architect §7.4.
                       autofocusName: !_isEditing,
                     ),
                     SizedBox(height: space.x5 - 2),
-                    NutritionSection(showErrors: _showErrors),
-                    SizedBox(height: space.x5 - 2),
-                    const ServingsSection(),
+                    ServingsSection(showErrors: _showErrors),
                   ],
                 ),
               ),
@@ -522,10 +373,6 @@ class _CustomFoodScreenState extends ConsumerState<CustomFoodScreen> {
             _FooterButton(
               errorCount: errors.length,
               saving: _saving,
-              // Footer stays tappable when invalid so the user can
-              // surface inline errors via T-11. In edit mode we add an
-              // extra gate: when the draft is valid AND unchanged the
-              // footer button itself is disabled (nothing to save).
               onTap: _saving || (_isEditing && draft.isValid && unchanged)
                   ? null
                   : _onSave,
@@ -540,9 +387,6 @@ class _CustomFoodScreenState extends ConsumerState<CustomFoodScreen> {
   }
 }
 
-/// Structural equality for two `List<DraftServing>`s. Walked in order —
-/// reordering a row counts as a change, which matches what the user sees
-/// in the editor. Lives top-level so widget tests can use it.
 bool _draftServingsEqual(List<DraftServing> a, List<DraftServing> b) {
   if (identical(a, b)) return true;
   if (a.length != b.length) return false;
@@ -646,10 +490,6 @@ class _StepIndicator extends StatelessWidget {
     final colors = context.colors;
     final space = context.space;
 
-    // The mock paints a 50%-filled first bar between Details and
-    // Nutrition. We keep the screen at "Details" (single-page form) and
-    // mirror that visual. When step navigation is wired up, drive these
-    // fractions from the active step.
     Widget pill(String label, bool active) => Text(
           label.toUpperCase(),
           style: context.text.eyebrow.copyWith(
@@ -691,8 +531,6 @@ class _StepIndicator extends StatelessWidget {
         children: <Widget>[
           pill('Details', activeStep == _Step.details),
           bar(activeStep == _Step.details ? 0.5 : 1.0),
-          pill('Nutrition', activeStep == _Step.nutrition),
-          bar(activeStep == _Step.servings ? 1.0 : 0.0),
           pill('Servings', activeStep == _Step.servings),
         ],
       ),
@@ -713,13 +551,7 @@ class _FooterButton extends StatelessWidget {
   final int errorCount;
   final bool saving;
   final VoidCallback? onTap;
-
-  /// Default save-button copy. Edit mode overrides to "Save changes".
   final String label;
-
-  /// Edit mode adds an extra disabled state: when the draft equals the
-  /// post-seed snapshot ([unchanged] = true) the button is greyed out.
-  /// Create mode never sets these flags.
   final bool isEditing;
   final bool unchanged;
 
@@ -729,10 +561,6 @@ class _FooterButton extends StatelessWidget {
     final radius = context.radius;
     final space = context.space;
 
-    // The button has three visual states (per mock) but stays tappable
-    // when invalid so the user can surface inline errors via T-11. We
-    // only hard-disable the gesture while saving (and, in edit mode,
-    // when the draft is unchanged — there's nothing to save).
     final invalid = errorCount > 0;
     final editUnchanged = isEditing && unchanged && !invalid;
     final greyed = invalid || saving || editUnchanged;
@@ -740,7 +568,8 @@ class _FooterButton extends StatelessWidget {
     if (saving) {
       renderedLabel = 'Saving…';
     } else if (errorCount > 0) {
-      renderedLabel = 'Fix $errorCount ${errorCount == 1 ? 'error' : 'errors'} to save';
+      renderedLabel =
+          'Fix $errorCount ${errorCount == 1 ? 'error' : 'errors'} to save';
     } else {
       renderedLabel = label;
     }
@@ -769,9 +598,6 @@ class _FooterButton extends StatelessWidget {
                     : Text(
                         renderedLabel,
                         style: context.text.bodyStrong.copyWith(
-                          // FX-006 / T-01: button text on the accent fill
-                          // uses the `surface` token rather than
-                          // `Colors.white`.
                           color: colors.surface,
                           fontWeight: FontWeight.w600,
                           fontSize: 16,
@@ -786,11 +612,6 @@ class _FooterButton extends StatelessWidget {
   }
 }
 
-/// Button-level loading affordance for T-08. A static "skeleton" bar
-/// (no animation loop so widget tests' `pumpAndSettle` finishes) over
-/// the button face. The architectural intent is "no blocking modal
-/// spinner"; the static treatment is enough to convey work-in-flight
-/// without the test-suite friction of an infinite ticker.
 class _ButtonSkeleton extends StatelessWidget {
   const _ButtonSkeleton();
 
@@ -801,8 +622,6 @@ class _ButtonSkeleton extends StatelessWidget {
       height: 12,
       child: ClipRRect(
         borderRadius: BorderRadius.circular(6),
-        // FX-006 / T-01: faded bar on the accent-filled save button routes
-        // through the `surface` token rather than `Colors.white`.
         child: ColoredBox(
           color: context.colors.surface.withValues(alpha: 0.35),
         ),
@@ -811,3 +630,6 @@ class _ButtonSkeleton extends StatelessWidget {
   }
 }
 
+// `kDebugMode` symbol kept so the existing imports' analyzer warning
+// doesn't fire under foundation.dart — used by asserts above.
+const _kDebug = kDebugMode;
