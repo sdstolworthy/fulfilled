@@ -844,7 +844,44 @@ optional).
 
 ## Ask 10 — Per-serving nutrition + unit families + flatten migrations + USDA/OFF ingest normalizer *(P0 — user directive 2026-05-17)*
 
-Status: `open` — architect dispatched. Full ask body also persisted at `ask_10_per_serving_nutrition.md` per user's request (both are watched).
+Status: `done (server)` — backend pipeline shipped on `main` (T01–T16, commits `7847bd3` → `a871704`). **Not yet deployed** — see "Deploy precondition" below. Full ask body also at `ask_10_per_serving_nutrition.md`.
+
+### Backend reply
+
+**Workspace test count:** 290 passing, 0 failing, 1 ignored. Up from 245 pre-reshape.
+
+**Shipped (16 task commits on `main`):**
+
+- **T01** flatten 9 migrations → single `0001_initial.sql`. New `foods` (identity + metadata only, no `*_100g`), new `servings` (`{amount, unit, kcal, protein_g..., is_default, source, sort_order}` — `label` nullable), new `food_log_entries` (`entered_amount`, `entered_unit`, snapshot nutrition, no `grams_total`).
+- **T02** `Unit` enum (12 variants) + `UnitFamily` (Mass | Volume | Count) + `ratio_to_canonical` in `loseit-core::domain::unit`. Decimal-typed ratio table. No cross-family conversion ever.
+- **T03–T07** repo trait + Pg + in-memory rewrite: `create_custom_with_servings`, `update_custom_with_servings`, `upsert_external_food_batch(Vec<FoodDraftWithServings>)`, `find_or_create_quick_add` returns `(Food, Serving)`.
+- **T08** `LogService::create` implements within-family conversion + cross-family/Count-strict guards; snapshot is `quantity × serving.<nutrient>`. `FoodService::create_custom` enforces ≥1 serving + ≤1 default; **synthesized-default-100g-serving deleted**.
+- **T09+T10** route DTOs: `POST /foods` body takes `servings: [ServingBody]`; `POST /log` takes `entered_amount` + `entered_unit` (no `quantity` in request — server-derived); `LogEntryResponse` carries `entered_amount` + `entered_unit` AND `quantity` (FE keeps stepper math). `unit_family_mismatch` maps to HTTP 400 with body `{code: "unit_family_mismatch", ...}`.
+- **T11** OpenAPI delta: drops `NutritionPer100g`; adds `Unit` enum schema; reshapes `Food*`/`Serving*`/`Log*`; documents the new error code.
+- **T12+T13** HTTP test rewrites: 30 cases in `http_foods` + 50 in `http_log` (incl. the within-family conversion check: 4 fl_oz / 1 cup → quantity 0.500, kcal 100).
+- **T14–T16** ingest pipeline: `OffSource` + `UsdaSource` normalizers emit `FoodDraftWithServings` directly; `loseit-ingest` binary wires `run_off` + `run_usda`; 13 normalizer fixture tests; round-trip integration tests for 3-row OFF + 2-row USDA fixtures.
+
+**Quick-add sentinel resolved as option (ii)**: `{amount: 1, unit: 'serving', kcal: 1.0, source: 'system', is_default: true}`. No new `Energy` family.
+
+**Within-family ratios confirmed** (canonical mass=g, volume=ml, count=identity): `kg=1000`, `oz=28.349523125`, `lb=453.59237`, `l=1000`, `cup=236.5882365`, `fl_oz=29.5735295625`, `tbsp=14.78676478125`, `tsp=4.92892159375`. `serving ↔ piece` no auto-conversion.
+
+### Deploy precondition (operator action required)
+
+**The migration chain was flattened — the existing Coolify DB cannot apply the new `0001_initial.sql` against the old `_sqlx_migrations` table.** Per `COOLIFY.md` (added in T01), the operator must run ONE of:
+
+- **Option A (recommended)** — drop + recreate the entire Postgres database (`DROP DATABASE loseit; CREATE DATABASE loseit;`). Clean slate. Loses all existing data, which the user explicitly OK'd.
+- **Option B** — connect to the running Postgres, `DROP TABLE IF EXISTS _sqlx_migrations`, then redeploy. Leaves old rows in place that won't match the new schema — likely runtime errors. Don't pick unless inspecting the old data first.
+
+After the reset, trigger a Coolify deploy. The new container will apply `0001_initial.sql` cleanly and the server will boot.
+
+### FE deliverables (queued)
+
+Per the ask's "FE deliverables" section — kicks off when the deploy is live and FE regenerates DTOs from the updated `openapi.yaml`. Specifically: drop the `FoodRepository._byIdCache` stopgap shipped under Ask 9 (the new wire shape preserves `food_name` denormalization).
+
+### Daylight follow-ups (non-blocking)
+
+- `_sqlx_migrations` reset has no automated path; runbook in `COOLIFY.md` is manual.
+- `loseit-ingest --limit 1` smoke test against the deployed DB hasn't been run end-to-end (no live DB available at test time).
 
 **User directive (2026-05-17, verbatim transcript paraphrase):**
 custom-food creation today only accepts grams for serving size; users
