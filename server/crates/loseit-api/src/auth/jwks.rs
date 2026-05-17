@@ -51,18 +51,27 @@ const ALLOWED_ALGS: &[Algorithm] = &[
 /// most providers default to and matches Auth0 / Cognito's own clients.
 const LEEWAY_SECS: u64 = 60;
 
-/// Subset of standard OIDC claims we actually surface. `email` / `name`
-/// are optional — Cognito and Firebase may emit them, Auth0 sometimes
-/// won't unless scopes were requested. Anything missing is fine; the
-/// user will end up with `None` for that field.
+/// Full OIDC claim set returned by [`JwksVerifier::verify`]. Fields that
+/// providers may omit are `Option`. `aud` keeps the raw JSON shape
+/// (`serde_json::Value`) so both the string and array forms work.
 #[derive(Debug, Deserialize)]
-struct Claims {
-    iss: String,
-    sub: String,
+pub struct OidcClaims {
+    pub iss: String,
+    pub sub: String,
     #[serde(default)]
-    email: Option<String>,
+    pub email: Option<String>,
     #[serde(default)]
-    name: Option<String>,
+    pub name: Option<String>,
+    #[serde(default)]
+    pub preferred_username: Option<String>,
+    pub aud: serde_json::Value,
+    pub exp: i64,
+    #[serde(default)]
+    pub iat: Option<i64>,
+    #[serde(default)]
+    pub nbf: Option<i64>,
+    #[serde(default)]
+    pub nonce: Option<String>,
 }
 
 #[derive(Default)]
@@ -71,9 +80,13 @@ struct JwksCacheState {
     fetched_at: Option<Instant>,
 }
 
-pub struct JwksAuthenticator {
-    issuer: String,
-    audience: String,
+/// Reusable JWKS-fetch + cache + JWT-signature verifier.
+///
+/// `JwksAuthenticator` wraps this with a compile-time `issuer` / `audience`.
+/// The OIDC callback handler (T11b) constructs its own per-provider
+/// `JwksVerifier` and calls [`JwksVerifier::verify`] with bring-your-own
+/// `iss` / `aud` / `nonce`.
+pub struct JwksVerifier {
     jwks_url: String,
     cache_ttl: Duration,
     cache: Arc<RwLock<JwksCacheState>>,
@@ -81,33 +94,84 @@ pub struct JwksAuthenticator {
     http: reqwest::Client,
 }
 
-impl JwksAuthenticator {
-    /// Build the authenticator and warm the JWKS cache via an initial
-    /// fetch. Failing here means we couldn't reach the idP at startup;
-    /// surfacing that as `anyhow::Error` lets the composition root bail
-    /// loudly instead of silently 503-ing every request.
-    pub async fn new(
-        issuer: String,
-        audience: String,
-        jwks_url: String,
-        cache_ttl: Duration,
-    ) -> anyhow::Result<Self> {
+impl JwksVerifier {
+    /// Build the verifier and warm the JWKS cache via an initial fetch.
+    /// Failing here means we couldn't reach the idP at startup; surfacing
+    /// that as `anyhow::Error` lets the composition root bail loudly
+    /// instead of silently 503-ing every request.
+    pub async fn new(jwks_url: String, cache_ttl: Duration) -> anyhow::Result<Self> {
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(10))
             .build()?;
-        let auth = Self {
-            issuer,
-            audience,
+        let verifier = Self {
             jwks_url,
             cache_ttl,
             cache: Arc::new(RwLock::new(JwksCacheState::default())),
             refresh_lock: Arc::new(Mutex::new(())),
             http,
         };
-        auth.refresh_now().await.map_err(|e| {
-            anyhow::anyhow!("initial JWKS fetch from {} failed: {}", auth.jwks_url, e)
+        verifier.refresh_now().await.map_err(|e| {
+            anyhow::anyhow!("initial JWKS fetch from {} failed: {}", verifier.jwks_url, e)
         })?;
-        Ok(auth)
+        Ok(verifier)
+    }
+
+    /// Validate `token` claiming issuer `iss` and audience `aud`.
+    /// Returns the full claim set on success.
+    ///
+    /// When `nonce` is `Some`, the decoded `nonce` claim must match exactly
+    /// (used by the OIDC callback path to bind the ID token to the session).
+    pub async fn verify(
+        &self,
+        token: &str,
+        iss: &str,
+        aud: &str,
+        nonce: Option<&str>,
+    ) -> Result<OidcClaims, AuthError> {
+        let header = decode_header(token).map_err(|_| AuthError::Invalid)?;
+        let Some(kid) = header.kid else {
+            return Err(AuthError::Invalid);
+        };
+        if !ALLOWED_ALGS.contains(&header.alg) {
+            return Err(AuthError::Invalid);
+        }
+
+        let key = match self.key_for(&kid).await? {
+            Some(k) => k,
+            None => return Err(AuthError::Invalid),
+        };
+
+        // Validation::algorithms must all match the key's family (RSA vs
+        // EC), so we narrow to the header's `alg` here. The whitelist
+        // gate above already ensured `header.alg` is one we accept.
+        let mut validation = Validation::new(header.alg);
+        validation.algorithms = vec![header.alg];
+        validation.set_issuer(&[iss]);
+        validation.set_audience(&[aud]);
+        validation.validate_exp = true;
+        validation.validate_nbf = true;
+        validation.leeway = LEEWAY_SECS;
+        validation.required_spec_claims =
+            HashSet::from(["exp".to_string(), "iss".to_string(), "aud".to_string()]);
+
+        let data = decode::<OidcClaims>(token, &key, &validation).map_err(|e| {
+            tracing::debug!(error = %e, "jwt decode failed");
+            AuthError::Invalid
+        })?;
+
+        // Nonce binding: if the caller supplied an expected nonce, the token
+        // must carry a matching `nonce` claim.
+        if let Some(expected) = nonce {
+            match data.claims.nonce.as_deref() {
+                Some(got) if got == expected => {}
+                _ => {
+                    tracing::debug!("nonce mismatch");
+                    return Err(AuthError::Invalid);
+                }
+            }
+        }
+
+        Ok(data.claims)
     }
 
     /// Look up `kid` in the cache, refreshing if needed. Returns `Ok(None)`
@@ -241,45 +305,50 @@ fn is_usable(jwk: &Jwk) -> bool {
     true
 }
 
+/// OIDC bearer-token authenticator. Wraps [`JwksVerifier`] with a
+/// compile-time `issuer` + `audience` baked in from config.
+///
+/// The OIDC callback path (T11b) does not go through this type — it
+/// builds its own `JwksVerifier` per provider and calls `verify` with
+/// bring-your-own `iss` / `aud` / `nonce`.
+pub struct JwksAuthenticator {
+    verifier: JwksVerifier,
+    issuer: String,
+    audience: String,
+}
+
+impl JwksAuthenticator {
+    /// Build the authenticator and warm the JWKS cache via an initial
+    /// fetch. Failing here means we couldn't reach the idP at startup;
+    /// surfacing that as `anyhow::Error` lets the composition root bail
+    /// loudly instead of silently 503-ing every request.
+    pub async fn new(
+        issuer: String,
+        audience: String,
+        jwks_url: String,
+        cache_ttl: Duration,
+    ) -> anyhow::Result<Self> {
+        let verifier = JwksVerifier::new(jwks_url, cache_ttl).await?;
+        Ok(Self {
+            verifier,
+            issuer,
+            audience,
+        })
+    }
+}
+
 #[async_trait]
 impl Authenticator for JwksAuthenticator {
     async fn authenticate(&self, token: &str) -> Result<UserIdentity, AuthError> {
-        let header = decode_header(token).map_err(|_| AuthError::Invalid)?;
-        let Some(kid) = header.kid else {
-            return Err(AuthError::Invalid);
-        };
-        if !ALLOWED_ALGS.contains(&header.alg) {
-            return Err(AuthError::Invalid);
-        }
-
-        let key = match self.key_for(&kid).await? {
-            Some(k) => k,
-            None => return Err(AuthError::Invalid),
-        };
-
-        // Validation::algorithms must all match the key's family (RSA vs
-        // EC), so we narrow to the header's `alg` here. The whitelist
-        // gate above already ensured `header.alg` is one we accept.
-        let mut validation = Validation::new(header.alg);
-        validation.algorithms = vec![header.alg];
-        validation.set_issuer(&[&self.issuer]);
-        validation.set_audience(&[&self.audience]);
-        validation.validate_exp = true;
-        validation.validate_nbf = true;
-        validation.leeway = LEEWAY_SECS;
-        validation.required_spec_claims =
-            HashSet::from(["exp".to_string(), "iss".to_string(), "aud".to_string()]);
-
-        let data = decode::<Claims>(token, &key, &validation).map_err(|e| {
-            tracing::debug!(error = %e, "jwt decode failed");
-            AuthError::Invalid
-        })?;
-
+        let claims = self
+            .verifier
+            .verify(token, &self.issuer, &self.audience, None)
+            .await?;
         Ok(UserIdentity {
-            issuer: data.claims.iss,
-            external_id: data.claims.sub,
-            email: data.claims.email,
-            display_name: data.claims.name,
+            issuer: claims.iss,
+            external_id: claims.sub,
+            email: claims.email,
+            display_name: claims.preferred_username.or(claims.name),
         })
     }
 }
@@ -315,6 +384,8 @@ mod tests {
         email: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         name: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        nonce: Option<String>,
     }
 
     struct TestKey {
@@ -388,6 +459,7 @@ mod tests {
             nbf: n - 5,
             email: Some("alice@example.com".to_string()),
             name: Some("Alice".to_string()),
+            nonce: None,
         }
     }
 
@@ -876,5 +948,88 @@ mod tests {
             2,
             "single refresh under refresh_lock"
         );
+    }
+
+    // ── JwksVerifier direct tests ─────────────────────────────────────────
+
+    #[tokio::test]
+    async fn verifier_nonce_match_accepted() {
+        let key = generate_rsa_key("k1");
+        let server = MockServer::start().await;
+        mock_jwks(&server, jwks_doc(&[&key])).await;
+
+        let verifier = JwksVerifier::new(
+            format!("{}/", server.uri()),
+            Duration::from_secs(600),
+        )
+        .await
+        .expect("warm cache");
+
+        let mut claims = make_claims("https://issuer.example", json!("loseit-api"), "user-99");
+        claims.nonce = Some("abc123".to_string());
+        let token = sign(&key, &claims);
+
+        verifier
+            .verify(&token, "https://issuer.example", "loseit-api", Some("abc123"))
+            .await
+            .expect("nonce matches");
+    }
+
+    #[tokio::test]
+    async fn verifier_nonce_mismatch_rejected() {
+        let key = generate_rsa_key("k1");
+        let server = MockServer::start().await;
+        mock_jwks(&server, jwks_doc(&[&key])).await;
+
+        let verifier = JwksVerifier::new(
+            format!("{}/", server.uri()),
+            Duration::from_secs(600),
+        )
+        .await
+        .expect("warm cache");
+
+        let mut claims = make_claims("https://issuer.example", json!("loseit-api"), "user-99");
+        claims.nonce = Some("right-nonce".to_string());
+        let token = sign(&key, &claims);
+
+        let err = verifier
+            .verify(
+                &token,
+                "https://issuer.example",
+                "loseit-api",
+                Some("wrong-nonce"),
+            )
+            .await
+            .expect_err("nonce mismatch → 401");
+        assert!(matches!(err, AuthError::Invalid));
+    }
+
+    #[tokio::test]
+    async fn verifier_nonce_absent_when_expected_rejected() {
+        let key = generate_rsa_key("k1");
+        let server = MockServer::start().await;
+        mock_jwks(&server, jwks_doc(&[&key])).await;
+
+        let verifier = JwksVerifier::new(
+            format!("{}/", server.uri()),
+            Duration::from_secs(600),
+        )
+        .await
+        .expect("warm cache");
+
+        // Token has no nonce claim but caller expects one.
+        let claims = make_claims("https://issuer.example", json!("loseit-api"), "user-99");
+        let token = sign(&key, &claims);
+
+        let err = verifier
+            .verify(
+                &token,
+                "https://issuer.example",
+                "loseit-api",
+                Some("expected-nonce"),
+            )
+            .await
+            .expect_err("missing nonce → 401");
+        assert!(matches!(err, AuthError::Invalid));
     }
 }
