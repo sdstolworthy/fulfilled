@@ -123,7 +123,7 @@ async fn build_app(authn: Arc<dyn Authenticator>) -> axum::Router {
     let foods: Arc<dyn FoodRepository> = Arc::new(InMemoryFoodRepository::new());
     let servings: Arc<dyn ServingRepository> = Arc::new(InMemoryServingRepository::new());
     let logs: Arc<dyn LogRepository> = Arc::new(InMemoryLogRepository::new());
-    let state = AppState::from_ports(users, weights, goals, foods, servings, logs, authn, None);
+    let state = AppState::from_ports(users, weights, goals, foods, servings, logs, authn, None, None, false, false);
     router(state)
 }
 

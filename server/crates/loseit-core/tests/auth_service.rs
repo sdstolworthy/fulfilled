@@ -229,3 +229,34 @@ async fn seed_credential_rejects_invalid_username() {
         .await
         .expect_err("too-long username must be rejected");
 }
+
+#[tokio::test]
+async fn mint_session_for_returns_opaque_token() {
+    let (users, _local, auth) = fresh().await;
+    let user_id = seed_alice(&users, &auth).await;
+    let tok = auth.mint_session_for(user_id).await.unwrap();
+    assert_eq!(tok.user_id, user_id);
+    assert!(!tok.raw.is_empty());
+    assert!(tok.raw.len() >= 32); // base64url-no-pad of 32 bytes is 43 chars
+    // expires_at ~30 days out (allow ±10s drift)
+    let now = chrono::Utc::now();
+    let drift = (tok.expires_at - (now + chrono::Duration::days(30))).num_seconds().abs();
+    assert!(drift < 10, "expires_at drift: {drift}s");
+}
+
+#[tokio::test]
+async fn mint_session_for_then_verify_round_trips() {
+    let (users, _local, auth) = fresh().await;
+    let user_id = seed_alice(&users, &auth).await;
+    let tok = auth.mint_session_for(user_id).await.unwrap();
+    let user = auth.verify_token(&tok.raw).await.unwrap();
+    assert_eq!(user.id, user_id);
+}
+
+#[tokio::test]
+async fn login_still_works_after_extraction() {
+    let (users, _local, auth) = fresh().await;
+    seed_alice(&users, &auth).await;
+    let tok = auth.login("alice", "hunter2").await.unwrap();
+    assert!(!tok.raw.is_empty());
+}

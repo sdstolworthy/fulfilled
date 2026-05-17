@@ -60,18 +60,22 @@ impl AuthService {
             return Err(AuthError::Invalid);
         }
 
+        self.mint_session_for(cred.user_id).await
+    }
+
+    pub async fn mint_session_for(&self, user_id: Uuid) -> Result<LocalAuthToken, AuthError> {
         let raw_token = mint_raw_token();
         let token_hash = sha256_hex(&raw_token);
         let expires_at = Utc::now() + TOKEN_TTL;
 
         self.local
-            .insert_token(&token_hash, cred.user_id, expires_at)
+            .insert_token(&token_hash, user_id, expires_at)
             .await
             .map_err(|e| AuthError::Upstream(format!("local-auth db: {e}")))?;
 
         Ok(LocalAuthToken {
             raw: raw_token,
-            user_id: cred.user_id,
+            user_id,
             expires_at,
         })
     }

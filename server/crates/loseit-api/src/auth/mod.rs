@@ -10,6 +10,7 @@
 pub mod dev;
 pub mod jwks;
 pub mod local;
+pub mod oidc;
 
 use std::sync::Arc;
 

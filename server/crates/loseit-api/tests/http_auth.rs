@@ -69,6 +69,9 @@ fn build_harness(
             logs,
             authn,
             Some(auth_service.clone()),
+            None,
+            true,
+            false,
         );
         (
             router(state),
@@ -96,6 +99,9 @@ fn build_harness(
             logs,
             authn,
             None,
+            None,
+            false,
+            false,
         );
         (router(state), users_concrete, local_concrete, None)
     }

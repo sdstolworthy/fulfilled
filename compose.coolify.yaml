@@ -34,13 +34,9 @@ services:
       RUST_ENV: ${RUST_ENV:-staging}
       RUST_LOG: ${RUST_LOG:-info,tower_http=info,sqlx=warn}
 
-      # --- Auth -------------------------------------------------------------
-      # Default flow: local credentials (POST /api/v1/auth/login → opaque
-      # bearer token). Set LOSEIT_AUTH_BACKEND=jwks and supply the four
-      # OIDC_* vars below to switch to OIDC/JWKS validation. Set
-      # DEV_AUTH_BYPASS=true to short-circuit both modes for local-dev or
-      # CI (accepts the static DEV_AUTH_TOKEN with no password check).
-      # See COOLIFY.md for the operator runbook and OIDC swap procedure.
+      # --- Auth -----------------------------------------------------------
+      # Multi-method: any of dev-bypass, local-creds, OIDC can be on. At
+      # least one is required. Local + OIDC commonly coexist on prod.
       DEV_AUTH_BYPASS: ${DEV_AUTH_BYPASS:-false}
       DEV_AUTH_TOKEN: ${DEV_AUTH_TOKEN:-dev-token}
       DEV_AUTH_ISSUER: ${DEV_AUTH_ISSUER:-dev}
@@ -48,13 +44,34 @@ services:
       DEV_AUTH_EMAIL: ${DEV_AUTH_EMAIL:-dev@example.com}
       DEV_AUTH_DISPLAY_NAME: ${DEV_AUTH_DISPLAY_NAME:-Dev User}
 
-      LOSEIT_AUTH_BACKEND: ${LOSEIT_AUTH_BACKEND:-local}
+      LOSEIT_AUTH_LOCAL: ${LOSEIT_AUTH_LOCAL:-true}
       LOSEIT_SEED_DEV_AUTH: ${LOSEIT_SEED_DEV_AUTH:-true}
 
-      OIDC_ISSUER: ${OIDC_ISSUER:-}
-      OIDC_AUDIENCE: ${OIDC_AUDIENCE:-}
-      OIDC_JWKS_URL: ${OIDC_JWKS_URL:-}
-      OIDC_JWKS_CACHE_TTL_SECS: ${OIDC_JWKS_CACHE_TTL_SECS:-600}
+      # --- OIDC -----------------------------------------------------------
+      # Comma-separated provider IDs. Each ID has matching OIDC_<ID>_*
+      # env vars. Empty = no OIDC. See server/specs/be_oidc_integration_design.md.
+      OIDC_PROVIDERS: ${OIDC_PROVIDERS:-}
+
+      # Shared OIDC infrastructure (required iff OIDC_PROVIDERS is non-empty).
+      LOSEIT_AUTH_STATE_SECRET: ${LOSEIT_AUTH_STATE_SECRET:-}
+      LOSEIT_FE_ORIGIN: ${LOSEIT_FE_ORIGIN:-}
+
+      # Per-provider — substitute <ID> with each entry in OIDC_PROVIDERS.
+      # Example for OIDC_PROVIDERS=authentik:
+      OIDC_AUTHENTIK_DISPLAY_NAME: ${OIDC_AUTHENTIK_DISPLAY_NAME:-Authentik}
+      OIDC_AUTHENTIK_ISSUER: ${OIDC_AUTHENTIK_ISSUER:-}
+      OIDC_AUTHENTIK_CLIENT_ID: ${OIDC_AUTHENTIK_CLIENT_ID:-}
+      OIDC_AUTHENTIK_CLIENT_SECRET: ${OIDC_AUTHENTIK_CLIENT_SECRET:-}
+      OIDC_AUTHENTIK_REDIRECT_URI: ${OIDC_AUTHENTIK_REDIRECT_URI:-}
+      OIDC_AUTHENTIK_JWKS_URL: ${OIDC_AUTHENTIK_JWKS_URL:-}
+      # Authentik publishes authorize + token at the root /application/o/,
+      # not under the per-app issuer, so set these explicitly. Defaults
+      # (`<issuer>/authorize/`, `<issuer>/token/`) work for IdPs that DO
+      # nest them under the issuer.
+      OIDC_AUTHENTIK_AUTHORIZE_URL: ${OIDC_AUTHENTIK_AUTHORIZE_URL:-}
+      OIDC_AUTHENTIK_TOKEN_URL: ${OIDC_AUTHENTIK_TOKEN_URL:-}
+      OIDC_AUTHENTIK_ICON_URL: ${OIDC_AUTHENTIK_ICON_URL:-}
+      OIDC_AUTHENTIK_SCOPES: ${OIDC_AUTHENTIK_SCOPES:-}
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:8080/api/v1/health || exit 1"]
       interval: 30s
