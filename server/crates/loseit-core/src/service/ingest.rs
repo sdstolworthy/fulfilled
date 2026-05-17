@@ -227,9 +227,13 @@ pub fn parse_serving_size_grams(s: &str) -> Option<Decimal> {
 // ---------------------------------------------------------------------------
 
 /// Scale a per-100g nutrient value to a per-serving value given the serving's
-/// gram-equivalent. Returns `None` if the per-100g value is `None`.
+/// gram-equivalent. Returns `None` if the per-100g value is `None`. Clamps to
+/// 0 because USDA's "carbohydrate by difference" (nutrient 1005) can be
+/// slightly negative on lean meats (e.g. raw chicken breast = -0.428 g/100g)
+/// due to rounding in the `100 - protein - fat - moisture - ash` formula.
+/// The DB CHECK constraint requires every nutrient ≥ 0.
 fn scale_per_100g(per_100g: Option<Decimal>, grams: Decimal) -> Option<Decimal> {
-    per_100g.map(|v| v * grams / dec!(100))
+    per_100g.map(|v| (v * grams / dec!(100)).max(Decimal::ZERO))
 }
 
 // ---------------------------------------------------------------------------
@@ -457,7 +461,7 @@ pub fn accept_and_normalize_usda(record: UsdaFoodRecord) -> Option<FoodDraftWith
         let (amount, unit) = map_usda_unit(&portion.measure_unit_name, gram_weight);
 
         // §7.2 rule 3: per-serving nutrition = per-100g * gramWeight / 100.
-        let kcal = kcal_100g * gram_weight / dec!(100);
+        let kcal = (kcal_100g * gram_weight / dec!(100)).max(Decimal::ZERO);
         let protein_g = scale_per_100g(record.protein_100g, gram_weight);
         let carbs_g = scale_per_100g(record.carbs_100g, gram_weight);
         let fat_g = scale_per_100g(record.fat_100g, gram_weight);
