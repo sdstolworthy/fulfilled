@@ -112,6 +112,19 @@ async fn seed_off_food(
     name: &str,
     brands: Option<&str>,
 ) -> Uuid {
+    seed_off_food_with_kcal(foods, barcode, name, brands, Decimal::new(120, 0)).await
+}
+
+/// Like `seed_off_food` but lets the caller pin the default serving's
+/// `kcal`. Used by F1 regression coverage so the test can assert on a
+/// known top-level `calories_per_serving` value.
+async fn seed_off_food_with_kcal(
+    foods: &Arc<InMemoryFoodRepository>,
+    barcode: &str,
+    name: &str,
+    brands: Option<&str>,
+    kcal: Decimal,
+) -> Uuid {
     let batch_id = Uuid::new_v4();
     let rec = FoodDraftWithServings {
         draft: FoodDraft {
@@ -130,7 +143,7 @@ async fn seed_off_food(
                 label: Some("1 cup".into()),
                 amount: Decimal::new(1, 0),
                 unit: Unit::Cup,
-                kcal: Decimal::new(120, 0),
+                kcal,
                 protein_g: None,
                 carbs_g: None,
                 fat_g: None,
@@ -146,7 +159,7 @@ async fn seed_off_food(
                 label: Some("100 g".into()),
                 amount: Decimal::new(100, 0),
                 unit: Unit::Gram,
-                kcal: Decimal::new(120, 0),
+                kcal,
                 protein_g: None,
                 carbs_g: None,
                 fat_g: None,
@@ -371,9 +384,218 @@ async fn test_search_returns_lean_hits() {
         assert!(hit.get("name").is_some());
         assert!(hit.get("source").is_some());
         assert!(hit.get("default_serving").is_some());
+        // F1 (audit §2.1): `calories_per_serving` is a TOP-LEVEL field on
+        // every hit, always present in the JSON (null when no default
+        // serving). Use `as_object().contains_key` to assert
+        // presence-as-null rather than absence.
+        assert!(
+            hit.as_object()
+                .expect("hit is a JSON object")
+                .contains_key("calories_per_serving"),
+            "hit missing top-level calories_per_serving key: {hit}",
+        );
+        // When the food has a default serving, the top-level kcal must
+        // also be non-null (both come from the same Option<ServingPreview>).
+        if hit
+            .get("default_serving")
+            .map(|v| !v.is_null())
+            .unwrap_or(false)
+        {
+            assert!(
+                !hit["calories_per_serving"].is_null(),
+                "hit has default_serving but top-level calories_per_serving is null: {hit}",
+            );
+        }
     }
     assert_eq!(body["limit"], 100);
     assert_eq!(body["offset"], 0);
+}
+
+#[tokio::test]
+async fn test_search_emits_calories_per_serving_at_top_level() {
+    // Regression: F1 / audit §2.1. The Flutter client reads
+    // `calories_per_serving` at the row level, NOT `default_serving.kcal`.
+    // Seed a food with a known per-serving kcal and confirm the wire
+    // shape carries the value at both the top level (contract) and the
+    // nested back-compat location.
+    let (app, _alice) = build_test_app_with(|foods, _s, _l, _u| {
+        let foods = foods.clone();
+        Box::pin(async move {
+            seed_off_food_with_kcal(
+                &foods,
+                "F1-001",
+                "Test Food",
+                Some("Brand"),
+                Decimal::new(123, 0),
+            )
+            .await;
+        })
+    })
+    .await;
+
+    let resp = app
+        .oneshot(authed_request("GET", "/api/v1/foods/search?q=Test"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = read_json(resp.into_body()).await;
+    let hit = &body["results"][0];
+
+    // The top-level field is the contract.
+    assert!(
+        hit.as_object()
+            .expect("hit is a JSON object")
+            .contains_key("calories_per_serving"),
+        "hit missing calories_per_serving key: {hit}",
+    );
+    assert_eq!(
+        hit["calories_per_serving"].as_str().unwrap_or(""),
+        "123",
+        "top-level calories_per_serving must equal the default serving's kcal",
+    );
+    // Nested field retained for back-compat (FE may still read either).
+    assert_eq!(
+        hit["default_serving"]["kcal"].as_str().unwrap_or(""),
+        "123",
+        "default_serving.kcal must still mirror the top-level field",
+    );
+}
+
+#[tokio::test]
+async fn test_search_emits_calories_per_serving_as_null_when_no_default_serving() {
+    // Null-case companion to F1-T1: a food with no servings must emit
+    // BOTH `default_serving == null` AND `calories_per_serving == null`,
+    // with both keys present in the JSON (presence-as-null, not absence).
+    let (app, _alice) = build_test_app_with(|foods, _s, _l, _u| {
+        let foods = foods.clone();
+        Box::pin(async move {
+            let batch_id = Uuid::new_v4();
+            let rec = FoodDraftWithServings {
+                draft: FoodDraft {
+                    name: "Servingless Mystery".into(),
+                    brands: None,
+                    barcode: Some("F1-002".into()),
+                    fdc_id: None,
+                    data_type: None,
+                    categories_tags: vec![],
+                    nutriscore_grade: None,
+                    servings: vec![],
+                },
+                quality_score: 50,
+                servings: vec![],
+            };
+            foods
+                .upsert_external_food_batch(batch_id, vec![rec])
+                .await
+                .unwrap();
+        })
+    })
+    .await;
+
+    let resp = app
+        .oneshot(authed_request(
+            "GET",
+            "/api/v1/foods/search?q=Servingless",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = read_json(resp.into_body()).await;
+    let hit = &body["results"][0];
+    let obj = hit.as_object().expect("hit is a JSON object");
+    assert!(
+        obj.contains_key("default_serving"),
+        "default_serving key must be present: {hit}",
+    );
+    assert!(
+        obj.contains_key("calories_per_serving"),
+        "calories_per_serving key must be present: {hit}",
+    );
+    assert!(
+        hit["default_serving"].is_null(),
+        "default_serving must be JSON null: {hit}",
+    );
+    assert!(
+        hit["calories_per_serving"].is_null(),
+        "calories_per_serving must be JSON null: {hit}",
+    );
+}
+
+#[tokio::test]
+async fn test_recent_foods_includes_calories_per_serving_at_top_level() {
+    // F1-T1 coverage for /foods/recent — the home-screen path. The
+    // route reuses `FoodSearchHitResponse` via the same `From` impl, so
+    // a single presence-of-key assertion is enough to lock in the
+    // contract for this handler.
+    use chrono::NaiveDate;
+    use loseit_core::domain::unit::Unit as DomainUnit;
+    use loseit_core::domain::{Meal, NutritionSnapshot, PersistedLogEntry};
+    use std::sync::OnceLock;
+    let captured: Arc<OnceLock<Uuid>> = Arc::new(OnceLock::new());
+    let captured_for_seed = captured.clone();
+
+    let (app, _alice) = build_test_app_with(move |foods, _s, logs, alice| {
+        let foods = foods.clone();
+        let logs = logs.clone();
+        let captured = captured_for_seed.clone();
+        Box::pin(async move {
+            let id = seed_off_food_with_kcal(
+                &foods,
+                "F1-003",
+                "Recent Yogurt",
+                Some("Brand"),
+                Decimal::new(140, 0),
+            )
+            .await;
+            captured.set(id).unwrap();
+
+            // recent_foods sorts by the most recent log entry's
+            // consumed_on; one entry is enough to surface the food.
+            let entry = PersistedLogEntry {
+                food_id: id,
+                serving_id: None,
+                consumed_on: NaiveDate::from_ymd_opt(2026, 5, 10).unwrap(),
+                meal: Meal::Breakfast,
+                quantity: Decimal::from(1),
+                entered_amount: Decimal::from(1),
+                entered_unit: DomainUnit::Serving,
+                snapshot: NutritionSnapshot {
+                    calories_kcal: Decimal::from(140),
+                    protein_g: None,
+                    carbs_g: None,
+                    fat_g: None,
+                    fiber_g: None,
+                    sugar_g: None,
+                    sodium_mg: None,
+                    saturated_fat_g: None,
+                },
+                note: None,
+            };
+            logs.create(alice, &entry).await.unwrap();
+        })
+    })
+    .await;
+
+    let resp = app
+        .oneshot(authed_request("GET", "/api/v1/foods/recent"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = read_json(resp.into_body()).await;
+    let results = body.as_array().expect("recent returns a JSON array");
+    assert!(!results.is_empty(), "expected at least one recent hit");
+    let hit = &results[0];
+    assert!(
+        hit.as_object()
+            .expect("hit is a JSON object")
+            .contains_key("calories_per_serving"),
+        "recent hit missing top-level calories_per_serving key: {hit}",
+    );
+    assert_eq!(
+        hit["calories_per_serving"].as_str().unwrap_or(""),
+        "140",
+        "recent hit top-level kcal must equal the default serving's kcal",
+    );
 }
 
 #[tokio::test]

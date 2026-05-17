@@ -188,10 +188,20 @@ struct FoodSearchHitResponse {
     brand: Option<String>,
     barcode: Option<String>,
     default_serving: Option<ServingPreviewResponse>,
+    /// Canonical per-serving kcal for row-level rendering. Mirrors
+    /// `default_serving.kcal`; that nested field is retained for
+    /// backward compat but `calories_per_serving` is the source of
+    /// truth (matches `openapi.yaml` `FoodSearchHit`). `None` when the
+    /// food has no default serving. No `skip_serializing_if` — the
+    /// field is always present in the JSON, possibly as `null`.
+    calories_per_serving: Option<Decimal>,
 }
 
 impl From<FoodSearchHit> for FoodSearchHitResponse {
     fn from(h: FoodSearchHit) -> Self {
+        // Derive the top-level kcal from the default serving BEFORE
+        // moving `h.default_serving` into the response.
+        let calories_per_serving = h.default_serving.as_ref().map(|s| s.kcal);
         Self {
             id: h.id,
             source: food_source_str(h.source),
@@ -199,6 +209,7 @@ impl From<FoodSearchHit> for FoodSearchHitResponse {
             brand: h.brand,
             barcode: h.barcode,
             default_serving: h.default_serving.map(Into::into),
+            calories_per_serving,
         }
     }
 }
