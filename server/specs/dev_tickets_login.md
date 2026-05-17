@@ -1210,7 +1210,7 @@ owns the layout branches).
 
 ## LOG-006  `LoginScreen` widget + `/login` route + feature widgets
 
-**Status**: pending
+**Status**: shipped (Wave 4)
 **Priority**: P0
 **Effort**: L
 **Depends on**: LOG-001, LOG-002, LOG-003, LOG-004, LOG-005

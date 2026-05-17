@@ -1,0 +1,253 @@
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../form_factor/breakpoints.dart';
+import '../../theme/context_extensions.dart';
+import 'login_controller.dart';
+import 'widgets/credentials_form.dart';
+import 'widgets/login_button.dart';
+import 'widgets/paste_jwt_disclosure.dart';
+import 'widgets/server_url_field.dart';
+import 'widgets/sign_up_link.dart';
+
+/// LOG-006 — the self-hosted login screen.
+///
+/// Form-factor branches at the screen root (T-15): compact widths
+/// (< `Breakpoints.mediumMax`) get a single-column, full-width form;
+/// medium/expanded widths get a centred `ConstrainedBox(maxWidth: 420)`
+/// card. Both wrap a shared `_LoginBody` so the layout column lives in
+/// one place.
+///
+/// The screen is registered at `/login` **outside** the `ShellRoute` so
+/// it has no nav chrome (no bottom tabs, no sidebar — architect §1
+/// piece (b)). The redirect rule that pins unauthenticated users here
+/// is owned by LOG-007.
+///
+/// `_LoginBody` (top to bottom, per ticket Scope checklist):
+///
+///   1. `_Logo` — the same accent-on-surface square favourite-heart
+///      shape `step_1_welcome.dart` uses. Inline per architect §10.5
+///      PMgr-accept (two-logo drift is acceptable for v1; v1.1 hoists
+///      to `lib/widgets/app_logo.dart`).
+///   2. `SizedBox(height: context.space.x6)`.
+///   3. Headline "Sign in to your server" in `context.text.hero`.
+///   4. `SizedBox(height: context.space.x6)`.
+///   5. `ServerUrlField` (mobile only — `!kIsWeb`; on web omitted from
+///      the column entirely, not zero-height-hidden — architect §6).
+///   6. `SizedBox(height: context.space.x4)` (mobile only).
+///   7. `CredentialsForm` (username + password stacked).
+///   8. `SizedBox(height: context.space.x6)`.
+///   9. `LoginButton` (full-width "Sign in" primary).
+///   10. `PasteJwtDisclosure` (only when `state.endpointMissing`).
+///   11. Form-error row (only when `state.formError != null`).
+///   12. `SizedBox(height: context.space.x4)`.
+///   13. `SignUpLink`.
+///
+/// Tenants honoured: T-04 (accent on the single primary "Sign in"
+/// button), T-08 (skeleton during submit, no spinner), T-11 (inline
+/// errors — no SnackBar), T-14 (deep-linkable route), T-15
+/// (form-factor at root), T-20 (Semantics on every field), T-24 Case 2
+/// (`context.go` on success).
+class LoginScreen extends StatelessWidget {
+  const LoginScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final width = MediaQuery.sizeOf(context).width;
+    final isExpanded = width >= Breakpoints.mediumMax;
+    // T-15 — form-factor branch at the screen root. Both arms share
+    // `_LoginBody` so the column structure lives in one place.
+    if (isExpanded) {
+      return const _LoginExpanded(child: _LoginBody());
+    }
+    return const _LoginCompact(child: _LoginBody());
+  }
+}
+
+/// Compact (mobile / iPad-portrait) layout: full-width single-column
+/// form, vertically centred inside a `SafeArea`. No `AppBar` — the
+/// login screen has no nav chrome.
+class _LoginCompact extends StatelessWidget {
+  const _LoginCompact({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final space = context.space;
+    return Scaffold(
+      backgroundColor: context.colors.bg,
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: EdgeInsets.symmetric(
+              horizontal: space.x5,
+              vertical: space.x6,
+            ),
+            child: child,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Expanded (desktop web / tablet landscape) layout: a centred
+/// `ConstrainedBox(maxWidth: 420)` card. Visually a tighter mobile
+/// (architect §6 — "the expanded card-layout is identical in shape to
+/// mobile's iPad-class medium breakpoint").
+class _LoginExpanded extends StatelessWidget {
+  const _LoginExpanded({required this.child});
+
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final space = context.space;
+    return Scaffold(
+      backgroundColor: context.colors.bg,
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: EdgeInsets.symmetric(vertical: space.x6),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 420),
+              child: Padding(
+                padding: EdgeInsets.symmetric(horizontal: space.x5),
+                child: child,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The shared form column. Identical on compact and expanded — the
+/// only difference between the two layouts is the outer
+/// `ConstrainedBox(maxWidth: 420)` that the expanded variant supplies.
+///
+/// Architect §6 + ticket Scope: the URL field is **omitted entirely**
+/// on web, not rendered with zero height. The Column's children list is
+/// built conditionally on `kIsWeb` so `find.byType(ServerUrlField)`
+/// returns `findsNothing` in the web test.
+class _LoginBody extends ConsumerWidget {
+  const _LoginBody();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final state = ref.watch(loginControllerProvider);
+    final space = context.space;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        // 1. Logo. Inline shape — do NOT hoist (architect §10.5).
+        const Center(child: _Logo()),
+        // 2. Spacer above headline.
+        SizedBox(height: space.x6),
+        // 3. Headline.
+        Text(
+          'Sign in to your server',
+          style: context.text.hero,
+          textAlign: TextAlign.center,
+        ),
+        // 4. Spacer above first field.
+        SizedBox(height: space.x6),
+        // 5 + 6. URL field (mobile only — architect §6: omitted on web,
+        // not zero-height-hidden). The `!kIsWeb` gate compiles to a
+        // constant at build time; the web bundle never includes the
+        // ServerUrlField subtree.
+        if (!kIsWeb) ...<Widget>[
+          const ServerUrlField(),
+          SizedBox(height: space.x4),
+        ],
+        // 7. Credentials.
+        const CredentialsForm(),
+        // 8. Spacer above submit.
+        SizedBox(height: space.x6),
+        // 9. Submit button.
+        const LoginButton(),
+        // 10. JWT-paste disclosure — visible only when
+        // `state.endpointMissing` (the widget guards itself).
+        const PasteJwtDisclosure(),
+        // 11. Form-level error row (T-11 — inline, no SnackBar).
+        if (state.formError != null) ...<Widget>[
+          SizedBox(height: space.x3),
+          _FormErrorRow(message: state.formError!),
+        ],
+        // 12. Spacer above sign-up link.
+        SizedBox(height: space.x4),
+        // 13. Sign-up link.
+        const Center(child: SignUpLink()),
+      ],
+    );
+  }
+}
+
+/// T-11 inline form-error row — non-modal warning below the submit
+/// button. Architect §5.5: the login screen has inline space for this,
+/// so we don't fall back to a SnackBar.
+class _FormErrorRow extends StatelessWidget {
+  const _FormErrorRow({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.colors;
+    final space = context.space;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Icon(
+          Icons.warning_amber_rounded,
+          color: colors.danger,
+          size: 20,
+        ),
+        SizedBox(width: space.x2),
+        Expanded(
+          child: Text(
+            message,
+            style: context.text.meta.copyWith(color: colors.danger),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// TODO v1.1: hoist _Logo to lib/widgets/app_logo.dart per architect
+// §10.5. Two-logo drift (this widget + the identical shape in
+// `step_1_welcome.dart`) is acceptable for v1 — PMgr accept-with-defer
+// from the architect plan. v1.1 lifts both call sites to a shared
+// `AppLogo` widget. Until then this marker is the receipt.
+/// The accent-on-surface 84-px square favourite-heart logo. Inline
+/// shape duplicated from `step_1_welcome.dart`. See the `// TODO v1.1`
+/// marker above for the hoist plan.
+class _Logo extends StatelessWidget {
+  const _Logo();
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.colors;
+    return Container(
+      width: 84,
+      height: 84,
+      decoration: BoxDecoration(
+        color: colors.accent,
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Icon(
+        Icons.favorite_border_rounded,
+        size: 40,
+        // FX-006 / T-01 — glyph on the accent logo routes through the
+        // `surface` token, not `Colors.white`.
+        color: colors.surface,
+      ),
+    );
+  }
+}

@@ -7,6 +7,7 @@ import '../features/custom_food/custom_food_screen.dart';
 import '../features/food_detail/food_detail_screen.dart';
 import '../features/goals/goals_screen.dart';
 import '../features/goals/widgets/new_goal_dialog.dart';
+import '../features/login/login_screen.dart';
 import '../features/my_foods/my_foods_screen.dart';
 import '../features/onboarding/onboarding_screen.dart';
 import '../features/profile/profile_screen.dart';
@@ -179,6 +180,17 @@ final appRouterProvider = Provider<GoRouter>((ref) {
           final step = int.tryParse(raw) ?? 1;
           return OnboardingScreen(step: step);
         },
+      ),
+      // LOG-006 — the self-hosted login screen. Outside the `ShellRoute`
+      // so it has no nav chrome (no bottom tabs, no sidebar). The
+      // redirect rule + `refreshListenable` that pin unauthenticated
+      // users here are owned by LOG-007; this ticket lands the route
+      // registration only — navigating to `/login` directly works, but
+      // navigating to `/today` with no token does NOT yet redirect.
+      GoRoute(
+        name: Routes.loginName,
+        path: Routes.loginPath,
+        builder: (_, __) => const LoginScreen(),
       ),
     ],
     errorBuilder: (context, state) => Scaffold(

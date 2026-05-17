@@ -37,6 +37,13 @@ class Routes {
   static const String goalsNewName = 'goals.new';
   static const String goalsNewPath = '/goals/new';
 
+  /// The self-hosted login screen. Lives outside the `ShellRoute` so it
+  /// has no nav chrome (no bottom tabs, no sidebar). Registered alongside
+  /// `/onboarding/:step` in `app_router.dart`. The redirect rule that
+  /// pins unauthenticated users here is owned by LOG-007.
+  static const String loginName = 'login';
+  static const String loginPath = '/login';
+
   static const String myFoodsName = 'foods.mine';
   static const String myFoodsPath = '/foods/mine';
 
