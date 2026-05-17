@@ -4,15 +4,17 @@ use std::sync::Arc;
 
 use chrono::{Duration, NaiveDate, Utc};
 use loseit_core::domain::{
-    FoodDraft, FoodSource, Meal, NutritionPer100g, NutritionSnapshot, PersistedLogEntry,
-    WeightDraft,
+    FoodDraft, FoodSource, HeightUnit, Meal, NutritionPer100g, NutritionSnapshot,
+    PersistedLogEntry, ProfilePatch, UserIdentity, WeightDraft, WeightUnit,
 };
-use loseit_core::repo::{FoodRepository, LogRepository, ServingRepository, WeightRepository};
+use loseit_core::repo::{
+    FoodRepository, LogRepository, ServingRepository, UserRepository, WeightRepository,
+};
 use loseit_core::service::{LogService, WeightService};
 use loseit_core::CoreError;
 use loseit_testing::{
     InMemoryFoodRepository, InMemoryGoalRepository, InMemoryLogRepository,
-    InMemoryServingRepository, InMemoryWeightRepository,
+    InMemoryServingRepository, InMemoryUserRepository, InMemoryWeightRepository,
 };
 use rust_decimal::Decimal;
 use uuid::Uuid;
@@ -1309,5 +1311,47 @@ async fn delete_custom_on_sentinel_returns_forbidden() {
         .await
         .expect_err("must refuse to delete the sentinel");
     assert!(matches!(err, loseit_core::CoreError::Forbidden));
+}
+
+// ── user_repo unit tests ───────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn in_memory_user_repo_update_profile_only_overwrites_provided_units() {
+    let repo = InMemoryUserRepository::new();
+    let identity = UserIdentity {
+        issuer: "test".into(),
+        external_id: "alice".into(),
+        email: None,
+        display_name: None,
+    };
+    let user = repo.create(&identity).await.unwrap();
+
+    // Set weight only.
+    let after_weight = repo
+        .update_profile(
+            user.id,
+            &ProfilePatch {
+                weight_unit: Some(WeightUnit::Lb),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(after_weight.weight_unit, WeightUnit::Lb);
+    assert_eq!(after_weight.height_unit, HeightUnit::Cm, "height untouched");
+
+    // Now patch height only — weight must survive.
+    let after_height = repo
+        .update_profile(
+            user.id,
+            &ProfilePatch {
+                height_unit: Some(HeightUnit::FtIn),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(after_height.weight_unit, WeightUnit::Lb, "weight survived");
+    assert_eq!(after_height.height_unit, HeightUnit::FtIn);
 }
 
