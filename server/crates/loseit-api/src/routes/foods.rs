@@ -232,7 +232,7 @@ struct LimitOnlyQuery {
 struct ServingBody {
     label: Option<String>,
     amount: Decimal,
-    unit: String,
+    unit: String,  // parsed to Unit at handler entry via Unit::parse
     kcal: Decimal,
     protein_g: Option<Decimal>,
     carbs_g: Option<Decimal>,
@@ -241,18 +241,18 @@ struct ServingBody {
     sugar_g: Option<Decimal>,
     sodium_mg: Option<Decimal>,
     saturated_fat_g: Option<Decimal>,
-    #[serde(default)]
-    is_default: bool,
+    is_default: Option<bool>,
     source: Option<String>,
-    #[serde(default)]
-    sort_order: i32,
+    sort_order: Option<i32>,
 }
 
 fn parse_unit(raw: &str) -> Result<Unit, ApiError> {
     Unit::parse(raw).ok_or_else(|| {
-        ApiError::bad_request(format!(
-            "unknown unit '{raw}' (expected one of g, kg, oz, lb, ml, l, cup, fl_oz, tbsp, tsp, serving, piece)"
-        ))
+        ApiError::new(
+            axum::http::StatusCode::BAD_REQUEST,
+            "invalid_unit",
+            format!("unknown unit '{raw}' (expected one of g, kg, oz, lb, ml, l, cup, fl_oz, tbsp, tsp, serving, piece)"),
+        )
     })
 }
 
@@ -275,9 +275,9 @@ impl ServingBody {
             sugar_g: self.sugar_g,
             sodium_mg: self.sodium_mg,
             saturated_fat_g: self.saturated_fat_g,
-            is_default: self.is_default,
+            is_default: self.is_default.unwrap_or(false),
             source,
-            sort_order: self.sort_order,
+            sort_order: self.sort_order.unwrap_or(0),
         })
     }
 }

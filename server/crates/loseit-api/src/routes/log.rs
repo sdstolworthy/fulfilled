@@ -276,10 +276,27 @@ fn parse_meal(raw: &str) -> Result<Meal, ApiError> {
 
 fn parse_unit(raw: &str) -> Result<Unit, ApiError> {
     Unit::parse(raw).ok_or_else(|| {
-        ApiError::bad_request(format!(
-            "unknown unit '{raw}' (expected one of g, kg, oz, lb, ml, l, cup, fl_oz, tbsp, tsp, serving, piece)"
-        ))
+        ApiError::new(
+            axum::http::StatusCode::BAD_REQUEST,
+            "invalid_unit",
+            format!("unknown unit '{raw}' (expected one of g, kg, oz, lb, ml, l, cup, fl_oz, tbsp, tsp, serving, piece)"),
+        )
     })
+}
+
+/// Map a `CoreError` from log operations, giving `unit_family_mismatch`
+/// its own structured code (§10 D5) instead of the generic `bad_request`.
+fn map_log_core_error(err: loseit_core::CoreError) -> ApiError {
+    if let loseit_core::CoreError::Validation(ref msg) = err {
+        if msg == "unit_family_mismatch" {
+            return ApiError::new(
+                axum::http::StatusCode::BAD_REQUEST,
+                "unit_family_mismatch",
+                "entered unit family does not match the serving's unit family",
+            );
+        }
+    }
+    ApiError::from(err)
 }
 
 async fn create(
@@ -298,7 +315,7 @@ async fn create(
         entered_unit,
         note: body.note,
     };
-    let entry = state.logs.create(user.id, draft).await?;
+    let entry = state.logs.create(user.id, draft).await.map_err(map_log_core_error)?;
     Ok((StatusCode::CREATED, Json(entry.into())))
 }
 
@@ -358,7 +375,7 @@ async fn patch(
         entered_unit,
         note: body.note,
     };
-    let entry = state.logs.update(user.id, id, patch).await?;
+    let entry = state.logs.update(user.id, id, patch).await.map_err(map_log_core_error)?;
     Ok(Json(entry.into()))
 }
 
