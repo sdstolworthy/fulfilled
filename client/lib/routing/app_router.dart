@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../data/auth_token.dart';
 import '../domain/enums.dart';
+import '../domain/user.dart';
 import '../features/custom_food/custom_food_screen.dart';
 import '../features/food_detail/food_detail_screen.dart';
 import '../features/goals/goals_screen.dart';
@@ -19,6 +20,7 @@ import '../features/today/today_screen.dart';
 import '../features/weight/weight_screen.dart';
 import '../form_factor/breakpoints.dart';
 import '../providers/food_providers.dart';
+import '../providers/profile_providers.dart';
 import '../providers/repository_providers.dart';
 import '../repositories/food_repository.dart';
 import '../theme/context_extensions.dart';
@@ -87,6 +89,28 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         return Routes.loginPath;
       }
       if (loc == Routes.loginPath) return Routes.todayPath;
+
+      // F3 — onboarding gate. Pass-throughs come BEFORE the meProvider
+      // read so a user actively in the flow isn't re-fired through the
+      // predicate on every step transition, and the OIDC callback
+      // screen (mid-handshake) is never bounced. The
+      // `loc.startsWith('/onboarding/')` pass-through is load-bearing
+      // for loop avoidance — don't lift it.
+      if (loc.startsWith('/onboarding/')) return null;
+      if (loc == Routes.oidcCallbackPath) return null;
+
+      // `meProvider` is a FutureProvider; redirect is sync. Bridge via
+      // `.value` — returns the resolved `User` once data lands, `null`
+      // while loading OR on error. Loading: no redirect this frame
+      // (the screen renders its own skeleton; the meProvider listen on
+      // the refreshListenable below re-fires the router when /me
+      // resolves). Error: also `null` — we let the screen surface the
+      // error rather than papering over server problems with an
+      // onboarding redirect.
+      final me = ref.read(meProvider).value;
+      if (me == null) return null;
+      if (needsOnboarding(me)) return '/onboarding/1';
+
       return null;
     },
     routes: <RouteBase>[
@@ -259,10 +283,18 @@ final appRouterProvider = Provider<GoRouter>((ref) {
 // LOG-007 — Router refresh listenable.
 // ---------------------------------------------------------------------------
 
-/// Bridges `authTokenProvider` (Riverpod) to `GoRouter.refreshListenable`
-/// (Flutter `Listenable`). Subscribes once at construction; every token
-/// flip calls `notifyListeners()`, which prompts go_router to re-run its
+/// Bridges `authTokenProvider` + `meProvider` (Riverpod) to
+/// `GoRouter.refreshListenable` (Flutter `Listenable`). Subscribes once
+/// at construction; every token flip or `meProvider` transition calls
+/// `notifyListeners()`, which prompts go_router to re-run its
 /// `redirect` callback on the next frame.
+///
+/// The `meProvider` listen is what makes the F3 onboarding gate work:
+/// the redirect callback reads `ref.read(meProvider).value` synchronously
+/// (`null` while loading), so without a refresh trigger the router would
+/// never re-evaluate once /me resolves. Riverpod fires the listener on
+/// the initial loading → data transition as well as every invalidate,
+/// so sign-in and onboarding-completion both wake the router up.
 ///
 /// The subscription returned by `ref.listen` lives for the lifetime of the
 /// owning Provider — `appRouterProvider` is unauto-disposed, so it lives
@@ -270,6 +302,9 @@ final appRouterProvider = Provider<GoRouter>((ref) {
 class _RouterRefreshListenable extends ChangeNotifier {
   _RouterRefreshListenable(this._ref) {
     _ref.listen<String?>(authTokenProvider, (prev, next) {
+      notifyListeners();
+    });
+    _ref.listen<AsyncValue<User>>(meProvider, (prev, next) {
       notifyListeners();
     });
   }

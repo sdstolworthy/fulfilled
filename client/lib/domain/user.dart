@@ -169,6 +169,23 @@ class User {
       );
 }
 
+/// True when [me] has not finished onboarding — at least one of the four
+/// nullable profile fields (`sex`, `birthDate`, `heightCm`,
+/// `activityLevel`) is still null.
+///
+/// Used by the F3 router redirect to gate brand-new authenticated users
+/// into `/onboarding/1`. All four fields are checked (not just one)
+/// because a user may bail mid-onboarding — `PATCH /me` from step 2 of
+/// a previous session may have populated sex+birth but not the others,
+/// and we want every re-entry to bounce them back until all four are
+/// non-null. The first goal isn't part of the predicate because step 3
+/// commits profile + goal in a single user-visible transaction.
+bool needsOnboarding(User me) =>
+    me.sex == null ||
+    me.birthDate == null ||
+    me.heightCm == null ||
+    me.activityLevel == null;
+
 /// Outgoing `PATCH /me` payload. Sparse on purpose — only the fields the
 /// caller sets are emitted to JSON.
 class UserPatch {
