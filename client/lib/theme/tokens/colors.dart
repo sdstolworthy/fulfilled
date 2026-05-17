@@ -27,6 +27,17 @@ class AppColors {
   final Color accentSoft;
   final Color accentLine;
 
+  // Darker accent siblings, derived from `accent` by mixing toward black.
+  // Authored as concrete tokens (not call-site `Color.lerp`) so widget code
+  // never references `Colors.black` to "darken" the accent. FX-006.
+  //
+  // - `accentDark`  — accent mixed 15% toward black. Used as the bottom stop
+  //   of the screen-07 goal-hero gradient (see `GoalActiveCard`).
+  // - `accentHover` — accent mixed  8% toward black. Used as the web/desktop
+  //   hover tint on accent-filled controls (see `LogFoodFab`).
+  final Color accentDark;
+  final Color accentHover;
+
   // Macros — data-only. T-03: never use these for buttons, links, focus, or
   // any non-macro purpose.
   final Color protein;
@@ -81,6 +92,8 @@ class AppColors {
     required this.accent,
     required this.accentSoft,
     required this.accentLine,
+    required this.accentDark,
+    required this.accentHover,
     required this.protein,
     required this.carbs,
     required this.fat,
@@ -114,6 +127,8 @@ class AppColors {
     accent: Color(0xFF1F5F5B),
     accentSoft: Color(0xFFE4EEEC),
     accentLine: Color(0xFFB6D2CF),
+    accentDark: Color(0xFF1A514D),
+    accentHover: Color(0xFF1D5754),
     protein: Color(0xFFC77B3A),
     carbs: Color(0xFF6E8B3D),
     fat: Color(0xFFB6883F),
@@ -145,6 +160,8 @@ class AppColors {
     Color? accent,
     Color? accentSoft,
     Color? accentLine,
+    Color? accentDark,
+    Color? accentHover,
     Color? protein,
     Color? carbs,
     Color? fat,
@@ -175,6 +192,8 @@ class AppColors {
       accent: accent ?? this.accent,
       accentSoft: accentSoft ?? this.accentSoft,
       accentLine: accentLine ?? this.accentLine,
+      accentDark: accentDark ?? this.accentDark,
+      accentHover: accentHover ?? this.accentHover,
       protein: protein ?? this.protein,
       carbs: carbs ?? this.carbs,
       fat: fat ?? this.fat,

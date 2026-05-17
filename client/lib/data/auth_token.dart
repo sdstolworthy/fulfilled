@@ -1,6 +1,9 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'api_client.dart';
+import 'login_errors.dart';
 import 'outbox/log_outbox_notifier.dart';
 import 'secure_token_store.dart';
 
@@ -81,6 +84,89 @@ class AuthTokenNotifier extends Notifier<String?> {
     state = token;
   }
 
+  /// Trade [username] + [password] for a bearer token by POSTing to
+  /// `<baseUrl>/auth/login`. On success, persists the token via
+  /// [signIn] (writes to [SecureTokenStore] then flips notifier
+  /// state).
+  ///
+  /// **JWT-paste workaround (v1 only, until BE-008 lands).** If
+  /// [password] matches the three-segment base64url shape of a JWT
+  /// (`xxx.yyy.zzz`), the method **skips the POST entirely** and
+  /// signs the user in with the password value as the literal
+  /// bearer. This lets users authenticate against servers that
+  /// haven't shipped `POST /auth/login` yet by pasting a hand-issued
+  /// JWT into the password field. PM directive — see architect_login.md
+  /// §3.6. The shortcut stays as a fallback for older self-hosted
+  /// deployments once BE-008 lands.
+  ///
+  /// Throws (all from the [LoginError] sealed hierarchy):
+  ///   - [BadCredentialsError] on `401` from the server — the
+  ///     LoginController renders this inline under the password field.
+  ///   - [LoginEndpointMissingError] on `404` — the LoginController
+  ///     flips its `pastedJwtMode` flag and renders the BE-008
+  ///     disclosure (LOG-005 §5.4).
+  ///   - [LoginNetworkError] on any other DioException (timeout,
+  ///     connection refused, TLS handshake, 5xx, malformed response).
+  ///
+  /// `expires_at` on the response is intentionally ignored in v1
+  /// per architect §10.7 — proactive expiry tracking is the gateway
+  /// drug to refresh-token rotation, which PM punted. The 401-sweep
+  /// interceptor (see `api_client.dart`) catches stale tokens.
+  // TODO BE-008-refresh: expires_at intentionally ignored in v1 per
+  // architect_login.md §10.7.
+  Future<void> signInWithCredentials({
+    required String username,
+    required String password,
+  }) async {
+    // JWT-shape detection: three base64url segments separated by
+    // dots. We don't validate the signature — the server does that
+    // on the first authenticated request, and a malformed bearer
+    // surfaces as the 401-sweep. The shape guard is purely
+    // defensive against "user typed their actual password and we
+    // shipped it as a bearer."
+    if (_jwtShape.hasMatch(password)) {
+      await signIn(password);
+      return;
+    }
+
+    final dio = ref.read(apiClientProvider).dio;
+    try {
+      final response = await dio.post<dynamic>(
+        '/auth/login',
+        data: <String, String>{
+          'username': username,
+          'password': password,
+        },
+        // Defensive: strip any stale bearer the request interceptor
+        // would otherwise attach. `/auth/login` is `security: []` on
+        // the server side per the BE-008 contract; keeping the wire
+        // clean avoids surprising the server.
+        options: Options(headers: <String, String>{'Authorization': ''}),
+      );
+
+      final body = response.data;
+      if (body is! Map ||
+          body['token'] is! String ||
+          (body['token'] as String).isEmpty) {
+        throw const LoginNetworkError('Login response missing token.');
+      }
+      final token = body['token'] as String;
+      // `signIn` persists to secure storage **before** mutating
+      // in-memory state — a failed write keeps the notifier at its
+      // pre-call value (architect §3.2).
+      await signIn(token);
+    } on DioException catch (e) {
+      final status = e.response?.statusCode;
+      if (status == 401) {
+        throw const BadCredentialsError();
+      }
+      if (status == 404) {
+        throw const LoginEndpointMissingError();
+      }
+      throw LoginNetworkError(_describeDioError(e));
+    }
+  }
+
   /// Clear the token + the outbox Hive box. The profile screen calls
   /// this after a destructive `AlertDialog` confirmation (T-11).
   ///
@@ -111,3 +197,48 @@ class AuthTokenNotifier extends Notifier<String?> {
 /// Mutators reach for `ref.read(authTokenProvider.notifier)`.
 final authTokenProvider =
     NotifierProvider<AuthTokenNotifier, String?>(AuthTokenNotifier.new);
+
+/// Three base64url segments separated by dots. Anchored at both ends
+/// so an embedded JWT-looking substring (e.g. a password that
+/// happens to contain dots) doesn't match. Base64url alphabet:
+/// `[A-Za-z0-9_-]`. We accept (but don't require) padding-free
+/// segments — JWTs are unpadded by RFC 7515, but a user pasting an
+/// older `=`-padded blob would still pass the eyeball test as a
+/// JWT; the server is the ultimate validator, this regex is just
+/// the "did the user paste a credential vs. type a password" guard.
+///
+/// Edge case: an empty segment between dots (`a..c`) fails the `+`
+/// quantifier, so a literal `..` won't match. Negative example: a
+/// 20-character password like `Pa55w0rd.foo.bar` would match and
+/// be sent as a bearer — accepted risk per architect §3.6 ("we
+/// don't actually parse the JWT — the server validates it"). The
+/// failure mode there is a 401 on the next authenticated request,
+/// which the 401-sweep handles.
+final RegExp _jwtShape =
+    RegExp(r'^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$');
+
+/// Best-effort human description for a [DioException] that wasn't a
+/// 401 or 404. The LoginController surfaces the message verbatim as
+/// a T-11 inline error row; keep these short and copy-stable.
+String _describeDioError(DioException e) {
+  switch (e.type) {
+    case DioExceptionType.connectionTimeout:
+    case DioExceptionType.sendTimeout:
+    case DioExceptionType.receiveTimeout:
+      return 'The server took too long to respond. Check your connection.';
+    case DioExceptionType.connectionError:
+      return "Couldn't reach the server. Check the server URL and your network.";
+    case DioExceptionType.badCertificate:
+      return 'The server certificate is invalid.';
+    case DioExceptionType.cancel:
+      return 'Login was cancelled.';
+    case DioExceptionType.badResponse:
+      final status = e.response?.statusCode;
+      if (status != null) {
+        return 'Server responded with $status. Try again in a moment.';
+      }
+      return 'Server returned an unexpected response.';
+    case DioExceptionType.unknown:
+      return e.message ?? 'Unknown network error.';
+  }
+}

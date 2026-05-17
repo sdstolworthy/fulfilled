@@ -76,8 +76,11 @@ class _IconChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bg = selected ? context.colors.accent : context.colors.accentSoft;
-    final fg = selected ? Colors.white : context.colors.accent;
+    final colors = context.colors;
+    final bg = selected ? colors.accent : colors.accentSoft;
+    // FX-006 / T-01: icon foreground on the accent fill routes through the
+    // `surface` token rather than `Colors.white`.
+    final fg = selected ? colors.surface : colors.accent;
     return Container(
       width: 42,
       height: 42,

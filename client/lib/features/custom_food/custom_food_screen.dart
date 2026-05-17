@@ -769,7 +769,10 @@ class _FooterButton extends StatelessWidget {
                     : Text(
                         renderedLabel,
                         style: context.text.bodyStrong.copyWith(
-                          color: Colors.white,
+                          // FX-006 / T-01: button text on the accent fill
+                          // uses the `surface` token rather than
+                          // `Colors.white`.
+                          color: colors.surface,
                           fontWeight: FontWeight.w600,
                           fontSize: 16,
                         ),
@@ -798,7 +801,11 @@ class _ButtonSkeleton extends StatelessWidget {
       height: 12,
       child: ClipRRect(
         borderRadius: BorderRadius.circular(6),
-        child: ColoredBox(color: Colors.white.withValues(alpha: 0.35)),
+        // FX-006 / T-01: faded bar on the accent-filled save button routes
+        // through the `surface` token rather than `Colors.white`.
+        child: ColoredBox(
+          color: context.colors.surface.withValues(alpha: 0.35),
+        ),
       ),
     );
   }

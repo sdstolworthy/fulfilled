@@ -641,7 +641,7 @@ plumbing.
 
 ## LOG-004  `signInWithCredentials` + `LoginError` hierarchy + 401-sweep
 
-**Status**: pending
+**Status**: shipped (Wave 2)
 **Priority**: P0
 **Effort**: M
 **Depends on**: LOG-001, LOG-003

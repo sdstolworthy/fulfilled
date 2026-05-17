@@ -5,12 +5,20 @@
 #   Never write a raw hex in widget code. The only place raw color hex
 #   literals are allowed is `lib/theme/tokens/`.
 #
-# We sweep two forms:
+# We sweep three forms:
 #   1. CSS-style `#RRGGBB` / `#RGB` / `#RRGGBBAA` literals — usually
 #      leftover from the HTML mocks pasted into dartdoc comments.
 #   2. Dart `Color(0xAARRGGBB)` literals — the canonical Flutter form.
 #      Per the architect's hex-literal sweep these belong in
 #      `lib/theme/tokens/colors.dart` only.
+#   3. `Colors.white` / `Colors.black` (and `.withValues` / `.withOpacity`
+#      derivations of either) — Material const references that smuggle
+#      raw white/black past the hex sweep. FX-006: the design system's
+#      white is `colors.surface`; black is `colors.ink`; alpha-black for
+#      shadow/scrim lives in `colors.shadow` / `colors.scrim`. Comments
+#      mentioning the constant are tolerated (the inline `# `/`// ` filter
+#      drops them); `Colors.transparent` and `Colors.black54` and similar
+#      Material-only constants are not flagged.
 #
 # Exit codes: 0 = clean, 1 = violations found (printed to stderr), 2 = usage error.
 
@@ -32,11 +40,17 @@ fi
 #   because the hex can appear anywhere on the line).
 CSS_HEX_PATTERN='#[0-9A-Fa-f]{3,8}'
 DART_HEX_PATTERN='Color\(0x[0-9A-Fa-f]{6,8}'
+# Raw `Colors.white` / `Colors.black` — but match the exact constant only
+# so `Colors.white70`, `Colors.black54`, `Colors.transparent` etc. don't
+# trip the filter. The `[^A-Za-z0-9_]` lookahead is approximated with a
+# trailing-character class because grep -E lacks negative lookahead.
+RAW_WHITE_BLACK_PATTERN='Colors\.(white|black)([^A-Za-z0-9_]|$)'
 
 violations=0
 matches="$(
-  grep -rnE "(${CSS_HEX_PATTERN})|(${DART_HEX_PATTERN})" "${LIB_DIR}" 2>/dev/null \
+  grep -rnE "(${CSS_HEX_PATTERN})|(${DART_HEX_PATTERN})|(${RAW_WHITE_BLACK_PATTERN})" "${LIB_DIR}" 2>/dev/null \
     | grep -v "^${TOKENS_DIR}/" \
+    | grep -Ev "^[^:]+:[0-9]+:[[:space:]]*(//|\*|///)" \
     || true
 )"
 

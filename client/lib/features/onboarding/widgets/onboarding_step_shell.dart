@@ -228,6 +228,7 @@ class _Footer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = context.colors;
     return SafeArea(
       top: false,
       child: Padding(
@@ -242,13 +243,15 @@ class _Footer extends StatelessWidget {
           child: FilledButton(
             onPressed: onPressed,
             style: FilledButton.styleFrom(
-              backgroundColor: context.colors.accent,
-              foregroundColor: Colors.white,
+              backgroundColor: colors.accent,
+              // FX-006 / T-01: button foreground on the accent fill routes
+              // through the `surface` token rather than `Colors.white`.
+              foregroundColor: colors.surface,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(context.radius.r3),
               ),
               textStyle: context.text.bodyStrong.copyWith(
-                color: Colors.white,
+                color: colors.surface,
                 fontWeight: FontWeight.w600,
               ),
             ),

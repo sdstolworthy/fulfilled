@@ -65,17 +65,20 @@ class _Logo extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colors = context.colors;
     return Container(
       width: 84,
       height: 84,
       decoration: BoxDecoration(
-        color: context.colors.accent,
+        color: colors.accent,
         borderRadius: BorderRadius.circular(20),
       ),
-      child: const Icon(
+      child: Icon(
         Icons.favorite_border_rounded,
         size: 40,
-        color: Colors.white,
+        // FX-006 / T-01: glyph on the accent logo routes through the
+        // `surface` token rather than `Colors.white`.
+        color: colors.surface,
       ),
     );
   }

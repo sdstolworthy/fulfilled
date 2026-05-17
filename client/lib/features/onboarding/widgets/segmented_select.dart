@@ -58,9 +58,12 @@ class _SegmentTile<T> extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bg = isSelected ? context.colors.accent : context.colors.surface;
-    final fg = isSelected ? Colors.white : context.colors.ink2;
-    final border = isSelected ? context.colors.accent : context.colors.line;
+    final colors = context.colors;
+    final bg = isSelected ? colors.accent : colors.surface;
+    // FX-006 / T-01: foreground on the accent fill routes through the
+    // `surface` token (the design-system white) rather than `Colors.white`.
+    final fg = isSelected ? colors.surface : colors.ink2;
+    final border = isSelected ? colors.accent : colors.line;
     return Semantics(
       button: true,
       selected: isSelected,

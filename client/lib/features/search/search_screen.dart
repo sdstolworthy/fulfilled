@@ -557,10 +557,15 @@ class _ResultsSkeleton extends StatelessWidget {
 /// Esc closes the dialog (Material's default `barrierDismissible: true`
 /// + an explicit `Shortcuts`/`Actions` mapping inside).
 Future<void> showCommandPaletteSearch(BuildContext context) {
+  // FX-006 / T-01: dialog barrier routes through the `scrim` token (the
+  // alpha-black scrim authored in `colors.dart`) rather than authoring
+  // `Colors.black.withValues(...)` at the call site. The token's alpha
+  // already encodes the canonical scrim weight.
+  final barrier = context.colors.scrim;
   return showDialog<void>(
     context: context,
     barrierDismissible: true,
-    barrierColor: Colors.black.withValues(alpha: 0.32),
+    barrierColor: barrier,
     builder: (dialogContext) {
       final maxH = MediaQuery.sizeOf(dialogContext).height * 0.70;
       return _CommandPaletteShell(maxHeight: maxH);

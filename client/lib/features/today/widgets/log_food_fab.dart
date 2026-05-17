@@ -62,12 +62,10 @@ class _LogFoodFabState extends State<LogFoodFab> {
     final colors = context.colors;
     // The hover tint stays under `accent` and never raises elevation — the
     // §7 rule + T-04 (accent is the "press here" hue; we darken it, not
-    // shift it elsewhere). 8 % black overlay reads as a barely-visible
-    // darken without inventing a new token.
-    final hoverTint = Color.alphaBlend(
-      Colors.black.withValues(alpha: 0.08),
-      colors.accent,
-    );
+    // shift it elsewhere). The darker sibling is pinned as `accentHover`
+    // in `colors.dart` (accent mixed 8% toward black) so the call site
+    // never references `Colors.black` to derive it (FX-006 / T-01).
+    final hoverTint = colors.accentHover;
     final pressDuration = motion(context, const Duration(milliseconds: 120));
     final hoverDuration = motion(context, const Duration(milliseconds: 80));
     const radius = BorderRadius.all(Radius.circular(16));
@@ -106,7 +104,11 @@ class _LogFoodFabState extends State<LogFoodFab> {
                 // elevation change on hover" rule holds.
                 boxShadow: <BoxShadow>[
                   BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.12),
+                    // FX-006 / T-01: shadow alpha-black is owned by the
+                    // `shadow` token (theme-assembly layer); widget code
+                    // routes through `colors.shadow` instead of authoring
+                    // `Colors.black.withValues(...)` directly.
+                    color: colors.shadow,
                     blurRadius: 6,
                     offset: const Offset(0, 3),
                   ),

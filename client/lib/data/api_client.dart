@@ -68,6 +68,33 @@ final apiClientProvider = Provider<ApiClient>((ref) {
         }
         handler.next(options);
       },
+      // 401-sweep (LOG-004, architect §3.4). Any authenticated
+      // endpoint's 401 means the bearer is stale or revoked —
+      // signing the user out flips `authTokenProvider` to null,
+      // which the router's `_AuthListenable` (LOG-007) observes and
+      // redirects to `/login`. We exclude `/auth/login` itself
+      // because *that* 401 is informational ("bad credentials")
+      // and signing out there would loop.
+      //
+      // `handler.next(e)` (not `handler.reject`) — the caller
+      // (`LogRepository.update`, etc.) still wants the exception so
+      // it can surface a SnackBar (T-11). The sweep is purely a
+      // side effect.
+      //
+      // The `signOut` call is fire-and-forget: state mutation is
+      // synchronous, only the secure-store clear is awaited. Any
+      // failure there leaves stale data in the keystore, which the
+      // next boot's `_hydrateFromSecureStore` would resurrect —
+      // acceptable v1 failure mode (the next request's own 401
+      // would sweep again).
+      onError: (e, handler) {
+        if (e.response?.statusCode == 401 &&
+            e.requestOptions.path != '/auth/login') {
+          // ignore: discarded_futures
+          ref.read(authTokenProvider.notifier).signOut();
+        }
+        handler.next(e);
+      },
     ),
   );
 

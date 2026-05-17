@@ -64,9 +64,10 @@ class GoalActiveCard extends StatelessWidget {
           colors: <Color>[
             colors.accent,
             // Darker sibling for the gradient bottom stop — the mock paints
-            // it at ~85% lightness of `accent`. Mixing through `lerp` so the
-            // resulting hex is derived, not authored.
-            Color.lerp(colors.accent, Colors.black, 0.15)!,
+            // it at ~85% lightness of `accent`. Pinned as `accentDark` in
+            // `colors.dart` so widget code never references `Colors.black`
+            // to derive the darken (FX-006 / T-01).
+            colors.accentDark,
           ],
         ),
         borderRadius: BorderRadius.circular(tokens.radius.r4),

@@ -976,7 +976,9 @@ class _ScrubOverlayPainter extends CustomPainter {
               fontFamily: 'Inter',
               fontSize: 10,
               fontWeight: FontWeight.w600,
-              color: Colors.white.withValues(alpha: opacity),
+              // FX-006 / T-01: tooltip text on the dark `ink` capsule uses
+              // the `surface` token rather than `Colors.white`.
+              color: colors.surface.withValues(alpha: opacity),
             ),
           ),
           TextSpan(
@@ -985,7 +987,7 @@ class _ScrubOverlayPainter extends CustomPainter {
               fontFamily: 'Inter',
               fontSize: 11,
               fontWeight: FontWeight.w700,
-              color: Colors.white.withValues(alpha: opacity),
+              color: colors.surface.withValues(alpha: opacity),
               fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
             ),
           ),
