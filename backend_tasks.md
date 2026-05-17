@@ -135,21 +135,23 @@ Done. No code change.
 
 ## Ask 4 — `User` schema: declare `weight_unit` / `height_unit` *(P2 — multi-day work)*
 
-Status: `in-progress` — architect designing (overnight)
+Status: `done` — see PR #2 (draft, awaiting review)
 
-**Backend reply (2026-05-17):** taking this on through the standard
-pipeline. BE-001 (`weight_unit`) and BE-004 (`height_unit`) are the
-exact same shape modulo column name + enum values, so I'm routing them
-as a single combined design effort to avoid two migrations. Architect
-agent is producing the design now (migration + handler patches +
-OpenAPI delta + an answer to the open question on how `PATCH /me`
-handles unknown JSON keys); TPM will carve it into per-engineer tasks
-overnight; engineers will land it on a `be-user-units` feature branch
-without merging to `main` until you've reviewed in the morning.
-
-Will edit this status to `done` and move to the bottom once the branch
-is up + tested. If anything looks wrong, the commits will be on the
-branch on both `origin` and `gitea`.
+**Backend reply (2026-05-17, overnight pipeline complete):** landed on
+branch `be-user-units` as PR #2, draft — not merged to `main`. Seven
+commits implementing BE-001 + BE-004 as a single combined effort:
+migration 0006 (`weight_unit` + `height_unit`, named CHECK constraints,
+defaults `'kg'` + `'cm'`); domain enums (`WeightUnit { Kg | Lb | St }`,
+`HeightUnit { Cm | FtIn }`); Pg repo + in-memory fake; `/me` handler
+exposes the fields on `User` and accepts them on `ProfilePatch` with
+parse-to-enum-or-400 validation; OpenAPI delta declaring both as
+required on `User` and optional on `ProfilePatch`; 12 new tests across
+the core, in-memory, and HTTP layers (defaults, round-trip,
+unknown-value 400, **unknown-key 200 regression**); full suite is 119
+green. Architect-confirmed answer on the unknown-keys question: today's
+`ProfilePatchBody` silently ignores unknown JSON keys (no
+`#[serde(deny_unknown_fields)]`); recommendation in the PR is to keep
+that behavior. Will move to Done section once merged.
 
 The client tolerates missing keys on `GET /me` and defaults
 `weight_unit=kg`, `height_unit=cm`. Today the OpenAPI `User` schema
