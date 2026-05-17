@@ -73,7 +73,9 @@ services:
     environment:
       SERVICE_FQDN_WEB_80: ""
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost/health.txt || exit 1"]
+      # 127.0.0.1, not localhost — busybox wget in nginx:alpine can pick
+      # ::1 first, and the image only binds IPv4 by default.
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/health.txt || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 6
