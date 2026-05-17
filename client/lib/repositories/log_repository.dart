@@ -74,6 +74,20 @@ class LogRepository {
     final body = res.data ?? const <String, dynamic>{};
     final results = (body['results'] as List<dynamic>? ?? const <dynamic>[])
         .cast<Map<String, dynamic>>();
+    // The live wire shape does NOT carry `food_name` / `serving_name`
+    // (Ask 9 in backend_tasks.md). Until that lands, fall back to
+    // prefetching each unique food_id once per day-view render so
+    // [_decodeEntryWithDenorm] can fill the names from
+    // `FoodRepository.lookup` (which now reads a real instance cache).
+    // The prefetch is idempotent + cached across calls — the second
+    // render of the same day is a single `/log` round trip.
+    final foodIds = <String>{
+      for (final r in results)
+        if (r['food_id'] is String) r['food_id'] as String,
+    };
+    if (foodIds.isNotEmpty) {
+      await _foodRepo.prefetchByIds(foodIds);
+    }
     final entries =
         results.map(_decodeEntryWithDenorm).toList(growable: false);
     entries.sort((a, b) => b.createdAt.compareTo(a.createdAt));
