@@ -8,9 +8,11 @@ import '../../domain/log_entry.dart';
 import '../../domain/meal.dart';
 import '../../providers/food_providers.dart';
 import '../../providers/repository_providers.dart';
+import '../../repositories/_fixtures.dart' show quickAddFoodId;
 import '../../routing/routes.dart';
 import '../../theme/context_extensions.dart';
 import '../log_entry/log_entry_sheet.dart';
+import '../quick_add/quick_add_sheet.dart';
 
 /// Shared helpers for the compact + expanded day views. Lives inside the
 /// feature folder because nothing here is used by another screen.
@@ -97,14 +99,22 @@ void navigateDay(BuildContext context, DateTime current, int delta) {
 ///    is the right interaction for that state. We surface a SnackBar
 ///    `"Still syncing — edit when sync finishes"` and bail. On
 ///    medium/expanded the predicate always returns `false` (no outbox).
-/// 2. **Food fetch.** The sheet body needs a full `Food` (servings +
+/// 2. **Quick-add branch (FX-001).** Quick-add rows back the synthetic
+///    `food_quick_add` food — there's no real food behind them, so the
+///    food-detail-style `LogEntrySheet` is the wrong surface. We
+///    short-circuit to `showQuickAddSheet(context, existing: entry)`
+///    which renders the dedicated Edit quick-add UI. The food-fetch
+///    gate is skipped (the synthetic food *is* in the seed catalog so
+///    a fetch would resolve, but its panel is a placeholder — we just
+///    don't need it). The pending-sync gate above already ran.
+/// 3. **Food fetch.** The sheet body needs a full `Food` (servings +
 ///    nutrition); the day-view only has a denormalized name on the
 ///    entry. We `await ref.read(foodDetailProvider(entry.foodId)
 ///    .future)`. On error — most likely `FoodNotFoundError` — surface a
 ///    SnackBar `"Couldn't load this food — try again"` and bail. The
 ///    cache is usually warm here (Today views recent foods), so the
 ///    await typically completes in the same frame.
-/// 3. **Open the sheet.** `showLogEntrySheet(context, food: food,
+/// 4. **Open the sheet.** `showLogEntrySheet(context, food: food,
 ///    existing: entry)` — the sheet pre-seeds quantity/serving/meal
 ///    /date/note from `existing` and PATCHes on submit. Return value is
 ///    discarded; the sheet handled invalidation.
@@ -130,7 +140,17 @@ Future<void> editLogEntry(
     return;
   }
 
-  // Gate 2: food fetch. `foodDetailProvider` is a `FutureProvider.family`;
+  // Gate 2 (FX-001): Quick-add rows go to the dedicated quick-add edit
+  // sheet, not the generic LogEntrySheet. Branches on the synthetic
+  // food id rather than a row-side flag because that's the same key
+  // `LogRepository.create` uses to mint the entry — keeping the two in
+  // lock-step is one source of truth.
+  if (entry.foodId == quickAddFoodId) {
+    await showQuickAddSheet(context, existing: entry);
+    return;
+  }
+
+  // Gate 3: food fetch. `foodDetailProvider` is a `FutureProvider.family`;
   // `.future` resolves to the cached value when warm.
   final Food food;
   try {
@@ -146,7 +166,7 @@ Future<void> editLogEntry(
 
   if (!context.mounted) return;
 
-  // Gate 3: open the sheet in edit mode. Discard the return — the sheet
+  // Gate 4: open the sheet in edit mode. Discard the return — the sheet
   // itself invalidates `daySummaryProvider` / `logEntriesProvider`.
   await showLogEntrySheet(context, food: food, existing: entry);
 }

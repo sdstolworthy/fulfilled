@@ -12,7 +12,7 @@ import 'serving.dart';
 /// detail returns the full nutrition panel + all servings. This class is
 /// the *detail* shape — `FoodSearchHit` is a sibling type below.
 class Food {
-  const Food({
+  Food({
     required this.id,
     required this.name,
     required this.source,
@@ -24,7 +24,8 @@ class Food {
     this.qualityScore,
     this.nutriscore,
     this.categoriesTags = const <String>[],
-  });
+    DateTime? createdAt,
+  }) : createdAt = createdAt ?? DateTime.now();
 
   final String id;
   final String name;
@@ -52,6 +53,16 @@ class Food {
   final NutritionPer100g nutritionPer100g;
   final List<Serving> servings;
   final List<String> categoriesTags;
+
+  /// Wall-clock timestamp when the food row was created. Mirrors the
+  /// planned wire field `created_at`. The pre-backend `fromJson`
+  /// tolerates a missing key by defaulting to "now" — once the Rust API
+  /// emits the column the default path is dead code (FX-002).
+  ///
+  /// `My foods` sorts by this descending so a freshly-saved custom food
+  /// surfaces at the top of the list (the "I just made this 30 seconds
+  /// ago — where is it?" flow).
+  final DateTime createdAt;
 
   /// The id of the default serving. Asserts there's exactly one default
   /// in the list — the contract per OpenAPI is "exactly one row with
@@ -97,6 +108,7 @@ class Food {
     NutritionPer100g? nutritionPer100g,
     List<Serving>? servings,
     List<String>? categoriesTags,
+    DateTime? createdAt,
   }) =>
       Food(
         id: id ?? this.id,
@@ -110,10 +122,15 @@ class Food {
         nutritionPer100g: nutritionPer100g ?? this.nutritionPer100g,
         servings: servings ?? this.servings,
         categoriesTags: categoriesTags ?? this.categoriesTags,
+        createdAt: createdAt ?? this.createdAt,
       );
 
   factory Food.fromJson(Map<String, dynamic> json) {
     final source = FoodSource.fromWire(json['source'] as String);
+    // Pre-backend window: tolerate a missing `created_at` and default to
+    // "now". Once the Rust API emits the column every payload includes
+    // the key and the fallback is dead code (FX-002).
+    final createdAtRaw = json['created_at'];
     return Food(
       id: json['id'] as String,
       name: json['name'] as String,
@@ -132,6 +149,9 @@ class Food {
           ((json['categories_tags'] as List<dynamic>?) ?? const <dynamic>[])
               .map((e) => e as String)
               .toList(),
+      createdAt: createdAtRaw == null
+          ? null
+          : DateTime.parse(createdAtRaw as String),
     );
   }
 
@@ -146,6 +166,7 @@ class Food {
         'nutrition': nutritionPer100g.toJson(),
         'servings': servings.map((s) => s.toJson()).toList(),
         'categories_tags': categoriesTags,
+        'created_at': createdAt.toIso8601String(),
       };
 
   @override
@@ -162,7 +183,8 @@ class Food {
           other.nutriscore == nutriscore &&
           other.nutritionPer100g == nutritionPer100g &&
           _listEq(other.servings, servings) &&
-          _listEq(other.categoriesTags, categoriesTags);
+          _listEq(other.categoriesTags, categoriesTags) &&
+          other.createdAt == createdAt;
 
   @override
   int get hashCode => Object.hash(
@@ -177,6 +199,7 @@ class Food {
         nutritionPer100g,
         Object.hashAll(servings),
         Object.hashAll(categoriesTags),
+        createdAt,
       );
 }
 

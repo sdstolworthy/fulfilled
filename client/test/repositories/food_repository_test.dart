@@ -82,6 +82,35 @@ void main() {
       expect(sliced.length, equals(1));
       expect(sliced.first.id, equals(all[1].id));
     });
+
+    // FX-002: rows must come back newest-first by `createdAt` so a
+    // freshly-saved custom surfaces at the top of My foods.
+    test('returns rows sorted by createdAt descending', () async {
+      final foods = await repo.customFoods();
+      expect(foods.length, greaterThan(1));
+      for (var i = 1; i < foods.length; i++) {
+        expect(
+          foods[i - 1].createdAt.isAfter(foods[i].createdAt) ||
+              foods[i - 1].createdAt.isAtSameMomentAs(foods[i].createdAt),
+          isTrue,
+          reason: 'expected newest-first at index $i — '
+              '${foods[i - 1].id}@${foods[i - 1].createdAt} '
+              'should be >= ${foods[i].id}@${foods[i].createdAt}',
+        );
+      }
+    });
+
+    test('a freshly-created custom food lands at the head', () async {
+      final created = await repo.createCustom(
+        FoodCreate(
+          name: 'Brand new',
+          nutrition: NutritionPer100g(energyKcal: Decimal.fromInt(150)),
+        ),
+      );
+      final after = await repo.customFoods();
+      expect(after.first.id, equals(created.id),
+          reason: 'newly-created custom must sort to the head');
+    });
   });
 
   group('addServing', () {

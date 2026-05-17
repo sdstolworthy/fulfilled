@@ -126,6 +126,7 @@ List<Food> buildSeedFoods() {
     // ── OFF (branded, off-shelf) ──
     Food(
       id: 'f_greek_yogurt_plain',
+      createdAt: _daysAgo(82),
       name: 'Greek yogurt, plain',
       brand: 'Fage',
       barcode: '8410076473203',
@@ -166,6 +167,7 @@ List<Food> buildSeedFoods() {
     ),
     Food(
       id: 'f_peanut_butter',
+      createdAt: _daysAgo(78),
       name: 'Peanut butter, smooth',
       brand: 'Skippy',
       barcode: '0037600138307',
@@ -198,6 +200,7 @@ List<Food> buildSeedFoods() {
     ),
     Food(
       id: 'f_oatmeal_rolled',
+      createdAt: _daysAgo(74),
       name: 'Rolled oats',
       brand: 'Quaker',
       barcode: '0030000010402',
@@ -230,6 +233,7 @@ List<Food> buildSeedFoods() {
     ),
     Food(
       id: 'f_protein_bar',
+      createdAt: _daysAgo(70),
       name: 'Chocolate chip cookie dough protein bar',
       brand: 'Quest',
       barcode: '0888849000043',
@@ -262,6 +266,7 @@ List<Food> buildSeedFoods() {
     ),
     Food(
       id: 'f_almond_milk',
+      createdAt: _daysAgo(66),
       name: 'Almond milk, unsweetened',
       brand: 'Silk',
       barcode: '0025293001428',
@@ -294,6 +299,7 @@ List<Food> buildSeedFoods() {
     ),
     Food(
       id: 'f_cliff_bar',
+      createdAt: _daysAgo(62),
       name: 'Chocolate chip energy bar',
       brand: 'Clif',
       barcode: '0722252100702',
@@ -326,6 +332,7 @@ List<Food> buildSeedFoods() {
     ),
     Food(
       id: 'f_pasta_penne',
+      createdAt: _daysAgo(58),
       name: 'Penne rigate, dry',
       brand: 'Barilla',
       barcode: '8076809529433',
@@ -358,6 +365,7 @@ List<Food> buildSeedFoods() {
     ),
     Food(
       id: 'f_dark_chocolate',
+      createdAt: _daysAgo(54),
       name: 'Dark chocolate, 70%',
       brand: "Lindt",
       barcode: '0037466060309',
@@ -390,6 +398,7 @@ List<Food> buildSeedFoods() {
     ),
     Food(
       id: 'f_olive_oil',
+      createdAt: _daysAgo(50),
       name: 'Extra virgin olive oil',
       brand: 'California Olive Ranch',
       barcode: '0850734001057',
@@ -422,6 +431,7 @@ List<Food> buildSeedFoods() {
     ),
     Food(
       id: 'f_whole_wheat_bread',
+      createdAt: _daysAgo(46),
       name: 'Whole wheat bread',
       brand: "Dave's Killer Bread",
       barcode: '0013764000035',
@@ -454,6 +464,7 @@ List<Food> buildSeedFoods() {
     ),
     Food(
       id: 'f_cottage_cheese',
+      createdAt: _daysAgo(42),
       name: 'Low-fat cottage cheese',
       brand: 'Good Culture',
       barcode: '0856769005317',
@@ -486,6 +497,7 @@ List<Food> buildSeedFoods() {
     ),
     Food(
       id: 'f_la_croix',
+      createdAt: _daysAgo(38),
       name: 'Sparkling water, grapefruit',
       brand: 'La Croix',
       barcode: '0073360100208',
@@ -519,6 +531,7 @@ List<Food> buildSeedFoods() {
     // ── USDA (generic / commodity) ──
     Food(
       id: 'f_apple_raw',
+      createdAt: _daysAgo(36),
       name: 'Apple, raw, with skin',
       brand: null,
       barcode: null,
@@ -551,6 +564,7 @@ List<Food> buildSeedFoods() {
     ),
     Food(
       id: 'f_banana_raw',
+      createdAt: _daysAgo(34),
       name: 'Banana, raw',
       source: FoodSource.usda,
       isCustom: false,
@@ -578,6 +592,7 @@ List<Food> buildSeedFoods() {
     ),
     Food(
       id: 'f_chicken_breast',
+      createdAt: _daysAgo(32),
       name: 'Chicken breast, skinless, cooked',
       source: FoodSource.usda,
       isCustom: false,
@@ -606,6 +621,7 @@ List<Food> buildSeedFoods() {
     ),
     Food(
       id: 'f_brown_rice',
+      createdAt: _daysAgo(30),
       name: 'Brown rice, cooked',
       source: FoodSource.usda,
       isCustom: false,
@@ -634,6 +650,7 @@ List<Food> buildSeedFoods() {
     ),
     Food(
       id: 'f_broccoli',
+      createdAt: _daysAgo(28),
       name: 'Broccoli, cooked',
       source: FoodSource.usda,
       isCustom: false,
@@ -661,6 +678,7 @@ List<Food> buildSeedFoods() {
     ),
     Food(
       id: 'f_egg_large',
+      createdAt: _daysAgo(26),
       name: 'Egg, whole, cooked',
       source: FoodSource.usda,
       isCustom: false,
@@ -689,6 +707,7 @@ List<Food> buildSeedFoods() {
     ),
     Food(
       id: 'f_avocado',
+      createdAt: _daysAgo(24),
       name: 'Avocado, raw',
       source: FoodSource.usda,
       isCustom: false,
@@ -717,6 +736,7 @@ List<Food> buildSeedFoods() {
     ),
     Food(
       id: 'f_salmon_atlantic',
+      createdAt: _daysAgo(22),
       name: 'Salmon, Atlantic, cooked',
       source: FoodSource.usda,
       isCustom: false,
@@ -745,6 +765,7 @@ List<Food> buildSeedFoods() {
     ),
     Food(
       id: 'f_spinach_raw',
+      createdAt: _daysAgo(20),
       name: 'Spinach, raw',
       source: FoodSource.usda,
       isCustom: false,
@@ -773,6 +794,7 @@ List<Food> buildSeedFoods() {
     ),
     Food(
       id: 'f_almonds',
+      createdAt: _daysAgo(18),
       name: 'Almonds, raw',
       source: FoodSource.usda,
       isCustom: false,
@@ -803,6 +825,7 @@ List<Food> buildSeedFoods() {
     // ── User-custom ──
     Food(
       id: 'f_moms_lasagna',
+      createdAt: _daysAgo(35),
       name: "Mom's lasagna",
       brand: null,
       barcode: null,
@@ -833,6 +856,7 @@ List<Food> buildSeedFoods() {
     ),
     Food(
       id: 'f_home_smoothie',
+      createdAt: _daysAgo(14),
       name: 'Home green smoothie',
       source: FoodSource.user,
       isCustom: true,
@@ -860,6 +884,7 @@ List<Food> buildSeedFoods() {
     ),
     Food(
       id: 'f_dad_chili',
+      createdAt: _daysAgo(50),
       name: "Dad's turkey chili",
       source: FoodSource.user,
       isCustom: true,
@@ -888,6 +913,7 @@ List<Food> buildSeedFoods() {
     ),
     Food(
       id: 'f_office_coffee',
+      createdAt: _daysAgo(7),
       name: 'Office coffee w/ oat milk',
       source: FoodSource.user,
       isCustom: true,
@@ -931,6 +957,7 @@ List<Food> buildSeedFoods() {
     // foods".
     Food(
       id: quickAddFoodId,
+      createdAt: _daysAgo(90),
       name: 'Quick add',
       source: FoodSource.user,
       isCustom: false,

@@ -39,8 +39,17 @@ const String _quickAddServingId = 'sv_kcal';
 ///     keyboard inside a centered dialog is jarring (matches the same
 ///     carve-out in `LogEntrySheet`'s QL-107 dev-ticket).
 ///
-/// Returns the created `LogEntry` on save, or `null` when the user
-/// dismisses the sheet.
+/// Returns the created (or updated) `LogEntry` on save, or `null` when
+/// the user dismisses the sheet.
+///
+/// **Modes.** Mirrors `showLogEntrySheet({existing:})` from LU-002:
+/// - `existing == null` → create mode. The default sheet flow.
+/// - `existing != null` → edit mode. Pre-seeds kcal (= entry quantity),
+///   meal, date, and macros from the entry's snapshot. Header reads
+///   "Edit quick add"; the CTA reads "Save changes" and is disabled
+///   until the form differs from the seed. Submit builds a `LogPatch`
+///   and calls `LogRepository.update(existing.id, patch)` rather than
+///   `create`.
 ///
 /// **Post-save T-24 Case 2 routing.** On save we pop the sheet (or
 /// dialog on expanded — pop-first ordering, mirroring `LogEntrySheet`'s
@@ -48,16 +57,19 @@ const String _quickAddServingId = 'sv_kcal';
 /// the user lands on the day-view where their just-logged kcal appears.
 ///
 /// **Macros override.** When the optional "Add macros" toggle is on,
-/// the submit payload carries a `nutritionOverride` (a sparse
+/// the create payload carries a `nutritionOverride` (a sparse
 /// `NutritionPer100g` with the user-supplied P/C/F) that the mock
 /// `LogRepository.create` substitutes for the synthetic food's
 /// `nutritionPer100g` before computing the snapshot. With the toggle
 /// off, only kcal is logged (macros default to zero on the synthetic
-/// food's per-100 g panel).
+/// food's per-100 g panel). In edit mode the macros override is **not**
+/// re-emitted on the wire (`LogPatch` has no `nutritionOverride`
+/// field); the snapshot is recomputed from the food's per-100 g panel.
 Future<LogEntry?> showQuickAddSheet(
   BuildContext context, {
   DateTime? defaultDate,
   Meal? defaultMeal,
+  LogEntry? existing,
 }) {
   final isCompact = FormFactor.of(context).isCompact;
   final parent = ProviderScope.containerOf(context, listen: false);
@@ -71,6 +83,7 @@ Future<LogEntry?> showQuickAddSheet(
       child: QuickAddSheetBody(
         defaultDate: defaultDate,
         defaultMeal: defaultMeal,
+        existing: existing,
         scrollController: scrollController,
         showGrabber: showGrabber,
       ),
@@ -152,33 +165,62 @@ class _DialogEnterAnimation extends StatelessWidget {
 /// Public body widget. Exposed so widget tests can pump it directly
 /// without going through `showModalBottomSheet`'s overlay plumbing —
 /// same pattern as `LogEntrySheetBody`.
+///
+/// **Modes (FX-001).** When [existing] is non-null the sheet runs in
+/// edit mode: pre-seeds kcal / meal / date / macros from the entry,
+/// renames the title to "Edit quick add", flips the CTA to "Save
+/// changes" (disabled until the form differs from the seed), and
+/// dispatches submit through `LogRepository.update` with a sparse
+/// `LogPatch`. The macros override is **not** patchable — `LogPatch`
+/// doesn't model `nutritionOverride`. The macros UI in edit mode is
+/// therefore a read-only-ish surface: seeds correctly so the user sees
+/// what was logged, but if they change a macro the diff is not emitted
+/// (the snapshot will be recomputed against the synthetic food's
+/// per-100 g panel, which is zero macros). PMgr accepted this carveout
+/// for v1.1; a future ticket may add `nutritionOverride` to `LogPatch`.
 class QuickAddSheetBody extends ConsumerStatefulWidget {
   const QuickAddSheetBody({
     super.key,
     this.defaultDate,
     this.defaultMeal,
+    this.existing,
     this.scrollController,
     this.showGrabber = true,
     @visibleForTesting this.onSubmit,
+    @visibleForTesting this.onPatch,
     @visibleForTesting this.skipRouteOnSave = false,
   });
 
   /// Pre-seeded date. Defaults to today (local-calendar Y/M/D).
+  /// **Ignored in edit mode** — the existing entry's `consumedOn` wins.
   final DateTime? defaultDate;
 
   /// Pre-seeded meal. Defaults to the local-time fallback.
+  /// **Ignored in edit mode** — the existing entry's `meal` wins.
   final Meal? defaultMeal;
+
+  /// The entry being edited. When non-null the sheet is in **edit
+  /// mode** — see class dartdoc. When null the sheet is in **create
+  /// mode** (today's behaviour).
+  final LogEntry? existing;
 
   final ScrollController? scrollController;
   final bool showGrabber;
 
   /// **Test-only.** Fires with the constructed `LogCreate` before the
-  /// repository call. Test seam mirroring `LogEntrySheetBody.onSubmit`.
+  /// repository call in **create mode**. Test seam mirroring
+  /// `LogEntrySheetBody.onSubmit`.
   final ValueChanged<LogCreate>? onSubmit;
 
+  /// **Test-only.** Fires with the constructed `LogPatch` before the
+  /// `LogRepository.update` call in **edit mode**. Lets tests assert on
+  /// the sparse-patch shape without round-tripping through the mock
+  /// repo's `update` (which would recompute the snapshot).
+  final ValueChanged<LogPatch>? onPatch;
+
   /// **Test-only.** When true, skip the post-save `context.go`
-  /// navigation. Lets tests assert on the `LogCreate` payload without
-  /// standing up a router in the harness.
+  /// navigation. Lets tests assert on the `LogCreate` / `LogPatch`
+  /// payload without standing up a router in the harness.
   final bool skipRouteOnSave;
 
   @override
@@ -195,12 +237,57 @@ class _QuickAddSheetBodyState extends ConsumerState<QuickAddSheetBody> {
   Decimal? _fat = Decimal.zero;
   bool _submitting = false;
 
+  /// True iff the sheet was opened to edit an existing entry. Drives
+  /// the header copy, CTA label + enablement, and the submit branch.
+  /// FX-001 — mirrors `LogEntrySheetBody._isEditing`.
+  bool get _isEditing => widget.existing != null;
+
   @override
   void initState() {
     super.initState();
-    _meal = widget.defaultMeal ?? mealForLocalTime(DateTime.now());
-    final seedDate = widget.defaultDate ?? DateTime.now();
+    final ex = widget.existing;
+    // Precedence (edit mode wins): existing.meal > defaultMeal > local-time fallback.
+    _meal = ex?.meal ?? widget.defaultMeal ?? mealForLocalTime(DateTime.now());
+    final seedDate = ex?.consumedOn ?? widget.defaultDate ?? DateTime.now();
     _date = DateTime(seedDate.year, seedDate.month, seedDate.day);
+
+    if (ex != null) {
+      // Quick-add foods log `quantity == kcal` (1 g serving, 100 kcal /
+      // 100 g panel). Pre-seed the kcal stepper directly from quantity.
+      _kcal = ex.quantity;
+
+      // Reverse the snapshot-from-override math to recover macros.
+      // The Quick-add food's panel is 100 kcal per 100 g (1 g serving),
+      // so `snapshot.macroG == override.macroG × kcal / 100` →
+      // `override.macroG = snapshot.macroG × 100 / kcal`. Guard against
+      // div-by-zero (kcal should never be zero on a real entry, but
+      // skip cleanly if it is).
+      final snap = ex.nutritionSnapshot;
+      final kcal = ex.kcal;
+      Decimal? recover(Decimal? snapshotG) {
+        if (snapshotG == null) return null;
+        if (kcal == Decimal.zero) return null;
+        return (snapshotG * Decimal.fromInt(100) / kcal)
+            .toDecimal(scaleOnInfinitePrecision: 6);
+      }
+
+      final seedProtein = recover(snap.proteinG);
+      final seedCarbs = recover(snap.carbsG);
+      final seedFat = recover(snap.fatG);
+
+      // If any macro is non-null and non-zero on the seed, expand the
+      // macros block so the user sees the values that drove the entry
+      // without having to hunt for the toggle. The values are shown
+      // read-only-ish — the macros override is not patchable on edit
+      // (see class dartdoc), but pre-filling preserves continuity.
+      final hasMacros = (seedProtein != null && seedProtein > Decimal.zero) ||
+          (seedCarbs != null && seedCarbs > Decimal.zero) ||
+          (seedFat != null && seedFat > Decimal.zero);
+      _macrosExpanded = hasMacros;
+      _protein = seedProtein ?? Decimal.zero;
+      _carbs = seedCarbs ?? Decimal.zero;
+      _fat = seedFat ?? Decimal.zero;
+    }
   }
 
   Future<void> _pickDate() async {
@@ -256,9 +343,57 @@ class _QuickAddSheetBodyState extends ConsumerState<QuickAddSheetBody> {
     );
   }
 
+  /// Build the sparse [LogPatch] from current form state vs. the seed
+  /// entry. Only emits fields that differ. Mirrors `LogEntrySheetBody
+  /// ._buildLogPatch`'s shape. The Quick-add sheet has no note field,
+  /// so `note` / `clearNote` are always absent.
+  LogPatch _buildLogPatch() {
+    assert(_isEditing, '_buildLogPatch called outside edit mode');
+    final ex = widget.existing!;
+    final kcal = _kcal ?? Decimal.one;
+    return LogPatch(
+      consumedOn: _sameDay(_date, ex.consumedOn) ? null : _date,
+      meal: _meal != ex.meal ? _meal : null,
+      // Quick-add maps quantity 1:1 to kcal; kcal-only edits surface
+      // here as a quantity diff.
+      quantity: kcal != ex.quantity ? kcal : null,
+    );
+  }
+
+  /// True iff every patchable field in the form matches the seed
+  /// entry. Drives the "Save changes" enablement guard in edit mode —
+  /// prevents the user firing a no-op PATCH. Mirrors
+  /// `LogEntrySheetBody._isUnchanged`.
+  ///
+  /// Only checks kcal / meal / date. Macros are seeded but not
+  /// patchable (`LogPatch` has no `nutritionOverride` field — see
+  /// class dartdoc), so a macro-only diff is not considered a real
+  /// change for the purposes of the no-op-PATCH guard.
+  bool _isUnchanged() {
+    if (!_isEditing) return false;
+    final ex = widget.existing!;
+    final kcal = _kcal ?? Decimal.one;
+    return kcal == ex.quantity &&
+        _meal == ex.meal &&
+        _sameDay(_date, ex.consumedOn);
+  }
+
+  /// Y/M/D equality. Same helper shape as
+  /// `LogEntrySheetBody._sameDay`.
+  bool _sameDay(DateTime a, DateTime b) =>
+      a.year == b.year && a.month == b.month && a.day == b.day;
+
   Future<void> _onSavePressed() async {
     if (_submitting) return;
     if (_kcal == null || _kcal! < Decimal.one) return;
+    if (_isEditing) {
+      await _onEditPressed();
+    } else {
+      await _onCreatePressed();
+    }
+  }
+
+  Future<void> _onCreatePressed() async {
     setState(() => _submitting = true);
 
     final payload = _buildLogCreate();
@@ -312,13 +447,91 @@ class _QuickAddSheetBodyState extends ConsumerState<QuickAddSheetBody> {
     }
   }
 
+  /// FX-001 edit-mode submit. Mirrors `LogEntrySheetBody._onEditPressed`:
+  /// build a sparse `LogPatch`, dispatch to `LogRepository.update`,
+  /// invalidate the same provider families as the create path (the
+  /// originating-date families too if the user shifted the date), then
+  /// pop + route-to-effect.
+  ///
+  /// Edits are never queued through the outbox (architect §2.5 / PM
+  /// ruling) — patches go straight to the repository on every form
+  /// factor. The sheet stays open on failure so the user can retry.
+  Future<void> _onEditPressed() async {
+    setState(() => _submitting = true);
+
+    final patch = _buildLogPatch();
+    widget.onPatch?.call(patch);
+
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    final repo = ref.read(logRepositoryProvider);
+    final originalDate = widget.existing!.consumedOn;
+    final newDate = _date;
+
+    // No-op guard — mirrors the create-path's "Save disabled until
+    // something differs" predicate. Skip the network call and just
+    // route-to-effect.
+    if (patch.isEmpty) {
+      if (!mounted) return;
+      if (widget.skipRouteOnSave) {
+        Navigator.of(context).maybePop<LogEntry?>(widget.existing);
+        return;
+      }
+      Navigator.of(context).pop<LogEntry?>(widget.existing);
+      if (!context.mounted) return;
+      context.go(pathForDay(newDate));
+      return;
+    }
+
+    try {
+      final updated = await repo.update(widget.existing!.id, patch);
+      if (!mounted) return;
+      // Invalidate the same family as the create path.
+      ref
+        ..invalidate(daySummaryProvider(newDate))
+        ..invalidate(logEntriesProvider(newDate))
+        ..invalidate(recentFoodsProvider)
+        ..invalidate(frequentFoodsProvider);
+      if (!_sameDay(originalDate, newDate)) {
+        // Date shifted — also drop the moved entry from the originating
+        // date's totals + list. Mirrors `LogEntrySheetBody
+        // ._onEditPressed`'s old-date branch.
+        ref
+          ..invalidate(daySummaryProvider(originalDate))
+          ..invalidate(logEntriesProvider(originalDate));
+      }
+
+      if (widget.skipRouteOnSave) {
+        Navigator.of(context).maybePop<LogEntry?>(updated);
+        return;
+      }
+
+      // T-24 Case 2 (dialog ordering): pop first, then `go(newDate)`.
+      Navigator.of(context).pop<LogEntry?>(updated);
+      if (!context.mounted) return;
+      context.go(pathForDay(newDate));
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _submitting = false);
+      messenger?.showSnackBar(
+        SnackBar(content: Text('Could not save changes: $e')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = context.colors;
     final space = context.space;
-    final autofocusKcal = FormFactor.of(context).isCompact;
-    final canSave =
-        !_submitting && _kcal != null && _kcal! >= Decimal.one;
+    // Mirror `LogEntrySheetBody`'s autofocus carveout: edit mode is
+    // *reviewing* a logged value, not entering a new one, so we don't
+    // pop the keyboard on first paint.
+    final autofocusKcal =
+        !_isEditing && FormFactor.of(context).isCompact;
+    final hasKcal = _kcal != null && _kcal! >= Decimal.one;
+    // Create mode: enabled whenever kcal is valid.
+    // Edit mode: also gate on `_isUnchanged()` so the user can't fire a
+    // no-op PATCH.
+    final canSave = !_submitting && hasKcal && !(_isEditing && _isUnchanged());
 
     return Material(
       color: colors.bg,
@@ -339,7 +552,7 @@ class _QuickAddSheetBodyState extends ConsumerState<QuickAddSheetBody> {
                 ),
               ),
             ),
-          const _Header(),
+          _Header(editing: _isEditing),
           Expanded(
             child: SingleChildScrollView(
               controller: widget.scrollController,
@@ -405,6 +618,7 @@ class _QuickAddSheetBodyState extends ConsumerState<QuickAddSheetBody> {
           _Footer(
             submitting: _submitting,
             enabled: canSave,
+            label: _isEditing ? 'Save changes' : 'Save',
             onSave: _onSavePressed,
           ),
         ],
@@ -414,7 +628,12 @@ class _QuickAddSheetBodyState extends ConsumerState<QuickAddSheetBody> {
 }
 
 class _Header extends StatelessWidget {
-  const _Header();
+  const _Header({this.editing = false});
+
+  /// In edit mode the title reads "Edit quick add" instead of "Quick
+  /// add calories". The eyebrow stays "QUICK ADD" so the surface still
+  /// reads as the same affordance. FX-001.
+  final bool editing;
 
   @override
   Widget build(BuildContext context) {
@@ -440,7 +659,7 @@ class _Header extends StatelessWidget {
                 ),
                 SizedBox(height: space.x05),
                 Text(
-                  'Quick add calories',
+                  editing ? 'Edit quick add' : 'Quick add calories',
                   key: const Key('quick_add_title'),
                   style: context.text.title.copyWith(fontSize: 20),
                 ),
@@ -696,11 +915,16 @@ class _Footer extends StatelessWidget {
     required this.submitting,
     required this.enabled,
     required this.onSave,
+    this.label = 'Save',
   });
 
   final bool submitting;
   final bool enabled;
   final VoidCallback onSave;
+
+  /// CTA label. "Save" in create mode; "Save changes" in edit mode
+  /// (FX-001).
+  final String label;
 
   @override
   Widget build(BuildContext context) {
@@ -721,7 +945,7 @@ class _Footer extends StatelessWidget {
       ),
       child: PrimaryButton(
         key: const Key('quick_add_save_button'),
-        label: 'Save',
+        label: label,
         isLoading: submitting,
         onPressed: enabled ? onSave : null,
       ),

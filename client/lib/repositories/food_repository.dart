@@ -231,6 +231,9 @@ class FoodRepository {
       nutritionPer100g: data.nutrition,
       servings: servings,
       categoriesTags: data.categoriesTags,
+      // Stamp the wall-clock now so My foods (sorted createdAt desc)
+      // surfaces the freshly-saved row at the top — FX-002.
+      createdAt: DateTime.now(),
     );
     _foods.add(food);
     return food;
@@ -357,6 +360,10 @@ class FoodRepository {
       nutritionPer100g: nextNutrition,
       servings: nextServings,
       categoriesTags: current.categoriesTags,
+      // Preserve the original createdAt — editing a food must never
+      // bump it to "now" or the row would jump to the top of My foods
+      // on every save (FX-002).
+      createdAt: current.createdAt,
     );
     _foods[idx] = updated;
     return updated;
@@ -378,12 +385,10 @@ class FoodRepository {
 
   /// Custom-food library — every `source == user` row in the catalog. Used
   /// by the `/foods/mine` screen (T-006) so the user can browse the foods
-  /// they've created. Order is fixture-list order (newest custom foods are
-  /// appended via [createCustom], which means freshly-saved foods land at
-  /// the tail naturally). The screen reads them through `myFoodsProvider`.
-  ///
-  // TODO(T-006-followup): replace fixture-order sort with `createdAt`
-  // once the field lands on `Food`.
+  /// they've created. Sorted by `createdAt` descending (newest first) so a
+  /// freshly-saved custom food surfaces at the top — the "I just made
+  /// this 30 seconds ago — where is it?" flow (FX-002). The screen reads
+  /// them through `myFoodsProvider`.
   Future<List<Food>> customFoods({int limit = 100, int offset = 0}) async {
     await mockLatency();
     // Exclude the synthetic Quick-add row: it lives in the catalog so
@@ -391,7 +396,8 @@ class FoodRepository {
     // not a user-authored food and must never surface in "My foods".
     final hits = _foods
         .where((f) => f.source == FoodSource.user && f.id != quickAddFoodId)
-        .toList();
+        .toList()
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
     if (offset >= hits.length) return const <Food>[];
     final end = (offset + limit).clamp(0, hits.length);
     return hits.sublist(offset, end);

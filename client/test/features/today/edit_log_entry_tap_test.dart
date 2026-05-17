@@ -359,6 +359,69 @@ void main() {
     },
   );
 
+  testWidgets(
+    'FX-001 — tapping a Quick-add row opens the quick-add edit sheet, '
+    'NOT the generic LogEntrySheet',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      repo = buildRepo(pending: false);
+
+      // Quick-add entry: `foodId == 'food_quick_add'`. The handler's
+      // FX-001 branch should short-circuit before the food fetch even
+      // runs, so we leave the `foodDetailProvider` un-overridden — if
+      // the branch ever regresses the test will fail loudly (the real
+      // provider would try to fetch and the LogEntrySheet would open).
+      final quickAddEntry = LogEntry(
+        id: 'le_qa_existing',
+        foodId: 'food_quick_add',
+        foodName: 'Quick add',
+        servingId: 'sv_kcal',
+        servingName: 'kcal',
+        consumedOn: DateTime(2026, 5, 14),
+        meal: Meal.snack,
+        quantity: Decimal.fromInt(105),
+        gramsTotal: Decimal.fromInt(105),
+        nutritionSnapshot: NutritionSnapshot(
+          caloriesKcal: Decimal.fromInt(105),
+        ),
+        note: null,
+        createdAt: DateTime(2026, 5, 14, 15, 0),
+        updatedAt: DateTime(2026, 5, 14, 15, 0),
+      );
+
+      await tester.pumpWidget(_harness(
+        entry: quickAddEntry,
+        repo: repo,
+      ));
+      await tester.pump();
+
+      // Pre-state: no quick-add edit sheet open.
+      expect(find.byKey(const Key('quick_add_title')), findsNothing);
+      expect(find.text('Edit quick add'), findsNothing);
+
+      // Tap the row.
+      await tester.tap(find.text('Quick add'));
+      await tester.pumpAndSettle();
+
+      // The quick-add sheet opened in edit mode (title flipped).
+      expect(find.text('Edit quick add'), findsOneWidget);
+      // The generic LogEntrySheet did NOT open — the food-detail-style
+      // `(editing)` suffix is absent.
+      expect(
+        find.byKey(const Key('log_entry_header_editing_suffix')),
+        findsNothing,
+      );
+      // CTA reads "Save changes", same string both sheets use. Combined
+      // with the title check above, this confirms we landed on the
+      // quick-add edit surface specifically.
+      expect(find.text('Save changes'), findsOneWidget);
+    },
+  );
+
   test(
     'MealSection widget contract is unchanged — its construction props '
     'match the pre-LU-005 shape',

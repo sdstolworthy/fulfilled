@@ -243,6 +243,40 @@ void main() {
       expect(updated.nutritionPer100g, food.nutritionPer100g);
       expect(updated.servings.length, food.servings.length);
     });
+
+    // FX-002: editing a custom food must preserve the original
+    // `createdAt`. If `updateCustom` bumped it to "now" the row would
+    // jump to the top of My foods on every save.
+    test('preserves the original createdAt', () async {
+      final food = await seedCustom();
+      final originalCreatedAt = food.createdAt;
+      // Sleep-free guarantee: we don't need wall-clock to advance —
+      // the assertion is "createdAt unchanged", not "createdAt older".
+      final updated = await repo.updateCustom(
+        food.id,
+        const FoodPatch(name: 'Renamed again'),
+      );
+      expect(updated.createdAt, equals(originalCreatedAt));
+      final reread = await repo.get(food.id);
+      expect(reread.createdAt, equals(originalCreatedAt));
+    });
+  });
+
+  // FX-002: `createCustom` must stamp `createdAt` to "now" so the new
+  // row sorts to the head of My foods.
+  group('FoodRepository.createCustom', () {
+    test('stamps createdAt around DateTime.now()', () async {
+      final before = DateTime.now();
+      final created = await seedCustom();
+      final after = DateTime.now();
+      expect(
+        !created.createdAt.isBefore(before) &&
+            !created.createdAt.isAfter(after),
+        isTrue,
+        reason:
+            'createdAt ${created.createdAt} should fall within [$before, $after]',
+      );
+    });
   });
 }
 

@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fulfilled/data/api_client.dart';
 import 'package:fulfilled/domain/log_entry.dart';
 import 'package:fulfilled/domain/meal.dart';
+import 'package:fulfilled/domain/nutrition.dart';
 import 'package:fulfilled/features/quick_add/quick_add_sheet.dart';
 import 'package:fulfilled/providers/repository_providers.dart';
 import 'package:fulfilled/repositories/food_repository.dart';
@@ -288,5 +289,258 @@ void main() {
     );
     expect(button.onPressed, isNull,
         reason: 'cleared kcal should disable the Save CTA');
+  });
+
+  // ── FX-001: edit-mode contracts ────────────────────────────────────
+  //
+  // Quick-add log rows now route through `showQuickAddSheet(existing:)`
+  // rather than the food-detail `LogEntrySheet`. The sheet pre-seeds
+  // from the entry, flips the CTA to "Save changes" (disabled until
+  // form differs), and dispatches submit via `LogRepository.update`
+  // with a sparse `LogPatch`.
+  group('FX-001 edit mode', () {
+    /// Build a synthetic existing quick-add entry. The shape mirrors
+    /// what `LogRepository.create` produces for a quick-add: 1 g
+    /// serving on the `food_quick_add` food, quantity in 1:1 to kcal.
+    LogEntry existingQuickAdd({
+      Decimal? quantity,
+      Meal meal = Meal.snack,
+      DateTime? consumedOn,
+      NutritionSnapshot? snapshot,
+    }) {
+      final q = quantity ?? Decimal.fromInt(105);
+      final on = consumedOn ?? DateTime(2026, 5, 1);
+      return LogEntry(
+        id: 'le_qa_existing',
+        foodId: 'food_quick_add',
+        foodName: 'Quick add',
+        servingId: 'sv_kcal',
+        servingName: 'kcal',
+        consumedOn: DateTime(on.year, on.month, on.day),
+        meal: meal,
+        quantity: q,
+        gramsTotal: q,
+        nutritionSnapshot: snapshot ??
+            NutritionSnapshot(caloriesKcal: q),
+        note: null,
+        createdAt: DateTime(2026, 5, 1, 12, 30),
+        updatedAt: DateTime(2026, 5, 1, 12, 30),
+      );
+    }
+
+    Widget editHarness({
+      required LogEntry existing,
+      required _CapturingLogRepository repo,
+      ValueChanged<LogPatch>? onPatch,
+    }) {
+      return ProviderScope(
+        overrides: <Override>[
+          logRepositoryProvider.overrideWithValue(repo),
+        ],
+        child: MaterialApp(
+          theme: buildLightTheme(),
+          home: Scaffold(
+            body: QuickAddSheetBody(
+              existing: existing,
+              showGrabber: false,
+              onPatch: onPatch,
+              skipRouteOnSave: true,
+            ),
+          ),
+        ),
+      );
+    }
+
+    testWidgets(
+      'pre-fills kcal / meal / date from existing entry; title flips to '
+      '"Edit quick add"; CTA reads "Save changes"',
+      (tester) async {
+        tester.view.physicalSize = const Size(390, 1200);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        // Pick a date firmly in the past relative to any plausible
+        // test-suite run so the "Today · MMM d" branch is never
+        // accidentally hit (which would change the rendered label).
+        final consumedOn = DateTime(2020, 1, 8); // a Wednesday
+        final entry = existingQuickAdd(
+          quantity: Decimal.fromInt(250),
+          meal: Meal.dinner,
+          consumedOn: consumedOn,
+        );
+        await tester.pumpWidget(editHarness(
+          existing: entry,
+          repo: _buildRepo(),
+        ));
+        await tester.pump();
+
+        // Title flipped.
+        expect(find.text('Edit quick add'), findsOneWidget);
+        expect(find.text('Quick add calories'), findsNothing);
+
+        // CTA flipped.
+        expect(find.text('Save changes'), findsOneWidget);
+        expect(find.text('Save'), findsNothing);
+
+        // Kcal field pre-seeded to 250 (seeded as `Decimal.fromInt(250)`,
+        // which the stepper formats as "250" — no decimal point because
+        // `allowDecimal: false`).
+        final kcalField = tester.widget<TextField>(
+          find.descendant(
+            of: find.byKey(const Key('quick_add_kcal_field')),
+            matching: find.byType(TextField),
+          ),
+        );
+        expect(kcalField.controller!.text, '250');
+
+        // Date row pre-seeded to Jan 8, 2020 (a Wednesday — firmly in
+        // the past, so the "Today · MMM d" branch is skipped and the
+        // "EEE, MMM d" branch renders).
+        expect(find.text('Wed, Jan 8'), findsOneWidget);
+      },
+    );
+
+    testWidgets('Save changes is disabled when nothing differs from seed',
+        (tester) async {
+      tester.view.physicalSize = const Size(390, 1200);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final entry = existingQuickAdd();
+      await tester.pumpWidget(editHarness(
+        existing: entry,
+        repo: _buildRepo(),
+      ));
+      await tester.pump();
+
+      // Form matches seed exactly — button should be disabled.
+      final btn = tester.widget<FilledButton>(
+        find.descendant(
+          of: find.byKey(const Key('quick_add_save_button')),
+          matching: find.byType(FilledButton),
+        ),
+      );
+      expect(btn.onPressed, isNull,
+          reason: 'no diff vs seed → no-op PATCH → disabled CTA');
+
+      // Bump kcal → button enables.
+      final kcalField = find.descendant(
+        of: find.byKey(const Key('quick_add_kcal_field')),
+        matching: find.byType(TextField),
+      );
+      await tester.enterText(kcalField, '200');
+      await tester.pump();
+
+      final btn2 = tester.widget<FilledButton>(
+        find.descendant(
+          of: find.byKey(const Key('quick_add_save_button')),
+          matching: find.byType(FilledButton),
+        ),
+      );
+      expect(btn2.onPressed, isNotNull);
+    });
+
+    testWidgets(
+      'Save changes invokes LogRepository.update with sparse LogPatch '
+      'carrying only changed fields',
+      (tester) async {
+        tester.view.physicalSize = const Size(390, 1200);
+        tester.view.devicePixelRatio = 1.0;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        // Pre-load the entry into the mock repository so `update` can
+        // find it. `create` is the easiest way to mint a quick-add row.
+        final repo = _buildRepo();
+        final seeded = await repo.create(LogCreate(
+          foodId: 'food_quick_add',
+          servingId: 'sv_kcal',
+          consumedOn: DateTime(2026, 5, 1),
+          meal: Meal.snack,
+          quantity: Decimal.fromInt(105),
+        ));
+
+        LogPatch? captured;
+        await tester.pumpWidget(editHarness(
+          existing: seeded,
+          repo: repo,
+          onPatch: (p) => captured = p,
+        ));
+        await tester.pump();
+
+        // Bump kcal 105 → 200 (the only diff).
+        final kcalField = find.descendant(
+          of: find.byKey(const Key('quick_add_kcal_field')),
+          matching: find.byType(TextField),
+        );
+        await tester.enterText(kcalField, '200');
+        await tester.pump();
+
+        await tester.tap(find.byKey(const Key('quick_add_save_button')));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 50));
+
+        expect(captured, isNotNull, reason: 'edit-mode onPatch fires');
+        expect(captured!.quantity, equals(Decimal.fromInt(200)));
+        // Everything else sparse — meal and consumed_on were not
+        // touched, and there's no note field on the Quick-add sheet.
+        expect(captured!.meal, isNull);
+        expect(captured!.consumedOn, isNull);
+        expect(captured!.servingId, isNull);
+        expect(captured!.note, isNull);
+        expect(captured!.clearNote, isFalse);
+        // food_id is never serialised (LogPatch enforces).
+        expect(captured!.toJson().containsKey('food_id'), isFalse);
+
+        // The repo's `update` actually ran (no exception, snapshot
+        // updated to 200 kcal in the in-memory state).
+        final entries = await repo.entriesForDate(DateTime(2026, 5, 1));
+        final updated =
+            entries.firstWhere((e) => e.id == seeded.id);
+        expect(updated.kcal, equals(Decimal.fromInt(200)));
+      },
+    );
+
+    testWidgets('changing meal alone yields a meal-only LogPatch',
+        (tester) async {
+      tester.view.physicalSize = const Size(390, 1200);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final repo = _buildRepo();
+      final seeded = await repo.create(LogCreate(
+        foodId: 'food_quick_add',
+        servingId: 'sv_kcal',
+        consumedOn: DateTime(2026, 5, 1),
+        meal: Meal.snack,
+        quantity: Decimal.fromInt(105),
+      ));
+
+      LogPatch? captured;
+      await tester.pumpWidget(editHarness(
+        existing: seeded,
+        repo: repo,
+        onPatch: (p) => captured = p,
+      ));
+      await tester.pump();
+
+      // Switch meal: snack → dinner via the meal chip. The picker
+      // exposes its chips by label; tap the dinner chip.
+      await tester.tap(find.text('Dinner'));
+      await tester.pump();
+
+      await tester.tap(find.byKey(const Key('quick_add_save_button')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(captured, isNotNull);
+      expect(captured!.meal, equals(Meal.dinner));
+      // kcal unchanged → no quantity diff.
+      expect(captured!.quantity, isNull);
+      expect(captured!.consumedOn, isNull);
+    });
   });
 }

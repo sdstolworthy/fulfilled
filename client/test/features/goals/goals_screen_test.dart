@@ -2,9 +2,12 @@ import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fulfilled/domain/enums.dart';
 import 'package:fulfilled/domain/goal.dart';
+import 'package:fulfilled/domain/user.dart';
 import 'package:fulfilled/features/goals/goals_screen.dart';
 import 'package:fulfilled/providers/goal_providers.dart';
+import 'package:fulfilled/providers/profile_providers.dart';
 import 'package:fulfilled/providers/repository_providers.dart';
 import 'package:fulfilled/repositories/goal_repository.dart';
 import 'package:fulfilled/theme/theme_data.dart';
@@ -43,6 +46,20 @@ Goal _activeGoal() {
     updatedAt: DateTime(2026, 4, 14, 9),
   );
 }
+
+/// Seed user with every profile field required by `estimateCalories`.
+/// Pinned values match the rest of the goals editor fixtures (T-010 /
+/// FX-003 — the new-goal flow now consumes `meProvider`).
+User _seedUser() => User(
+      id: 'u_test',
+      sex: Sex.male,
+      birthDate: DateTime(1993, 4, 12),
+      heightCm: Decimal.parse('178'),
+      currentWeightKg: Decimal.parse('79.4'),
+      activityLevel: ActivityLevel.moderate,
+      createdAt: DateTime(2026, 1, 1),
+      updatedAt: DateTime(2026, 1, 1),
+    );
 
 Goal _priorGoal() {
   return Goal(
@@ -146,6 +163,7 @@ void main() {
       activeGoalProvider.overrideWith((_) async => _activeGoal()),
       goalsProvider
           .overrideWith((_) async => <Goal>[_priorGoal(), _activeGoal()]),
+      meProvider.overrideWith((_) async => _seedUser()),
     ]));
     await tester.pumpAndSettle();
 
@@ -172,6 +190,7 @@ void main() {
         (_) async => throw GoalNotFoundError(DateTime(2026, 5, 15)),
       ),
       goalsProvider.overrideWith((_) async => <Goal>[]),
+      meProvider.overrideWith((_) async => _seedUser()),
     ]));
     await tester.pumpAndSettle();
 
@@ -195,6 +214,7 @@ void main() {
       goalRepositoryProvider.overrideWithValue(repo),
       activeGoalProvider.overrideWith((_) async => active),
       goalsProvider.overrideWith((_) async => <Goal>[active]),
+      meProvider.overrideWith((_) async => _seedUser()),
     ]));
     await tester.pumpAndSettle();
 
@@ -233,6 +253,7 @@ void main() {
       goalRepositoryProvider.overrideWithValue(repo),
       activeGoalProvider.overrideWith((_) async => active),
       goalsProvider.overrideWith((_) async => <Goal>[active]),
+      meProvider.overrideWith((_) async => _seedUser()),
     ]));
     await tester.pumpAndSettle();
 
@@ -263,6 +284,7 @@ void main() {
         goalRepositoryProvider.overrideWithValue(repo),
         activeGoalProvider.overrideWith((_) async => active),
         goalsProvider.overrideWith((_) async => <Goal>[active]),
+        meProvider.overrideWith((_) async => _seedUser()),
       ]));
       await tester.pumpAndSettle();
 
