@@ -116,6 +116,12 @@ pub struct FoodDraft {
     pub name: String,
     pub brands: Option<String>,
     pub barcode: Option<String>,
+    /// USDA FoodData Central per-record key. `Some` only for USDA ingest rows;
+    /// `None` for OFF, user-custom, and any other source.
+    pub fdc_id: Option<i64>,
+    /// USDA FoodData Central record class (e.g. `"foundation_food"`). Required
+    /// when `fdc_id` is `Some`; `None` for all other sources.
+    pub data_type: Option<String>,
     pub categories_tags: Vec<String>,
     pub nutriscore_grade: Option<NutriscoreGrade>,
     pub servings: Vec<ServingDraft>, // at least one required (service-validated)

@@ -37,6 +37,8 @@ fn make_food_draft(servings: Vec<ServingDraft>) -> FoodDraft {
         name: "Test Food".into(),
         brands: None,
         barcode: None,
+        fdc_id: None,
+        data_type: None,
         categories_tags: vec![],
         nutriscore_grade: None,
         servings,

@@ -85,6 +85,19 @@ const SELECT_FOOD_COLS: &str = "id, source, owner_user_id, barcode, fdc_id, name
 /// everyone; user-custom foods are visible only to their owner.
 const VISIBLE: &str = "(source IN ('off', 'usda') OR owner_user_id = $2)";
 
+/// Normalise a raw USDA `dataType` string (e.g. from the FDC JSON export) into
+/// the DB-accepted enum value. Returns `None` for unrecognised inputs so the
+/// `foods_data_type_source_check` constraint is not violated.
+fn normalise_data_type(raw: &str) -> Option<&'static str> {
+    match raw.trim().to_lowercase().as_str() {
+        "foundation" | "foundation_food" => Some("foundation_food"),
+        "sr legacy" | "sr_legacy" | "sr_legacy_food" => Some("sr_legacy_food"),
+        "survey (fndds)" | "survey_fndds_food" | "fndds" => Some("survey_fndds_food"),
+        "branded" | "branded_food" => Some("branded_food"),
+        _ => None,
+    }
+}
+
 /// Pull the SQLSTATE code out of a sqlx error, if any.
 fn db_code(err: &SqlxError) -> Option<String> {
     match err {
@@ -484,6 +497,14 @@ impl FoodRepository for PgFoodRepository {
                     .map_err(map_sqlx)?
             } else {
                 // USDA path: conflict on fdc_id partial unique index.
+                let fdc_id = match draft.fdc_id {
+                    Some(id) => id,
+                    None => {
+                        return Err(CoreError::Validation(
+                            "USDA upsert requires fdc_id but draft.fdc_id is None".into(),
+                        ));
+                    }
+                };
                 let sql = "INSERT INTO foods ( \
                         source, fdc_id, data_type, name, brands, categories_tags, \
                         nutriscore_grade, quality_score, last_import_batch_id \
@@ -499,19 +520,29 @@ impl FoodRepository for PgFoodRepository {
                         quality_score        = EXCLUDED.quality_score, \
                         last_import_batch_id = EXCLUDED.last_import_batch_id \
                      RETURNING id";
-                // fdc_id lives on the draft only for USDA foods — grab it from
-                // extra_nutrients is not right; the FoodDraft struct does not
-                // carry fdc_id directly. We cannot upsert USDA without fdc_id,
-                // so skip rows that lack both barcode and fdc_id.
-                // NOTE: FoodDraft has no fdc_id field (it's a user/ingest
-                // concept); the calling ingest service would need to supply it.
-                // For now emit a Validation error so the bug surfaces loudly.
-                let _ = sql;
-                return Err(CoreError::Validation(
-                    "USDA upsert requires fdc_id; FoodDraft does not carry it — \
-                     ingest layer must supply barcode or extend FoodDraft"
-                        .into(),
-                ));
+                let db_data_type = match draft.data_type.as_deref().and_then(normalise_data_type) {
+                    Some(dt) => dt,
+                    None => {
+                        tracing::warn!(
+                            fdc_id = fdc_id,
+                            raw_data_type = ?draft.data_type,
+                            "skipping USDA food: data_type missing or unrecognised"
+                        );
+                        continue;
+                    }
+                };
+                sqlx::query_scalar::<_, Uuid>(sql)
+                    .bind(fdc_id)
+                    .bind(db_data_type)
+                    .bind(&draft.name)
+                    .bind(draft.brands.as_deref())
+                    .bind(&draft.categories_tags)
+                    .bind(draft.nutriscore_grade.map(|g| g.as_str()))
+                    .bind(rec.quality_score)
+                    .bind(batch_id)
+                    .fetch_one(&self.pool)
+                    .await
+                    .map_err(map_sqlx)?
             };
 
             // Atomic serving replace: delete all existing, insert new list.

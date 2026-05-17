@@ -118,6 +118,8 @@ async fn seed_off_food(
             name: name.into(),
             brands: brands.map(|s| s.into()),
             barcode: Some(barcode.into()),
+            fdc_id: None,
+            data_type: None,
             categories_tags: vec![],
             nutriscore_grade: None,
             servings: vec![],
@@ -179,6 +181,8 @@ async fn seed_custom_food(foods: &Arc<InMemoryFoodRepository>, owner: Uuid, name
         name: name.into(),
         brands: None,
         barcode: None,
+        fdc_id: None,
+        data_type: None,
         categories_tags: vec![],
         nutriscore_grade: None,
         servings: vec![ServingDraft {

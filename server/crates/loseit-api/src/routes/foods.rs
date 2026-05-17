@@ -423,6 +423,8 @@ async fn create_food(
         name: body.name,
         brands: body.brands,
         barcode: body.barcode,
+        fdc_id: None,
+        data_type: None,
         categories_tags: body.categories_tags,
         nutriscore_grade,
         servings: servings?,

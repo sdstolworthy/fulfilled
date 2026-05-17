@@ -406,6 +406,8 @@ pub fn accept_and_normalize_off(mut record: OffFoodRecord) -> Option<FoodDraftWi
         name: record.product_name.trim().to_string(),
         brands: record.brands.clone().filter(|s| !s.trim().is_empty()),
         barcode: Some(record.code.trim().to_string()),
+        fdc_id: None,
+        data_type: None,
         categories_tags: record.categories_tags.clone(),
         nutriscore_grade,
         servings: vec![], // servings are carried on FoodDraftWithServings.servings
@@ -512,10 +514,17 @@ pub fn accept_and_normalize_usda(record: UsdaFoodRecord) -> Option<FoodDraftWith
         });
     }
 
+    let data_type = if record.data_type.trim().is_empty() {
+        None
+    } else {
+        Some(record.data_type.trim().to_string())
+    };
     let draft = FoodDraft {
         name: record.description.trim().to_string(),
         brands: record.brand_owner.filter(|s| !s.trim().is_empty()),
         barcode: None,
+        fdc_id: Some(record.fdc_id),
+        data_type,
         categories_tags: vec![],
         nutriscore_grade: None,
         servings: vec![],

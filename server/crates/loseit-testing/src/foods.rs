@@ -282,7 +282,8 @@ impl FoodRepository for InMemoryFoodRepository {
     }
 
     /// Upsert a batch of external (OFF / USDA) food records. Per-food:
-    /// upsert the food row (by barcode), then full-list replace servings.
+    /// upsert the food row (by fdc_id for USDA, by barcode for OFF),
+    /// then full-list replace servings.
     async fn upsert_external_food_batch(
         &self,
         batch_id: Uuid,
@@ -292,18 +293,30 @@ impl FoodRepository for InMemoryFoodRepository {
             let draft = &rec.draft;
             let now = Utc::now();
 
-            // Upsert: find existing by barcode (OFF) or insert new.
+            // Determine source and conflict key.
+            let is_usda = draft.fdc_id.is_some();
+
             let food_id: Uuid = {
                 let mut store = self.by_id.lock().unwrap();
-                let existing_id = draft.barcode.as_ref().and_then(|bc| {
-                    store
-                        .values()
-                        .find(|f| {
-                            (f.source == FoodSource::Off || f.source == FoodSource::Usda)
-                                && f.barcode.as_deref() == Some(bc.as_str())
-                        })
-                        .map(|f| f.id)
-                });
+                // Find existing: USDA conflicts on fdc_id, OFF conflicts on barcode.
+                let existing_id = if is_usda {
+                    draft.fdc_id.and_then(|fid| {
+                        store
+                            .values()
+                            .find(|f| f.source == FoodSource::Usda && f.fdc_id == Some(fid))
+                            .map(|f| f.id)
+                    })
+                } else {
+                    draft.barcode.as_ref().and_then(|bc| {
+                        store
+                            .values()
+                            .find(|f| {
+                                f.source == FoodSource::Off
+                                    && f.barcode.as_deref() == Some(bc.as_str())
+                            })
+                            .map(|f| f.id)
+                    })
+                };
                 match existing_id {
                     Some(id) => {
                         let food = store.get_mut(&id).expect("existing id missing");
@@ -317,14 +330,15 @@ impl FoodRepository for InMemoryFoodRepository {
                         id
                     }
                     None => {
+                        let source = if is_usda { FoodSource::Usda } else { FoodSource::Off };
                         let food = Food {
                             id: Uuid::new_v4(),
-                            source: FoodSource::Off,
+                            source,
                             kind: FoodKind::Normal,
                             owner_user_id: None,
                             barcode: draft.barcode.clone(),
-                            fdc_id: None,
-                            data_type: None,
+                            fdc_id: draft.fdc_id,
+                            data_type: draft.data_type.clone(),
                             name: draft.name.clone(),
                             brands: draft.brands.clone(),
                             categories_tags: draft.categories_tags.clone(),
