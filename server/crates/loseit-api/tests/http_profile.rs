@@ -96,6 +96,43 @@ fn build_test_app_two_users() -> (axum::Router, axum::Router, Arc<InMemoryUserRe
 }
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+fn patch_body(body: &str) -> Request<Body> {
+    Request::builder()
+        .method("PATCH")
+        .uri("/api/v1/me")
+        .header("Authorization", format!("Bearer {ALICE_TOKEN}"))
+        .header("content-type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
+async fn body_json(resp: axum::http::Response<Body>) -> serde_json::Value {
+    let bytes = axum::body::to_bytes(resp.into_body(), 64 * 1024)
+        .await
+        .unwrap();
+    serde_json::from_slice(&bytes).unwrap()
+}
+
+async fn get_me_request(app: &axum::Router) -> serde_json::Value {
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/me")
+                .header("Authorization", format!("Bearer {ALICE_TOKEN}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    body_json(resp).await
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -264,4 +301,138 @@ async fn delete_me_leaves_other_users_intact() {
         .await
         .unwrap();
     assert_eq!(bob_get.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn get_me_returns_default_units_for_new_user() {
+    let (app, _users) = build_test_app_alice();
+    let body = get_me_request(&app).await;
+    assert_eq!(body["weight_unit"], "kg");
+    assert_eq!(body["height_unit"], "cm");
+}
+
+#[tokio::test]
+async fn update_me_persists_weight_unit_roundtrip() {
+    let (app, _users) = build_test_app_alice();
+
+    // Provision via GET /me first.
+    let _ = get_me_request(&app).await;
+
+    let resp = app
+        .clone()
+        .oneshot(patch_body(r#"{"weight_unit":"lb"}"#))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["weight_unit"], "lb");
+
+    // Follow-up GET /me still returns "lb".
+    let after = get_me_request(&app).await;
+    assert_eq!(after["weight_unit"], "lb");
+}
+
+#[tokio::test]
+async fn update_me_persists_height_unit_roundtrip() {
+    let (app, _users) = build_test_app_alice();
+    let _ = get_me_request(&app).await;
+
+    let resp = app
+        .clone()
+        .oneshot(patch_body(r#"{"height_unit":"ft_in"}"#))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["height_unit"], "ft_in");
+
+    let after = get_me_request(&app).await;
+    assert_eq!(after["height_unit"], "ft_in");
+}
+
+#[tokio::test]
+async fn update_me_rejects_unknown_weight_unit_value_400() {
+    let (app, _users) = build_test_app_alice();
+    let _ = get_me_request(&app).await;
+
+    let resp = app
+        .clone()
+        .oneshot(patch_body(r#"{"weight_unit":"stones-and-bones"}"#))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body = body_json(resp).await;
+    // The exact error envelope matches ApiError::bad_request; check both
+    // the code (or status) and the human-readable message.
+    let msg = body["message"].as_str().unwrap_or_default();
+    assert!(
+        msg.contains("invalid weight_unit"),
+        "expected `invalid weight_unit` in error body, got {body:?}"
+    );
+}
+
+#[tokio::test]
+async fn update_me_rejects_unknown_height_unit_value_400() {
+    let (app, _users) = build_test_app_alice();
+    let _ = get_me_request(&app).await;
+
+    let resp = app
+        .clone()
+        .oneshot(patch_body(r#"{"height_unit":"meters"}"#))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body = body_json(resp).await;
+    let msg = body["message"].as_str().unwrap_or_default();
+    assert!(
+        msg.contains("invalid height_unit"),
+        "expected `invalid height_unit` in error body, got {body:?}"
+    );
+}
+
+#[tokio::test]
+async fn update_me_ignores_unrecognised_keys_returns_200() {
+    // Regression guard for the deliberate "ignore unknown JSON keys"
+    // contract on PATCH /me. The FE shipped weight_unit/height_unit
+    // pre-backend assuming the server would silently drop them; this
+    // test locks the assumption in so a future hygiene refactor adding
+    // `#[serde(deny_unknown_fields)]` hits a red test instead of
+    // breaking customers in the field.
+    let (app, _users) = build_test_app_alice();
+    let _ = get_me_request(&app).await;
+
+    let resp = app
+        .clone()
+        .oneshot(patch_body(
+            r#"{"weight_unit":"lb","totally_made_up_field":"xyzzy"}"#,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["weight_unit"], "lb");
+}
+
+#[tokio::test]
+async fn update_me_unit_only_patch_preserves_other_fields() {
+    let (app, _users) = build_test_app_alice();
+    let _ = get_me_request(&app).await;
+
+    // Pre-set display_name.
+    let _ = app
+        .clone()
+        .oneshot(patch_body(r#"{"display_name":"Alice Cooper"}"#))
+        .await
+        .unwrap();
+
+    // Patch weight_unit only.
+    let resp = app
+        .clone()
+        .oneshot(patch_body(r#"{"weight_unit":"lb"}"#))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = body_json(resp).await;
+    assert_eq!(body["weight_unit"], "lb");
+    assert_eq!(body["display_name"], "Alice Cooper");
 }

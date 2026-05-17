@@ -3,7 +3,7 @@ use std::sync::Mutex;
 
 use async_trait::async_trait;
 use chrono::Utc;
-use loseit_core::domain::{ProfilePatch, User, UserIdentity};
+use loseit_core::domain::{HeightUnit, ProfilePatch, User, UserIdentity, WeightUnit};
 use loseit_core::repo::UserRepository;
 use loseit_core::CoreResult;
 use uuid::Uuid;
@@ -53,6 +53,8 @@ impl UserRepository for InMemoryUserRepository {
             birth_date: None,
             height_cm: None,
             activity_level: None,
+            weight_unit: WeightUnit::Kg,
+            height_unit: HeightUnit::Cm,
             created_at: now,
             updated_at: now,
         };
@@ -80,6 +82,12 @@ impl UserRepository for InMemoryUserRepository {
         }
         if let Some(v) = patch.activity_level {
             user.activity_level = Some(v);
+        }
+        if let Some(v) = patch.weight_unit {
+            user.weight_unit = v;
+        }
+        if let Some(v) = patch.height_unit {
+            user.height_unit = v;
         }
         user.updated_at = Utc::now();
         Ok(user.clone())

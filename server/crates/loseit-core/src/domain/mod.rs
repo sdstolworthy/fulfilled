@@ -21,5 +21,5 @@ pub use log_entry::{
 };
 pub use meal::{InvalidMeal, Meal};
 pub use serving::{Serving, ServingDraft, ServingPatch, ServingSource};
-pub use user::{ActivityLevel, ProfilePatch, Sex, User, UserIdentity};
+pub use user::{ActivityLevel, HeightUnit, ProfilePatch, Sex, User, UserIdentity, WeightUnit};
 pub use weight::{Weight, WeightDraft};

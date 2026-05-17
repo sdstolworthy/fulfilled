@@ -855,9 +855,17 @@ components:
       type: string
       enum: [a, b, c, d, e]
 
+    WeightUnit:
+      type: string
+      enum: [kg, lb, st]
+
+    HeightUnit:
+      type: string
+      enum: [cm, ft_in]
+
     User:
       type: object
-      required: [id, issuer, external_id, created_at, updated_at]
+      required: [id, issuer, external_id, created_at, updated_at, weight_unit, height_unit]
       properties:
         id: { type: string, format: uuid }
         issuer: { type: string }
@@ -880,6 +888,8 @@ components:
           oneOf:
             - $ref: "#/components/schemas/ActivityLevel"
             - type: "null"
+        weight_unit: { $ref: "#/components/schemas/WeightUnit" }
+        height_unit: { $ref: "#/components/schemas/HeightUnit" }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
 
@@ -893,6 +903,8 @@ components:
         birth_date: { type: string, format: date }
         height_cm: { $ref: "#/components/schemas/Decimal" }
         activity_level: { $ref: "#/components/schemas/ActivityLevel" }
+        weight_unit: { $ref: "#/components/schemas/WeightUnit" }
+        height_unit: { $ref: "#/components/schemas/HeightUnit" }
 
     Weight:
       type: object
