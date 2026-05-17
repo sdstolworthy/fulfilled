@@ -2,6 +2,12 @@
 //! ports. Nothing in here is exposed to the API layer beyond the concrete
 //! repository types and a thin pool-construction helper — the API layer
 //! consumes them through the trait objects defined in core.
+//!
+//! NOTE: SQL strings in this crate must NOT contain inline `--` comments
+//! when built with Rust `\` line-continuation. The comment marker causes
+//! Postgres to treat everything from `--` to end-of-input as a comment,
+//! causing syntax errors. Use SQL `/* ... */` block-comments instead, or
+//! split SQL across `"..."` boundaries joined with `\n`.
 
 mod batch_repo;
 mod error;
