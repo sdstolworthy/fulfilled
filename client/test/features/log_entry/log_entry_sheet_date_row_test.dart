@@ -1,18 +1,14 @@
-import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:fulfilled/domain/enums.dart';
 import 'package:fulfilled/domain/food.dart';
 import 'package:fulfilled/domain/log_entry.dart';
-import 'package:fulfilled/domain/meal.dart';
-import 'package:fulfilled/domain/nutrition.dart';
-import 'package:fulfilled/domain/serving.dart';
-import 'package:fulfilled/domain/unit.dart';
 import 'package:fulfilled/features/log_entry/log_entry_sheet.dart';
 import 'package:fulfilled/features/log_entry/widgets/meal_chip_picker.dart';
 import 'package:fulfilled/theme/theme_data.dart';
 import 'package:intl/intl.dart';
+
+import '../../_fixtures.dart';
 
 /// QL-107 — `LogEntrySheet` DATE row.
 ///
@@ -21,33 +17,7 @@ import 'package:intl/intl.dart';
 /// today, `"EEE, MMM d"` otherwise), opens `showDatePicker` on tap,
 /// updates the row label when a date is selected, and the picked date
 /// flows into the `LogCreate` payload on save.
-Food _testFood() {
-  return Food(
-    id: 'f_test',
-    name: 'Test food',
-    brand: 'TestBrand',
-    barcode: null,
-    source: FoodSource.off,
-    isCustom: false,
-    qualityScore: null,
-    nutriscore: null,
-    servings: <Serving>[
-      Serving(
-        id: 'sv_100g',
-        label: '100 g',
-        amount: Decimal.fromInt(100),
-        unit: Unit.g,
-        kcal: Decimal.fromInt(100),
-        proteinG: Decimal.fromInt(10),
-        carbsG: Decimal.fromInt(20),
-        fatG: Decimal.zero,
-        isDefault: true,
-        source: ServingSource.user,
-        sortOrder: 0,
-      ),
-    ],
-  );
-}
+Food _testFood() => buildFood(servings: [buildServing(id: 'sv_100g')]);
 
 Widget _harness({
   required Food food,
@@ -209,27 +179,10 @@ void main() {
       addTearDown(tester.view.resetDevicePixelRatio);
 
       final consumedOn = DateTime.now().subtract(const Duration(days: 4));
-      final entry = LogEntry(
+      final entry = buildLogEntry(
         id: 'le_existing',
-        foodId: 'f_test',
-        foodName: 'Test food',
         servingId: 'sv_100g',
-        servingName: '100 g',
-        consumedOn: DateTime(
-          consumedOn.year,
-          consumedOn.month,
-          consumedOn.day,
-        ),
-        meal: Meal.lunch,
-        quantity: Decimal.one,
-        enteredAmount: Decimal.fromInt(100),
-        enteredUnit: Unit.g,
-        nutritionSnapshot: NutritionSnapshot(
-          caloriesKcal: Decimal.fromInt(100),
-        ),
-        note: null,
-        createdAt: DateTime(consumedOn.year, consumedOn.month, consumedOn.day),
-        updatedAt: DateTime(consumedOn.year, consumedOn.month, consumedOn.day),
+        consumedOn: consumedOn,
       );
 
       await tester.pumpWidget(

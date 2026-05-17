@@ -2,16 +2,12 @@ import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:fulfilled/domain/enums.dart';
 import 'package:fulfilled/domain/food.dart';
 import 'package:fulfilled/domain/log_entry.dart';
-import 'package:fulfilled/domain/meal.dart';
-import 'package:fulfilled/domain/nutrition.dart';
-import 'package:fulfilled/domain/serving.dart';
-import 'package:fulfilled/domain/unit.dart';
 import 'package:fulfilled/features/log_entry/log_entry_sheet.dart';
 import 'package:fulfilled/theme/theme_data.dart';
 
+import '../../_fixtures.dart';
 import '../../repositories/_harness.dart';
 
 /// QL-107 — autofocus pass for `LogEntrySheet`.
@@ -26,53 +22,19 @@ import '../../repositories/_harness.dart';
 /// sheet renders as a centered `Dialog` and popping the system
 /// keyboard inside a desktop dialog is unwanted, so autofocus is
 /// compact-only.
-Food _testFood() {
-  return Food(
-    id: 'f_test',
-    name: 'Test food',
-    brand: 'TestBrand',
-    barcode: null,
-    source: FoodSource.off,
-    isCustom: false,
-    qualityScore: null,
-    nutriscore: null,
-    servings: <Serving>[
-      Serving(
-        id: 'sv_100g',
-        label: '100 g',
-        amount: Decimal.fromInt(100),
-        unit: Unit.g,
-        kcal: Decimal.fromInt(100),
-        proteinG: Decimal.fromInt(10),
-        carbsG: Decimal.fromInt(20),
-        fatG: Decimal.zero,
-        isDefault: true,
-        source: ServingSource.user,
-        sortOrder: 0,
-      ),
-    ],
-  );
-}
+Food _testFood() => buildFood(servings: [buildServing(id: 'sv_100g')]);
 
 LogEntry _existingEntry() {
   final today = DateTime.now();
-  return LogEntry(
+  return buildLogEntry(
     id: 'le_existing',
-    foodId: 'f_test',
-    foodName: 'Test food',
     servingId: 'sv_100g',
-    servingName: '100 g',
-    consumedOn: DateTime(today.year, today.month, today.day),
-    meal: Meal.lunch,
+    consumedOn: today,
     quantity: Decimal.parse('1.5'),
     enteredAmount: Decimal.fromInt(150),
-    enteredUnit: Unit.g,
-    nutritionSnapshot: NutritionSnapshot(
-      caloriesKcal: Decimal.fromInt(150),
-    ),
+    nutritionSnapshot: buildSnapshot(caloriesKcal: Decimal.fromInt(150)),
     note: 'pre-seed',
     createdAt: today,
-    updatedAt: today,
   );
 }
 

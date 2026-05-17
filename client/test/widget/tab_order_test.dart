@@ -1,16 +1,14 @@
-import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:fulfilled/domain/enums.dart';
 import 'package:fulfilled/domain/food.dart';
 import 'package:fulfilled/domain/log_entry.dart';
-import 'package:fulfilled/domain/serving.dart';
-import 'package:fulfilled/domain/unit.dart';
 import 'package:fulfilled/features/log_entry/log_entry_sheet.dart';
 import 'package:fulfilled/theme/theme_data.dart';
+
+import '../_fixtures.dart';
 
 /// T-022 — tab-order spot check.
 ///
@@ -25,30 +23,10 @@ import 'package:fulfilled/theme/theme_data.dart';
 ///
 /// Stub-only: not executed by this agent. The pattern mirrors
 /// `test/features/log_entry/log_entry_sheet_test.dart`.
-Food _food() {
-  return Food(
-    id: 'f_test',
-    name: 'Test food',
-    brand: null,
-    barcode: null,
-    source: FoodSource.off,
-    isCustom: false,
-    servings: <Serving>[
-      Serving(
-        id: 'sv_100g',
-        label: '100 g',
-        amount: Decimal.fromInt(100),
-        unit: Unit.g,
-        kcal: Decimal.fromInt(100),
-        proteinG: Decimal.fromInt(10),
-        carbsG: Decimal.fromInt(20),
-        fatG: Decimal.zero,
-        isDefault: true,
-        source: ServingSource.user,
-      ),
-    ],
-  );
-}
+Food _food() => buildFood(
+      brand: null,
+      servings: [buildServing(id: 'sv_100g')],
+    );
 
 Widget _harness({
   required ValueChanged<LogCreate> onSubmit,

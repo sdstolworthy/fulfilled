@@ -2,13 +2,9 @@ import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:fulfilled/domain/enums.dart';
 import 'package:fulfilled/domain/food.dart';
 import 'package:fulfilled/domain/log_entry.dart';
 import 'package:fulfilled/domain/meal.dart';
-import 'package:fulfilled/domain/nutrition.dart';
-import 'package:fulfilled/domain/serving.dart';
-import 'package:fulfilled/domain/unit.dart';
 import 'package:fulfilled/features/log_entry/log_entry_sheet.dart';
 import 'package:fulfilled/providers/repository_providers.dart';
 import 'package:fulfilled/repositories/food_repository.dart';
@@ -18,51 +14,27 @@ import 'package:fulfilled/routing/routes.dart';
 import 'package:fulfilled/theme/theme_data.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../_fixtures.dart';
 import '../../repositories/_harness.dart';
 
 /// Deterministic test food: 100 kcal / 10 g P / 20 g C / 0 g F per 100 g,
 /// with one 100 g serving so the preview math collapses to "× quantity".
 /// Mirrors the create-mode test's fixture for consistency.
-Food _testFood() {
-  return Food(
-    id: 'f_test',
-    name: 'Test food',
-    brand: 'TestBrand',
-    barcode: null,
-    source: FoodSource.off,
-    isCustom: false,
-    qualityScore: null,
-    nutriscore: null,
-    servings: <Serving>[
-      Serving(
-        id: 'sv_100g',
-        label: '100 g',
-        amount: Decimal.fromInt(100),
-        unit: Unit.g,
-        kcal: Decimal.fromInt(100),
-        proteinG: Decimal.fromInt(10),
-        carbsG: Decimal.fromInt(20),
-        fatG: Decimal.zero,
-        isDefault: true,
-        source: ServingSource.user,
-        sortOrder: 0,
-      ),
-      Serving(
-        id: 'sv_50g',
-        label: '50 g',
-        amount: Decimal.fromInt(50),
-        unit: Unit.g,
-        kcal: Decimal.fromInt(50),
-        proteinG: Decimal.fromInt(5),
-        carbsG: Decimal.fromInt(10),
-        fatG: Decimal.zero,
-        isDefault: false,
-        source: ServingSource.user,
-        sortOrder: 1,
-      ),
-    ],
-  );
-}
+Food _testFood() => buildFood(
+      servings: [
+        buildServing(id: 'sv_100g'),
+        buildServing(
+          id: 'sv_50g',
+          label: '50 g',
+          amount: Decimal.fromInt(50),
+          kcal: Decimal.fromInt(50),
+          proteinG: Decimal.fromInt(5),
+          carbsG: Decimal.fromInt(10),
+          isDefault: false,
+          sortOrder: 1,
+        ),
+      ],
+    );
 
 /// Pre-built [LogEntry] used as the `existing` seed. Quantity 1.5, the
 /// non-default serving, meal = `lunch`, a non-empty note. The choices
@@ -77,24 +49,16 @@ LogEntry _existingEntry({
   DateTime? consumedOn,
 }) {
   final q = quantity ?? Decimal.parse('1.5');
-  final on = consumedOn ?? DateTime(2026, 5, 1);
-  return LogEntry(
+  return buildLogEntry(
     id: 'le_existing_0',
-    foodId: 'f_test',
-    foodName: 'Test food',
     servingId: servingId,
     servingName: servingId == 'sv_50g' ? '50 g' : '100 g',
-    consumedOn: DateTime(on.year, on.month, on.day),
+    consumedOn: consumedOn ?? DateTime(2026, 5, 1),
     meal: meal,
     quantity: q,
     enteredAmount: Decimal.fromInt(servingId == 'sv_50g' ? 50 : 100) * q,
-    enteredUnit: Unit.g,
-    nutritionSnapshot: NutritionSnapshot(
-      caloriesKcal: Decimal.fromInt(75),
-    ),
+    nutritionSnapshot: buildSnapshot(caloriesKcal: Decimal.fromInt(75)),
     note: note,
-    createdAt: DateTime(2026, 5, 1, 12, 30),
-    updatedAt: DateTime(2026, 5, 1, 12, 30),
   );
 }
 

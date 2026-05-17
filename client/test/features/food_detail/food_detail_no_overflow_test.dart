@@ -4,11 +4,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fulfilled/domain/enums.dart';
 import 'package:fulfilled/domain/food.dart';
-import 'package:fulfilled/domain/serving.dart';
 import 'package:fulfilled/domain/unit.dart';
 import 'package:fulfilled/features/food_detail/food_detail_screen.dart';
 import 'package:fulfilled/providers/food_providers.dart';
 import 'package:fulfilled/theme/theme_data.dart';
+
+import '../../_fixtures.dart';
 
 /// UX-111 (Theme C dead-affordance sweep) — regression.
 ///
@@ -60,36 +61,30 @@ void main() {
   });
 }
 
-Food _yogurt() {
-  return Food(
-    id: 'f_greek_yogurt_plain',
-    name: 'Greek yogurt, plain, nonfat (Total 0%)',
-    brand: 'Fage',
-    barcode: '0040000123456',
-    source: FoodSource.off,
-    isCustom: false,
-    qualityScore: 86,
-    servings: <Serving>[
-      Serving(
-        id: 's_cup',
-        label: '1 cup',
-        amount: Decimal.parse('1'),
-        unit: Unit.cup,
-        kcal: Decimal.parse('129'),
-        proteinG: Decimal.parse('23.4'),
-        carbsG: Decimal.parse('8.2'),
-        sugarG: Decimal.parse('7.3'),
-        fatG: Decimal.parse('0.5'),
-        saturatedFatG: Decimal.parse('0.2'),
-        fiberG: Decimal.parse('0.0'),
-        sodiumMg: Decimal.parse('82'),
-        isDefault: true,
-        source: ServingSource.off,
-        sortOrder: 0,
-      ),
-    ],
-  );
-}
+Food _yogurt() => buildFood(
+      id: 'f_greek_yogurt_plain',
+      name: 'Greek yogurt, plain, nonfat (Total 0%)',
+      brand: 'Fage',
+      barcode: '0040000123456',
+      qualityScore: 86,
+      servings: [
+        buildServing(
+          id: 's_cup',
+          label: '1 cup',
+          amount: Decimal.parse('1'),
+          unit: Unit.cup,
+          kcal: Decimal.parse('129'),
+          proteinG: Decimal.parse('23.4'),
+          carbsG: Decimal.parse('8.2'),
+          sugarG: Decimal.parse('7.3'),
+          fatG: Decimal.parse('0.5'),
+          saturatedFatG: Decimal.parse('0.2'),
+          fiberG: Decimal.parse('0.0'),
+          sodiumMg: Decimal.parse('82'),
+          source: ServingSource.off,
+        ),
+      ],
+    );
 
 Widget _harness({required Food food}) {
   return ProviderScope(

@@ -1,15 +1,14 @@
-import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fulfilled/domain/enums.dart';
 import 'package:fulfilled/domain/food.dart';
-import 'package:fulfilled/domain/serving.dart';
-import 'package:fulfilled/domain/unit.dart';
 import 'package:fulfilled/theme/theme_data.dart';
 import 'package:fulfilled/widgets/empty_state.dart';
 import 'package:fulfilled/widgets/primary_button.dart';
 import 'package:fulfilled/widgets/quick_add_chips.dart';
 import 'package:go_router/go_router.dart';
+
+import '../_fixtures.dart';
 
 /// T-013 (B9 absorbed) — the Quick add card on the expanded right rail:
 /// - both providers empty → render the lifted `EmptyState` with the
@@ -18,25 +17,13 @@ import 'package:go_router/go_router.dart';
 /// - only frequents populated → render the Frequent section, no
 ///   EmptyState.
 
-Food _food(String id, String name) {
-  return Food(
-    id: id,
-    name: name,
-    source: FoodSource.user,
-    isCustom: true,
-    servings: <Serving>[
-      Serving(
-        id: '${id}_s',
-        label: '1 serving (100 g)',
-        amount: Decimal.fromInt(100),
-        unit: Unit.g,
-        kcal: Decimal.fromInt(100),
-        isDefault: true,
-        source: ServingSource.user,
-      ),
-    ],
-  );
-}
+Food _food(String id, String name) => buildFood(
+      id: id,
+      name: name,
+      brand: null,
+      source: FoodSource.user,
+      servings: [buildServing(id: '${id}_s', label: '1 serving (100 g)')],
+    );
 
 Widget _harness(Widget child) {
   final router = GoRouter(
