@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, Utc};
 use loseit_core::domain::{
-    FoodLogEntry, Meal, NutritionSnapshot, PersistedLogEntry, PersistedLogPatch,
+    unit::Unit, FoodLogEntry, Meal, NutritionSnapshot, PersistedLogEntry, PersistedLogPatch,
 };
 use loseit_core::repo::food::QUICK_ADD_SENTINEL_NAME;
 use loseit_core::repo::LogRepository;
@@ -37,7 +37,8 @@ struct LogEntryRow {
     // so the domain enum remains the single source of truth.
     meal: String,
     quantity: Decimal,
-    grams_total: Decimal,
+    entered_amount: Decimal,
+    entered_unit: String,
     calories_kcal: Decimal,
     protein_g: Option<Decimal>,
     carbs_g: Option<Decimal>,
@@ -60,6 +61,10 @@ impl From<LogEntryRow> for FoodLogEntry {
         // `Snack` rather than panicking — the entry is still useful and
         // the misclassification surfaces in the day summary.
         let meal = row.meal.parse::<Meal>().unwrap_or(Meal::Snack);
+        // The DB CHECK constraint on `entered_unit` ensures only the 12 valid
+        // unit strings are stored; `Unit::parse` must always succeed here.
+        let entered_unit = Unit::parse(&row.entered_unit)
+            .expect("DB CHECK invariant: entered_unit must be a valid unit string");
         FoodLogEntry {
             id: row.id,
             user_id: row.user_id,
@@ -68,7 +73,8 @@ impl From<LogEntryRow> for FoodLogEntry {
             consumed_on: row.consumed_on,
             meal,
             quantity: row.quantity,
-            grams_total: row.grams_total,
+            entered_amount: row.entered_amount,
+            entered_unit,
             snapshot: NutritionSnapshot {
                 calories_kcal: row.calories_kcal,
                 protein_g: row.protein_g,
@@ -90,7 +96,8 @@ impl From<LogEntryRow> for FoodLogEntry {
 
 const SELECT_COLS: &str = "\
     le.id, le.user_id, le.food_id, le.serving_id, le.consumed_on, le.meal, \
-    le.quantity, le.grams_total, le.calories_kcal, le.protein_g, le.carbs_g, le.fat_g, \
+    le.quantity, le.entered_amount, le.entered_unit, \
+    le.calories_kcal, le.protein_g, le.carbs_g, le.fat_g, \
     le.fiber_g, le.sugar_g, le.sodium_mg, le.saturated_fat_g, le.note, \
     le.created_at, le.updated_at, \
     COALESCE(f.name, '') AS food_name, \
@@ -106,11 +113,12 @@ impl LogRepository for PgLogRepository {
     async fn create(&self, user_id: Uuid, entry: &PersistedLogEntry) -> CoreResult<FoodLogEntry> {
         let id: Uuid = sqlx::query_scalar(
             "INSERT INTO food_log_entries (\
-                user_id, food_id, serving_id, consumed_on, meal, quantity, grams_total, \
+                user_id, food_id, serving_id, consumed_on, meal, \
+                quantity, entered_amount, entered_unit, \
                 calories_kcal, protein_g, carbs_g, fat_g, fiber_g, sugar_g, sodium_mg, \
                 saturated_fat_g, note\
              ) VALUES (\
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16\
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17\
              ) RETURNING id",
         )
         .bind(user_id)
@@ -119,7 +127,8 @@ impl LogRepository for PgLogRepository {
         .bind(entry.consumed_on)
         .bind(entry.meal.as_str())
         .bind(entry.quantity)
-        .bind(entry.grams_total)
+        .bind(entry.entered_amount)
+        .bind(entry.entered_unit.as_str())
         .bind(entry.snapshot.calories_kcal)
         .bind(entry.snapshot.protein_g)
         .bind(entry.snapshot.carbs_g)
@@ -157,7 +166,11 @@ impl LogRepository for PgLogRepository {
         // pattern is stable across the rewrite. v1 accepts this trade-off
         // for the simpler SQL.
         let recompute_quantity = patch.recompute.as_ref().map(|r| r.quantity);
-        let recompute_grams_total = patch.recompute.as_ref().map(|r| r.grams_total);
+        let recompute_entered_amount = patch.recompute.as_ref().map(|r| r.entered_amount);
+        let recompute_entered_unit = patch
+            .recompute
+            .as_ref()
+            .map(|r| r.entered_unit.as_str());
         let recompute_calories = patch.recompute.as_ref().map(|r| r.snapshot.calories_kcal);
         let recompute_protein = patch.recompute.as_ref().and_then(|r| r.snapshot.protein_g);
         let recompute_carbs = patch.recompute.as_ref().and_then(|r| r.snapshot.carbs_g);
@@ -179,16 +192,17 @@ impl LogRepository for PgLogRepository {
                 consumed_on     = COALESCE($4, consumed_on), \
                 meal            = COALESCE($5, meal), \
                 quantity        = COALESCE($6, quantity), \
-                grams_total     = COALESCE($7, grams_total), \
-                calories_kcal   = COALESCE($8, calories_kcal), \
-                protein_g       = COALESCE($9, protein_g), \
-                carbs_g         = COALESCE($10, carbs_g), \
-                fat_g           = COALESCE($11, fat_g), \
-                fiber_g         = COALESCE($12, fiber_g), \
-                sugar_g         = COALESCE($13, sugar_g), \
-                sodium_mg       = COALESCE($14, sodium_mg), \
-                saturated_fat_g = COALESCE($15, saturated_fat_g), \
-                note            = CASE WHEN $16 THEN $17 ELSE note END \
+                entered_amount  = COALESCE($7, entered_amount), \
+                entered_unit    = COALESCE($8, entered_unit), \
+                calories_kcal   = COALESCE($9, calories_kcal), \
+                protein_g       = COALESCE($10, protein_g), \
+                carbs_g         = COALESCE($11, carbs_g), \
+                fat_g           = COALESCE($12, fat_g), \
+                fiber_g         = COALESCE($13, fiber_g), \
+                sugar_g         = COALESCE($14, sugar_g), \
+                sodium_mg       = COALESCE($15, sodium_mg), \
+                saturated_fat_g = COALESCE($16, saturated_fat_g), \
+                note            = CASE WHEN $17 THEN $18 ELSE note END \
              WHERE id = $1 AND user_id = $2 \
              RETURNING id",
         )
@@ -198,7 +212,8 @@ impl LogRepository for PgLogRepository {
         .bind(patch.consumed_on)
         .bind(patch.meal.map(|m| m.as_str()))
         .bind(recompute_quantity)
-        .bind(recompute_grams_total)
+        .bind(recompute_entered_amount)
+        .bind(recompute_entered_unit)
         .bind(recompute_calories)
         .bind(recompute_protein)
         .bind(recompute_carbs)
@@ -425,7 +440,8 @@ impl LogRepository for PgLogRepository {
         let mut consumed_ons: Vec<NaiveDate> = Vec::with_capacity(entries.len());
         let mut meals: Vec<String> = Vec::with_capacity(entries.len());
         let mut quantities: Vec<Decimal> = Vec::with_capacity(entries.len());
-        let mut grams_totals: Vec<Decimal> = Vec::with_capacity(entries.len());
+        let mut entered_amounts: Vec<Decimal> = Vec::with_capacity(entries.len());
+        let mut entered_units: Vec<String> = Vec::with_capacity(entries.len());
         let mut calories_kcals: Vec<Decimal> = Vec::with_capacity(entries.len());
         let mut protein_gs: Vec<Option<Decimal>> = Vec::with_capacity(entries.len());
         let mut carbs_gs: Vec<Option<Decimal>> = Vec::with_capacity(entries.len());
@@ -442,7 +458,8 @@ impl LogRepository for PgLogRepository {
             consumed_ons.push(e.consumed_on);
             meals.push(e.meal.as_str().to_string());
             quantities.push(e.quantity);
-            grams_totals.push(e.grams_total);
+            entered_amounts.push(e.entered_amount);
+            entered_units.push(e.entered_unit.as_str().to_string());
             calories_kcals.push(e.snapshot.calories_kcal);
             protein_gs.push(e.snapshot.protein_g);
             carbs_gs.push(e.snapshot.carbs_g);
@@ -469,13 +486,13 @@ impl LogRepository for PgLogRepository {
         let insert_sql =
             "INSERT INTO food_log_entries (\
                 user_id, food_id, serving_id, consumed_on, meal, \
-                quantity, grams_total, \
+                quantity, entered_amount, entered_unit, \
                 calories_kcal, protein_g, carbs_g, fat_g, fiber_g, sugar_g, sodium_mg, saturated_fat_g, \
                 note\
              ) \
              SELECT \
                 $1, x.food_id, x.serving_id, x.consumed_on, x.meal, \
-                x.quantity, x.grams_total, \
+                x.quantity, x.entered_amount, x.entered_unit, \
                 x.calories_kcal, x.protein_g, x.carbs_g, x.fat_g, x.fiber_g, x.sugar_g, x.sodium_mg, x.saturated_fat_g, \
                 x.note \
              FROM UNNEST(\
@@ -485,7 +502,7 @@ impl LogRepository for PgLogRepository {
                 $5::text[], \
                 $6::numeric[], \
                 $7::numeric[], \
-                $8::numeric[], \
+                $8::text[], \
                 $9::numeric[], \
                 $10::numeric[], \
                 $11::numeric[], \
@@ -493,11 +510,12 @@ impl LogRepository for PgLogRepository {
                 $13::numeric[], \
                 $14::numeric[], \
                 $15::numeric[], \
-                $16::text[] \
+                $16::numeric[], \
+                $17::text[] \
              ) WITH ORDINALITY \
                AS x(\
                 food_id, serving_id, consumed_on, meal, \
-                quantity, grams_total, \
+                quantity, entered_amount, entered_unit, \
                 calories_kcal, protein_g, carbs_g, fat_g, fiber_g, sugar_g, sodium_mg, saturated_fat_g, \
                 note, ord\
              ) \
@@ -512,7 +530,8 @@ impl LogRepository for PgLogRepository {
             .bind(&consumed_ons)
             .bind(&meals)
             .bind(&quantities)
-            .bind(&grams_totals)
+            .bind(&entered_amounts)
+            .bind(&entered_units)
             .bind(&calories_kcals)
             .bind(&protein_gs)
             .bind(&carbs_gs)
@@ -562,13 +581,13 @@ mod tests {
         let sql =
             "INSERT INTO food_log_entries (\
                 user_id, food_id, serving_id, consumed_on, meal, \
-                quantity, grams_total, \
+                quantity, entered_amount, entered_unit, \
                 calories_kcal, protein_g, carbs_g, fat_g, fiber_g, sugar_g, sodium_mg, saturated_fat_g, \
                 note\
              ) \
              SELECT \
                 $1, x.food_id, x.serving_id, x.consumed_on, x.meal, \
-                x.quantity, x.grams_total, \
+                x.quantity, x.entered_amount, x.entered_unit, \
                 x.calories_kcal, x.protein_g, x.carbs_g, x.fat_g, x.fiber_g, x.sugar_g, x.sodium_mg, x.saturated_fat_g, \
                 x.note \
              FROM UNNEST(\
@@ -578,7 +597,7 @@ mod tests {
                 $5::text[], \
                 $6::numeric[], \
                 $7::numeric[], \
-                $8::numeric[], \
+                $8::text[], \
                 $9::numeric[], \
                 $10::numeric[], \
                 $11::numeric[], \
@@ -586,11 +605,12 @@ mod tests {
                 $13::numeric[], \
                 $14::numeric[], \
                 $15::numeric[], \
-                $16::text[] \
+                $16::numeric[], \
+                $17::text[] \
              ) WITH ORDINALITY \
                AS x(\
                 food_id, serving_id, consumed_on, meal, \
-                quantity, grams_total, \
+                quantity, entered_amount, entered_unit, \
                 calories_kcal, protein_g, carbs_g, fat_g, fiber_g, sugar_g, sodium_mg, saturated_fat_g, \
                 note, ord\
              ) \
