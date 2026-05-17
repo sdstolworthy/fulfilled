@@ -474,10 +474,6 @@ class FoodRepository {
 
   Food? lookup(String id) => _byIdCache[id];
 
-  void noteFoodLogged(String foodId) {
-    // No-op against fixtures; the live-mode path also no-ops.
-  }
-
   /// Per-instance reset for fixture-mode tests. Clears the store +
   /// cache and re-seeds. Static-style call sites (test/_harness.dart)
   /// use [resetForTesting] (the static no-op below) — every new

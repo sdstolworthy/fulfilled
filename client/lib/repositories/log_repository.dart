@@ -132,7 +132,6 @@ class LogRepository {
         enteredUnit: data.enteredUnit,
       );
       _store.add(entry);
-      if (!isQuickAdd) _foodRepo.noteFoodLogged(data.foodId);
       return entry;
     }
 
@@ -156,7 +155,6 @@ class LogRepository {
     final decoded = _decodeEntryWithDenorm(
       res.data ?? const <String, dynamic>{},
     );
-    if (!isQuickAdd) _foodRepo.noteFoodLogged(data.foodId);
     return decoded;
   }
 
@@ -246,7 +244,6 @@ class LogRepository {
     if (_useFixtures) {
       _store.add(entry);
     }
-    _foodRepo.noteFoodLogged(entry.foodId);
   }
 
   Future<List<LogEntry>> copyDay({
@@ -284,7 +281,6 @@ class LogRepository {
             );
         _store.add(copied);
         out.add(copied);
-        _foodRepo.noteFoodLogged(e.foodId);
       }
       return out;
     }
@@ -330,7 +326,6 @@ class LogRepository {
       for (final raw in copied) {
         final entry = _decodeEntryWithDenorm(raw);
         created.add(entry);
-        _foodRepo.noteFoodLogged(entry.foodId);
       }
     }
     return created;
