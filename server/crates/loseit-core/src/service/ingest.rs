@@ -489,7 +489,11 @@ pub fn accept_and_normalize_usda(record: UsdaFoodRecord) -> Option<FoodDraftWith
             sodium_mg,
             saturated_fat_g,
             is_default,
-            source: ServingSource::Usda,
+            // OpenAPI ServingSource enum is [off, user, system] — `Usda` was
+            // a Rust-only variant that broke the FE decoder when USDA rows
+            // shipped. Treat USDA-imported servings as `System` (same as
+            // the OFF normalizer's auto-companion gram serving).
+            source: ServingSource::System,
             sort_order: idx as i32,
         });
     }
