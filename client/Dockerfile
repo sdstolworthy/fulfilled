@@ -13,8 +13,10 @@ FROM ghcr.io/cirruslabs/flutter:stable AS builder
 
 WORKDIR /build
 
-# Cache pub deps separately from source. Copy manifests first.
-COPY pubspec.yaml pubspec.lock ./
+# Cache pub deps separately from source. pubspec.lock is gitignored in
+# this repo so we only copy pubspec.yaml; `flutter pub get` resolves
+# fresh each build.
+COPY pubspec.yaml ./
 RUN flutter pub get
 
 # Now copy the rest of the source. `web/` is gitignored — `flutter create`
