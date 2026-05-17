@@ -18,6 +18,7 @@ import '../../providers/log_providers.dart';
 import '../../providers/repository_providers.dart';
 import '../../routing/routes.dart';
 import '../../theme/context_extensions.dart';
+import '../log_entry/edit_log_entry_action.dart';
 import '../log_entry/log_entry_sheet.dart';
 import '../quick_add/quick_add_sheet.dart';
 import 'today_internals.dart';
