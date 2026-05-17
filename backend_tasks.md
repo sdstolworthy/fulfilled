@@ -29,7 +29,31 @@ real-API calls tonight.
 
 ## Ask 1 — Decide auth posture for the deploy: dev-bypass vs OIDC vs local-creds *(P0 — gates Ask 2)*
 
-Status: `done` — picked **(a) dev-bypass for closed beta**
+Status: `in-progress` — architect → TPM → engineers pipeline running for (b)
+
+**Frontend follow-up (user directive, 2026-05-17):** the closed-beta
+"paste a static token" flow does not meet the bar for "real sign in"
+that v1 ships against. User is explicit: the deployed app must use
+real sign-in (and real data — see Asks 5 + 6 below for the FE
+repository wiring half). Picking **option (b) local-creds**:
+
+- A local `users` table with `username` (unique, lower-cased on
+  write), `password_hash` (argon2id — see Ask 2 acceptance for
+  parameters), `created_at`. The dev-bypass identity (the one `/me`
+  returns today as `display_name="Dev User"`,
+  `external_id="dev-user"`, `email="dev@example.com"`) survives as a
+  **seeded migration row** so existing tokens keep working through
+  the transition.
+- `POST /api/v1/auth/login` returns a server-issued bearer (a JWT
+  signed with a server-side secret, or an opaque token-table row —
+  your call; FE doesn't care about the shape so long as it round-
+  trips on subsequent requests via `Authorization: Bearer <token>`).
+- `DEV_AUTH_BYPASS` defaults to `false` on the deploy once Ask 2
+  lands; the env var stays available as a debugging escape hatch but
+  production flips it off.
+- OIDC (option c) is deferred to v1.1 — not picking it now because
+  no IdP is provisioned, but the BE work for (b) leaves the JWKS
+  code path untouched so the (c) toggle survives.
 
 **Backend reply (2026-05-17, automation pick in user's absence):** keeping
 `DEV_AUTH_BYPASS=true` on the deploy for the closed beta. Rationale:
@@ -85,7 +109,61 @@ re-files Ask 2 with the right shape based on the answer.
 
 ## Ask 2 — `POST /api/v1/auth/login` shipped (BE-008) *(P0 — depends on Ask 1)*
 
-Status: `no-op-for-now` — Ask 1 picked (a) dev-bypass
+Status: `in-progress` — architect → TPM → engineers pipeline running on branch `be-auth-login`
+
+**Frontend follow-up (user directive, 2026-05-17):** Ask 1 picked (b)
+local-creds, so this ask transitions from "no-op-for-now" to "ship
+BE-008 in full." Wire shape (concrete contract — please don't deviate
+without checking with FE):
+
+- **Request**: `POST /api/v1/auth/login` with JSON body
+  `{"username": string, "password": string}`. `security: []` on the
+  route (the request itself carries no bearer; success returns one).
+- **Response 200**: `{"token": string, "expires_at": string (optional, ISO 8601)}`.
+  `token` is opaque to the FE — pass it back as `Authorization: Bearer <token>`
+  on subsequent calls.
+- **Response 401**: standard `Error` body for bad credentials. FE
+  renders this inline under the password field via
+  `BadCredentialsError` (already wired in `auth_token.dart:158-167`).
+- **Migration**: add a `users` table:
+  ```sql
+  CREATE TABLE users_local_auth (
+    user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    username    TEXT NOT NULL UNIQUE CHECK (username = lower(username)),
+    password_hash TEXT NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (user_id)
+  );
+  ```
+  (Or a single combined `users` table — your design call. The key
+  invariant: existing `users.id` rows survive; the dev-bypass user
+  picks up a username and a known-test password via the same
+  migration.)
+- **Password hashing**: argon2id, default parameters from `argon2`
+  crate (`Argon2::default()` = `m=19456, t=2, p=1`). Constant-time
+  verify via the crate.
+- **Seed**: insert one row for the dev user:
+  - `username`: `dev`
+  - `password`: `dev`
+  - `password_hash`: argon2id(`'dev'`)
+  - `user_id`: the same UUID the dev-bypass identity already binds
+    to in the migration that established it.
+- **Bypass flag**: `DEV_AUTH_BYPASS` env var defaults to `false`
+  in `compose.coolify.yaml`. Existing `dev-token` keeps working
+  *only* when `DEV_AUTH_BYPASS=true` is explicitly set (local dev /
+  CI). Production deploy flips it off.
+
+**Acceptance** (FE will verify against `https://api.coolify.stolworthy.co`):
+- `curl -X POST -H 'Content-Type: application/json'
+  -d '{"username":"dev","password":"dev"}' https://api.coolify.stolworthy.co/api/v1/auth/login`
+  returns 200 + `{"token":"..."}`.
+- `curl -H "Authorization: Bearer <returned token>" https://api.coolify.stolworthy.co/api/v1/me`
+  returns the dev user.
+- `curl -X POST ... -d '{"username":"dev","password":"WRONG"}' .../auth/login`
+  returns 401.
+- The OpenAPI spec gains the `/auth/login` route under `security: []`.
+- `DEV_AUTH_BYPASS=true` keeps the existing static-token fallback
+  alive for local dev / CI smoke tests.
 
 **Backend reply:** no route to ship while we're on dev-bypass. The FE's
 `signInWithCredentials` should bypass the request and present the
@@ -169,6 +247,68 @@ Acceptance: `User` carries `weight_unit: "kg"|"lb"|"st"` and
 `height_unit: "cm"|"ft_in"` as required fields; `ProfilePatch` accepts
 both as optional. Migration backfills existing rows with `kg` + `cm`
 defaults.
+
+---
+
+## Ask 5 — Merge PR #2 (`be-user-units`) to `main` ASAP *(P0 — unblocks FE wire)*
+
+Status: `done` — merged as `c3905a2`, deploy triggered
+
+**Backend reply (2026-05-17, overnight loop, acting on user directive
+re-opening Ask 1):** PR #2 marked ready and merged to `main` via the
+standard GitHub merge commit (`c3905a2`). Coolify deploy triggered for
+the merged main; running container should expose `User.weight_unit` +
+`User.height_unit` on `GET /me` within ~5 min of this reply. Branch
+`be-user-units` deleted on the remote.
+
+**Frontend ask (2026-05-17):** PR #2 is currently in draft on
+`be-user-units` and not on `main`. The FE is about to wire every
+repository to the live API (see Ask 6 — happening overnight). The
+`Profile` repo will read `User.weight_unit` / `User.height_unit` —
+those fields don't exist on the deployed binary today, so the FE
+either ships a tolerant decode (default to `kg`/`cm` when absent) or
+waits for the merge. Tolerant decode is what the FE already does for
+mock fixtures, so this isn't a hard blocker — but the cleaner path is
+to merge the PR and have the FE codegen-equivalent assume the fields
+are present.
+
+Acceptance: PR #2 merged to `main`, deploy rebuilt against the merged
+binary, `curl -H 'Authorization: Bearer dev-token'
+https://api.coolify.stolworthy.co/api/v1/me` returns `weight_unit` +
+`height_unit` keys.
+
+---
+
+## Ask 6 — FE wires every repository to the live API *(informational — FE owns this)*
+
+Status: `fe-in-progress` (not a backend ask — listed here so the
+backend team sees what's coming over the wire tonight)
+
+**Frontend in-progress (2026-05-17):** the client repositories under
+`client/lib/repositories/*.dart` are currently mock-only — they hold
+an `ApiClient _api` field marked `// ignore: unused_field — kept for
+parity with the eventual real client` and return seeded fixtures.
+Wiring them to the live API is the FE half of "real data on the
+deploy." All 22 routes in `openapi.yaml` get exercised. No backend
+change expected; this entry exists so the backend team:
+
+- Watches `https://api.coolify.stolworthy.co/api/v1/*` for unexpected
+  4xx/5xx spikes once the wire goes live (the e2e Playwright suite
+  exercises a subset; the deployed Flutter web bundle will exercise
+  the full surface as users navigate).
+- Flags any wire-shape drift between the FE's decoder and the actual
+  server response in this file (new ask if so).
+
+Touchpoints (each tracked as a separate commit on FE side):
+- `ProfileRepository` ↔ `GET /me` + `PATCH /me`.
+- `WeightRepository` ↔ `GET/POST/PATCH/DELETE /weights[/{id}]`.
+- `GoalRepository` ↔ `GET/POST/PATCH/DELETE /goals[/active|/{id}]`.
+- `LogRepository` ↔ `GET/POST/PATCH/DELETE /log[/quick_add|/copy|/{id}]`
+  + `GET /days/{date}/summary`.
+- `FoodRepository` ↔ `GET /foods/search`, `/foods/mine`,
+  `/foods/recent`, `/foods/frequent`, `/foods/barcode/{barcode}`,
+  `/foods/{id}`, `POST /foods`, plus `/foods/{id}/servings` +
+  `/servings/{id}[/default]`.
 
 ---
 
