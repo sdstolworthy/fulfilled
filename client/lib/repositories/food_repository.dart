@@ -5,6 +5,7 @@ import '../data/api_client.dart';
 import '../domain/enums.dart';
 import '../domain/food.dart';
 import '../domain/food_patch.dart';
+import '../domain/quick_add.dart';
 import '../domain/serving.dart';
 import '../domain/unit.dart';
 import '_fixtures.dart' as fx;
@@ -75,7 +76,7 @@ class FoodRepository {
       final q = query.trim().toLowerCase();
       final hits = _store
           .where((f) =>
-              f.id != fx.quickAddFoodId &&
+              f.id != quickAddFoodId &&
               (q.isEmpty ||
                   f.name.toLowerCase().contains(q) ||
                   (f.brand?.toLowerCase().contains(q) ?? false)))
@@ -97,7 +98,7 @@ class FoodRepository {
   Future<List<Food>> mine({int limit = 100, int offset = 0}) async {
     if (_useFixtures) {
       final hits = _store
-          .where((f) => f.source == FoodSource.user && f.id != fx.quickAddFoodId)
+          .where((f) => f.source == FoodSource.user && f.id != quickAddFoodId)
           .toList()
         ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
       return hits.skip(offset).take(limit).toList();
@@ -115,7 +116,7 @@ class FoodRepository {
   Future<List<Food>> recent({int limit = 8}) async {
     if (_useFixtures) {
       final hits = _store
-          .where((f) => f.id != fx.quickAddFoodId)
+          .where((f) => f.id != quickAddFoodId)
           .toList()
         ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
       return hits.take(limit).toList();
@@ -458,7 +459,7 @@ class FoodRepository {
   Future<int> customCount() async {
     if (_useFixtures) {
       return _store
-          .where((f) => f.source == FoodSource.user && f.id != fx.quickAddFoodId)
+          .where((f) => f.source == FoodSource.user && f.id != quickAddFoodId)
           .length;
     }
     final resp = await _api.dio.get<dynamic>(

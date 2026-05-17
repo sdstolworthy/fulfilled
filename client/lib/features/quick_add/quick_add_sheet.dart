@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 
 import '../../domain/log_entry.dart';
 import '../../domain/meal.dart';
+import '../../domain/quick_add.dart';
 import '../../domain/unit.dart';
 import '../../form_factor/form_factor.dart';
 import '../../providers/log_providers.dart';
@@ -18,15 +19,10 @@ import '../../widgets/quantity_stepper.dart';
 import '../log_entry/widgets/meal_chip_picker.dart';
 import '../today/today_internals.dart' show pathForDay;
 
-/// Stable id of the synthetic Quick-add food in the catalog. Mirrors
-/// `quickAddFoodId` in `repositories/_fixtures.dart`; defined inline so
-/// the feature widget does not import the mock-data file (which is
-/// documented as deletable once the real API lands).
-const String _quickAddFoodId = 'food_quick_add';
-
-/// Stable id of the synthetic 1 g `kcal` serving on the Quick-add food.
-/// Mirrors `quickAddServingId` from `repositories/_fixtures.dart`.
-const String _quickAddServingId = 'sv_kcal';
+// The Quick-add synthetic food + serving ids live on
+// `domain/quick_add.dart` (audit finding #8). The widget reads them
+// directly from the domain so the constants stay in one place across
+// mock + live + widget layers.
 
 /// Show the Quick-add calories sheet.
 ///
@@ -325,8 +321,8 @@ class _QuickAddSheetBodyState extends ConsumerState<QuickAddSheetBody> {
   LogCreate _buildLogCreate() {
     final kcal = _kcal ?? Decimal.one;
     return LogCreate(
-      foodId: _quickAddFoodId,
-      servingId: _quickAddServingId,
+      foodId: quickAddFoodId,
+      servingId: quickAddServingId,
       consumedOn: _date,
       meal: _meal,
       quantity: kcal,

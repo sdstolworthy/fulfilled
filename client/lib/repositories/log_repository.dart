@@ -6,6 +6,7 @@ import '../data/outbox/log_outbox_notifier.dart';
 import '../domain/day_summary.dart';
 import '../domain/log_entry.dart';
 import '../domain/meal.dart';
+import '../domain/quick_add.dart';
 import '../domain/serving.dart';
 import '_fixtures.dart' as fx;
 import 'food_repository.dart';
@@ -103,7 +104,7 @@ class LogRepository {
 
   Future<LogEntry> create(LogCreate data) async {
     if (_useFixtures) {
-      final isQuickAdd = data.foodId == fx.quickAddFoodId;
+      final isQuickAdd = data.foodId == quickAddFoodId;
       final food = await _foodRepo.get(data.foodId);
       Serving serving;
       if (isQuickAdd) {
@@ -135,7 +136,7 @@ class LogRepository {
       return entry;
     }
 
-    final isQuickAdd = data.foodId == fx.quickAddFoodId;
+    final isQuickAdd = data.foodId == quickAddFoodId;
     final Map<String, dynamic> body;
     final String path;
     if (isQuickAdd) {

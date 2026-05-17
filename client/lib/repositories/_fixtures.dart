@@ -17,6 +17,7 @@ import '../domain/food.dart';
 import '../domain/goal.dart';
 import '../domain/log_entry.dart';
 import '../domain/meal.dart';
+import '../domain/quick_add.dart';
 import '../domain/serving.dart';
 import '../domain/unit.dart';
 import '../domain/user.dart';
@@ -78,14 +79,11 @@ User buildSeedUser({
 // Per-serving nutrition (kcal + macros) inlined. Mix of mass / volume /
 // count units so the editor + log-entry sheet have variety to render.
 
-/// Stable id of the synthetic Quick-add food. The Today header's
-/// "Quick add calories" affordance logs against this row.
-const String quickAddFoodId = 'food_quick_add';
-
-/// Stable id of the synthetic `serving` row on the Quick-add food.
-/// `{amount: 1, unit: serving, kcal: 1}` — so a user-typed kcal value
-/// rides on the log entry's `quantity` field 1:1.
-const String quickAddServingId = 'sv_kcal';
+// The canonical ids for the Quick-add synthetic food + serving live
+// on `domain/quick_add.dart` (audit #8). Re-exported through this
+// file's existing `fx.quickAddFoodId` namespace would clash with the
+// re-export, so callers that need them import from the domain
+// directly.
 
 List<Food> buildSeedFoods() {
   return <Food>[
