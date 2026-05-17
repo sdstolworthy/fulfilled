@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -119,10 +121,63 @@ final apiBaseUrlProvider = Provider<String?>((ref) {
   // typed; if it parses as an absolute http/https URL with a host,
   // use it. Lightly normalize (append `/api/v1` when missing) so the
   // user can type just the origin and still get the discovery hit.
-  final formUrl =
-      ref.watch(loginControllerProvider.select((s) => s.url));
+  //
+  // Reads the **debounced** form URL (`debouncedLoginUrlProvider`)
+  // rather than the raw `loginControllerProvider.url` so a keystroke
+  // burst doesn't thrash Dio. Settles 100 ms after the last
+  // keystroke.
+  final formUrl = ref.watch(debouncedLoginUrlProvider);
   return _tryDeriveBaseUrlFromFormInput(formUrl);
 });
+
+/// 100 ms debounced mirror of `loginControllerProvider.url`. Used by
+/// [apiBaseUrlProvider] (rule 4) so each keystroke in the URL field
+/// doesn't rebuild Dio + re-fire `/auth/providers`.
+///
+/// Why not just `Future.delayed` inside the consumer? Riverpod is
+/// pull-based — there's no natural seam for "wait, then maybe
+/// publish." A `StateNotifier` that owns the timer is the simplest
+/// fit: it listens to the controller, cancels its pending timer on
+/// every emission, schedules a new one. State settles once the
+/// stream has been quiet for the timer's duration.
+final debouncedLoginUrlProvider =
+    StateNotifierProvider.autoDispose<_DebouncedLoginUrlNotifier, String>(
+  (ref) {
+    final initial = ref.read(loginControllerProvider).url;
+    return _DebouncedLoginUrlNotifier(ref, initial: initial);
+  },
+);
+
+/// Constant exposed for tests that want to assert the debounce window.
+const Duration kLoginUrlDebounce = Duration(milliseconds: 100);
+
+class _DebouncedLoginUrlNotifier extends StateNotifier<String> {
+  _DebouncedLoginUrlNotifier(Ref ref, {required String initial})
+      : super(initial) {
+    // `ref.listen` returns a subscription we never explicitly cancel
+    // — `autoDispose` on the provider tears the notifier down (and
+    // with it the listener) when no consumer remains.
+    ref.listen<String>(
+      loginControllerProvider.select((s) => s.url),
+      (_, next) {
+        _timer?.cancel();
+        _timer = Timer(kLoginUrlDebounce, () {
+          if (!mounted) return;
+          if (state == next) return;
+          state = next;
+        });
+      },
+    );
+  }
+
+  Timer? _timer;
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+}
 
 /// Best-effort normalization of the in-flight login-form URL. Returns
 /// null for anything that wouldn't make a usable Dio base (missing
