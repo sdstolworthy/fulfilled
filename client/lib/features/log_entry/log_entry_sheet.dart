@@ -12,6 +12,7 @@ import '../../domain/log_entry.dart';
 import '../../domain/meal.dart';
 import '../../domain/nutrition.dart';
 import '../../domain/serving.dart';
+import '../../domain/unit.dart';
 import '../../form_factor/form_factor.dart';
 import '../../providers/food_providers.dart';
 import '../../providers/log_providers.dart';
@@ -335,12 +336,19 @@ class _LogEntrySheetBodyState extends ConsumerState<LogEntrySheetBody> {
   LogCreate _buildLogCreate() {
     final quantity = ref.read(quantityProvider);
     final note = _noteCtrl.text.trim();
+    // Per Ask 10 we record `entered_amount` + `entered_unit` so the row
+    // preserves what the user typed at log time. The sheet's default
+    // entry surface is "N of <serving>" so we record `serving.amount *
+    // quantity` in the serving's own unit. A future unit toggle will
+    // replace these two with the user's same-family pick.
     return LogCreate(
       foodId: widget.food.id,
       servingId: _serving.id,
       consumedOn: _date,
       meal: _meal,
       quantity: quantity,
+      enteredAmount: _serving.amount * quantity,
+      enteredUnit: _serving.unit,
       note: note.isEmpty ? null : note,
     );
   }
@@ -577,24 +585,21 @@ class _LogEntrySheetBodyState extends ConsumerState<LogEntrySheetBody> {
   /// compute. Same math as `LogRepository.create` — kept here because
   /// the outbox path returns *immediately* before any server roundtrip.
   LogEntry _optimisticEntry(LogCreate data) {
-    final mult = (_serving.grams / Decimal.fromInt(100))
-            .toDecimal(scaleOnInfinitePrecision: 6) *
-        data.quantity;
-    final n = widget.food.nutritionPer100g;
-
-    Decimal? scaled(Decimal? per100) =>
-        per100 == null ? null : per100 * mult;
+    // Per Ask 10 the snapshot is `serving.<field> × quantity` —
+    // no per-100g math, no grams_total.
+    Decimal? scaled(Decimal? perServing) =>
+        perServing == null ? null : perServing * data.quantity;
 
     final now = DateTime.now();
     final snapshot = NutritionSnapshot(
-      caloriesKcal: (n.energyKcal ?? Decimal.zero) * mult,
-      proteinG: scaled(n.proteinG),
-      carbsG: scaled(n.carbsG),
-      fatG: scaled(n.fatG),
-      fiberG: scaled(n.fiberG),
-      sugarG: scaled(n.sugarG),
-      sodiumMg: scaled(n.sodiumMg),
-      saturatedFatG: scaled(n.saturatedFatG),
+      caloriesKcal: _serving.kcal * data.quantity,
+      proteinG: scaled(_serving.proteinG),
+      carbsG: scaled(_serving.carbsG),
+      fatG: scaled(_serving.fatG),
+      fiberG: scaled(_serving.fiberG),
+      sugarG: scaled(_serving.sugarG),
+      sodiumMg: scaled(_serving.sodiumMg),
+      saturatedFatG: scaled(_serving.saturatedFatG),
     );
     return LogEntry(
       id: 'optimistic_${now.microsecondsSinceEpoch}',
@@ -605,7 +610,8 @@ class _LogEntrySheetBodyState extends ConsumerState<LogEntrySheetBody> {
       consumedOn: data.consumedOn,
       meal: data.meal,
       quantity: data.quantity,
-      gramsTotal: _serving.grams * data.quantity,
+      enteredAmount: data.enteredAmount,
+      enteredUnit: data.enteredUnit,
       nutritionSnapshot: snapshot,
       note: data.note,
       createdAt: now,
@@ -862,11 +868,10 @@ class _ServingSelect extends StatelessWidget {
     final colors = context.colors;
     final radius = context.radius;
     final space = context.space;
-    final gramsTotal = selected.grams * quantity;
-    final kcal = (food.nutritionPer100g.energyKcal ?? Decimal.zero) *
-        (selected.grams / Decimal.fromInt(100))
-            .toDecimal(scaleOnInfinitePrecision: 6) *
-        quantity;
+    // Trailing meta: total amount (in the serving's unit) + kcal for
+    // this quantity. Per Ask 10 the kcal comes off the serving directly.
+    final totalAmount = selected.amount * quantity;
+    final kcal = selected.kcal * quantity;
 
     return InkResponse(
       onTap: () async {
@@ -913,7 +918,7 @@ class _ServingSelect extends StatelessWidget {
                     ),
                   ),
                   Text(
-                    '${_trimDecimal(gramsTotal)} g · ${_trimDecimal(kcal.round(scale: 0))} kcal',
+                    '${formatAmountUnit(totalAmount, selected.unit)} · ${_trimDecimal(kcal.round(scale: 0))} kcal',
                     style: context.text.meta.copyWith(
                       fontSize: 11,
                       color: colors.ink2,
@@ -1144,6 +1149,9 @@ LogCreate _logCreateFromPayload(Map<String, dynamic> json) {
     consumedOn: DateTime.parse(json['consumed_on'] as String),
     meal: Meal.fromWire(json['meal'] as String),
     quantity: Decimal.parse((json['quantity'] as Object).toString()),
+    enteredAmount:
+        Decimal.parse((json['entered_amount'] as Object).toString()),
+    enteredUnit: Unit.fromWire(json['entered_unit'] as String),
     note: json['note'] as String?,
   );
 }
