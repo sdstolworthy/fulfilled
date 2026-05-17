@@ -16,7 +16,10 @@ pub mod weight;
 pub use auth::{AuthService, TOKEN_TTL};
 pub use food::FoodService;
 pub use goal::GoalService;
-pub use ingest::{FoodRecordSource, IngestService, OffFoodRecord};
+pub use ingest::{
+    FoodRecordSource, IngestService, OffFoodRecord, OffSource,
+    UsdaFoodRecord, UsdaFoodPortion, UsdaSource,
+};
 pub use log::{LogService, FREQUENT_WINDOW_DAYS};
 pub use page::{resolve_page_params, PageParams, Paginated, DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT};
 pub use serving::ServingService;

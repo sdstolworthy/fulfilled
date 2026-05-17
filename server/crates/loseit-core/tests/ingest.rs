@@ -158,13 +158,15 @@ async fn ingest_synthesizes_100g_serving_for_every_food() {
             .unwrap()
             .expect("food upserted");
         let list = servings.list_for_food(food.id).await.unwrap();
-        let has_100g = list
-            .iter()
-            .any(|s| s.source == ServingSource::System && s.label.as_deref().map_or(false, |l| l.contains("100")));
+        // T14: labels are None; check amount + unit + source instead.
+        let has_100g = list.iter().any(|s| {
+            s.source == ServingSource::System
+                && s.amount == Decimal::from(100)
+                && s.unit == loseit_core::domain::unit::Unit::Gram
+        });
         assert!(
             has_100g,
-            "food {i} must have a system 100 g serving (got {:?})",
-            list.iter().map(|s| &s.label).collect::<Vec<_>>()
+            "food {i} must have a system 100 g serving (got {list:?})"
         );
     }
 }

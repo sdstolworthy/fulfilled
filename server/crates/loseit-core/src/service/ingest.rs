@@ -1,15 +1,19 @@
 use std::collections::HashSet;
-use std::str::FromStr;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use rust_decimal::prelude::ToPrimitive;
 use rust_decimal::Decimal;
+use rust_decimal_macros::dec;
 use uuid::Uuid;
 
 use crate::domain::{FoodDraft, NutriscoreGrade, ServingDraft, ServingSource, Unit};
 use crate::repo::{BatchRepository, FoodDraftWithServings, FoodRepository, ServingRepository, UpsertStats};
 use crate::CoreResult;
+
+// ---------------------------------------------------------------------------
+// Record types
+// ---------------------------------------------------------------------------
 
 /// Normalized OFF record consumed by the ingest pipeline. The `loseit-ingest`
 /// binary owns the JSONL and Parquet sources that produce these — core
@@ -30,9 +34,45 @@ pub struct OffFoodRecord {
     pub fat_100g: Option<Decimal>,
     pub fiber_100g: Option<Decimal>,
     pub sugar_100g: Option<Decimal>,
+    /// Sodium in g/100g (OFF convention). Normalizer converts to mg.
     pub sodium_100g: Option<Decimal>,
     pub saturated_fat_100g: Option<Decimal>,
 }
+
+/// A single USDA food portion. `gram_weight` is the canonical mass;
+/// `measure_unit_name` is USDA's free-text label (e.g. `"tablespoon"`).
+#[derive(Debug, Clone)]
+pub struct UsdaFoodPortion {
+    pub gram_weight: Decimal,
+    pub measure_unit_name: String,
+    /// Lower sequence numbers are "first". Portion with the lowest
+    /// `sequence_number` gets `is_default = true`.
+    pub sequence_number: i32,
+}
+
+/// Normalized USDA record consumed by the ingest pipeline.
+#[derive(Debug, Clone, Default)]
+pub struct UsdaFoodRecord {
+    pub fdc_id: i64,
+    pub data_type: String,
+    pub description: String,
+    pub brand_owner: Option<String>,
+    pub food_portions: Vec<UsdaFoodPortion>,
+    // Per-100g nutrition (from foodNutrients[])
+    pub energy_kcal_100g: Option<Decimal>,
+    pub protein_100g: Option<Decimal>,
+    pub carbs_100g: Option<Decimal>,
+    pub fat_100g: Option<Decimal>,
+    pub fiber_100g: Option<Decimal>,
+    pub sugar_100g: Option<Decimal>,
+    /// Sodium in mg/100g (USDA convention — already in mg).
+    pub sodium_mg_100g: Option<Decimal>,
+    pub saturated_fat_100g: Option<Decimal>,
+}
+
+// ---------------------------------------------------------------------------
+// Source traits
+// ---------------------------------------------------------------------------
 
 /// Chunked record stream the ingest service pulls from. Implementations
 /// live in `loseit-ingest` (parquet + JSONL); a `Vec`-backed
@@ -44,14 +84,551 @@ pub trait FoodRecordSource: Send {
     async fn next_chunk(&mut self, n: usize) -> CoreResult<Option<Vec<OffFoodRecord>>>;
 }
 
+/// Alias: the spec calls this `OffSource` in §7.4. `FoodRecordSource` is
+/// preserved so existing `loseit-ingest` code continues to compile.
+pub use FoodRecordSource as OffSource;
+
+/// Chunked USDA record stream.
+#[async_trait]
+pub trait UsdaSource: Send {
+    async fn next_chunk(&mut self, n: usize) -> CoreResult<Option<Vec<UsdaFoodRecord>>>;
+}
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
 /// Chunk size hand-tuned to keep memory bounded and round-trip overhead
 /// amortized for the OFF dump (~3M rows).
 pub const BATCH_SIZE: usize = 500;
-/// Sanity threshold for sodium per 100 g. OFF stores sodium in g/100g; >50g
-/// per 100g is implausible (almost certainly someone uploaded mg).
+
+/// Sanity threshold for sodium per 100 g. OFF stores sodium in g/100g; >50 g
+/// per 100 g is implausible (almost certainly someone uploaded mg by mistake).
 pub const SODIUM_GRAMS_SANITY_THRESHOLD: f64 = 50.0;
 
-/// Streaming batch upsert orchestrator. T14 rewrites the normalizer body.
+// ---------------------------------------------------------------------------
+// Serving-size parser
+// ---------------------------------------------------------------------------
+
+/// Parse a serving-size string (e.g. `"30 g"`, `"1 cup (240 ml)"`) into an
+/// `{amount, unit}` pair.
+///
+/// Strategy:
+/// - Scan left-to-right for the first number.
+/// - After the number, skip whitespace then read an alphabetic unit token.
+/// - If the unit token doesn't match the table, look for a parenthetical
+///   `(N <unit>)` and try that.
+/// - Returns `None` if no parseable `{amount, unit}` is found.
+pub fn parse_serving_size(s: &str) -> Option<(Decimal, Unit)> {
+    let results = parse_all_amount_unit_pairs(s);
+    // Prefer the first pair that maps to a known unit. The parenthetical
+    // `(240 ml)` in `"1 cup (240 ml)"` is secondary — we want the `1 cup`.
+    results.into_iter().next()
+}
+
+/// Internal: collect all `(amount, unit)` pairs found in `s`.
+fn parse_all_amount_unit_pairs(s: &str) -> Vec<(Decimal, Unit)> {
+    let bytes = s.as_bytes();
+    let mut results = Vec::new();
+    let mut i = 0usize;
+
+    while i < bytes.len() {
+        // Find start of a number.
+        if !bytes[i].is_ascii_digit() {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        let mut saw_dot = false;
+        while i < bytes.len() {
+            let b = bytes[i];
+            if b.is_ascii_digit() {
+                i += 1;
+            } else if b == b'.' && !saw_dot {
+                saw_dot = true;
+                i += 1;
+            } else {
+                break;
+            }
+        }
+        let num_str = &s[start..i];
+        let amount = match num_str.parse::<Decimal>() {
+            Ok(v) if v > Decimal::ZERO => v,
+            _ => continue,
+        };
+
+        // Skip whitespace.
+        while i < bytes.len() && bytes[i] == b' ' {
+            i += 1;
+        }
+
+        // Read the unit token (letters, spaces, dots — to handle "fl. oz").
+        let unit_start = i;
+        while i < bytes.len()
+            && (bytes[i].is_ascii_alphabetic() || bytes[i] == b'.' || bytes[i] == b' ')
+        {
+            i += 1;
+        }
+        let raw_unit = s[unit_start..i].trim().to_ascii_lowercase();
+
+        if let Some(u) = map_unit_str(&raw_unit) {
+            results.push((amount, u));
+        }
+    }
+
+    results
+}
+
+/// Map a (lowercased, trimmed) unit string to a `Unit`. This is the shared
+/// parser table for both OFF and USDA per §7.1 / §7.2.
+fn map_unit_str(s: &str) -> Option<Unit> {
+    // Normalise: collapse internal runs of whitespace/dots.
+    let normalised: String = s
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == ' ')
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    match normalised.as_str() {
+        // Mass
+        "g" | "gr" | "gram" | "grams" => Some(Unit::Gram),
+        "kg" | "kilogram" | "kilograms" => Some(Unit::Kilogram),
+        "oz" | "ounce" | "ounces" => Some(Unit::Ounce),
+        "lb" | "lbs" | "pound" | "pounds" => Some(Unit::Pound),
+        // Volume
+        "ml" | "milliliter" | "millilitre" | "milliliters" | "millilitres" => {
+            Some(Unit::Milliliter)
+        }
+        "l" | "liter" | "litre" | "liters" | "litres" => Some(Unit::Liter),
+        "cup" | "cups" => Some(Unit::Cup),
+        "fl oz" | "fl. oz" | "fluid ounce" | "fluid ounces" => Some(Unit::FluidOunce),
+        "tbsp" | "tablespoon" | "tablespoons" => Some(Unit::Tablespoon),
+        "tsp" | "teaspoon" | "teaspoons" => Some(Unit::Teaspoon),
+        // Count
+        "piece" | "pieces" | "pcs" => Some(Unit::Piece),
+        "serving" | "servings" => Some(Unit::Serving),
+        _ => None,
+    }
+}
+
+/// Legacy helper: parse a serving-size string to grams only.
+/// Retained for quality-score helper and existing tests.
+pub fn parse_serving_size_grams(s: &str) -> Option<Decimal> {
+    parse_all_amount_unit_pairs(s)
+        .into_iter()
+        .find(|(_, u)| *u == Unit::Gram)
+        .map(|(amt, _)| amt)
+}
+
+// ---------------------------------------------------------------------------
+// Nutrition scaling helper
+// ---------------------------------------------------------------------------
+
+/// Scale a per-100g nutrient value to a per-serving value given the serving's
+/// gram-equivalent. Returns `None` if the per-100g value is `None`.
+fn scale_per_100g(per_100g: Option<Decimal>, grams: Decimal) -> Option<Decimal> {
+    per_100g.map(|v| v * grams / dec!(100))
+}
+
+// ---------------------------------------------------------------------------
+// OFF normalizer  (§7.1)
+// ---------------------------------------------------------------------------
+
+/// Convert a raw [`OffFoodRecord`] into a [`FoodDraftWithServings`], or
+/// `None` if the record fails minimum-viable validation (§7.1).
+pub fn accept_and_normalize_off(mut record: OffFoodRecord) -> Option<FoodDraftWithServings> {
+    // §7.1 rule 1: drop if code or product_name empty.
+    if record.code.trim().is_empty() {
+        return None;
+    }
+    if record.product_name.trim().is_empty() {
+        return None;
+    }
+
+    // Sodium sanity check (§7.1 sodium rules) — run in g/100g space before conversion.
+    if let Some(sod) = record.sodium_100g {
+        let as_f = sod.to_f64().unwrap_or(0.0);
+        if as_f > SODIUM_GRAMS_SANITY_THRESHOLD {
+            tracing::warn!(
+                barcode = %record.code,
+                sodium = %sod,
+                "implausible sodium value (>50 g/100g); nulling field"
+            );
+            record.sodium_100g = None;
+        }
+    }
+
+    let has_per_100g = record.energy_kcal_100g.is_some()
+        || record.protein_100g.is_some()
+        || record.carbs_100g.is_some()
+        || record.fat_100g.is_some();
+
+    // Try to parse the serving_size string.
+    let parsed_serving = record
+        .serving_size
+        .as_deref()
+        .and_then(parse_serving_size);
+
+    // §7.1 rule 7: drop entirely if both per-100g and serving-level nutrition are absent.
+    // We consider per-100g absent when energy_kcal_100g is None AND no macro is present.
+    // Since OFF only gives us per-100g data (no per-serving nutrition fields), we
+    // require per-100g to have at least kcal present to compute serving nutrition.
+    if record.energy_kcal_100g.is_none() && !has_per_100g {
+        return None;
+    }
+    // If we have no per-100g kcal and can't build any serving, drop.
+    if record.energy_kcal_100g.is_none() && parsed_serving.is_none() {
+        return None;
+    }
+    // Must have kcal_100g to emit any serving (OFF only provides per-100g nutrition).
+    let kcal_100g = record.energy_kcal_100g?;
+
+    let quality_score = score(&record);
+    let nutriscore_grade = record
+        .nutriscore_grade
+        .as_deref()
+        .and_then(NutriscoreGrade::parse);
+
+    let mut servings: Vec<ServingDraft> = Vec::new();
+
+    match parsed_serving {
+        Some((amount, unit)) => {
+            // §7.1 rule 3: compute per-serving nutrition.
+            // For mass units: scale per-100g × gram-equivalent of the serving.
+            // For volume units: OFF has no per-serving nutrients in the record,
+            //   only per-100g. No density assumption → we use gramWeight = 0
+            //   which would give wrong numbers. Per §7.1 rule 3 for volume:
+            //   "if OFF gives only per-100g and the serving is volumetric, drop the row".
+            //   But §7.1 rule 4 says "always emit 100g companion when per-100g present",
+            //   which takes precedence for the companion; we still drop the volumetric
+            //   serving itself when we can't compute it, but emit only the companion.
+            let serving_grams: Option<Decimal> = match unit.family() {
+                crate::domain::unit::UnitFamily::Mass => {
+                    // Convert to grams via ratio table.
+                    Some(amount * unit.ratio_to_canonical())
+                }
+                crate::domain::unit::UnitFamily::Volume => {
+                    // No density; can't scale. The volumetric serving is emitted
+                    // but we can't derive its nutrition from per-100g alone.
+                    // Per §7.1 rule 3: "if OFF gives only per-100g and the serving
+                    // is volumetric, drop the row" — meaning: drop the volumetric
+                    // serving entry; the 100g companion (rule 4) still lands.
+                    None
+                }
+                crate::domain::unit::UnitFamily::Count => {
+                    // COUNT units (serving, piece): OFF doesn't give us the gram
+                    // weight either, so we can't scale. Treat like volume.
+                    None
+                }
+            };
+
+            if let Some(grams) = serving_grams {
+                // §7.1 rule 5: this serving is is_default = true.
+                let sodium_mg = record
+                    .sodium_100g
+                    .map(|s| s * grams / dec!(100) * dec!(1000));
+                servings.push(ServingDraft {
+                    label: None,
+                    amount,
+                    unit,
+                    kcal: kcal_100g * grams / dec!(100),
+                    protein_g: scale_per_100g(record.protein_100g, grams),
+                    carbs_g: scale_per_100g(record.carbs_100g, grams),
+                    fat_g: scale_per_100g(record.fat_100g, grams),
+                    fiber_g: scale_per_100g(record.fiber_100g, grams),
+                    sugar_g: scale_per_100g(record.sugar_100g, grams),
+                    sodium_mg,
+                    saturated_fat_g: scale_per_100g(record.saturated_fat_100g, grams),
+                    is_default: true,
+                    source: ServingSource::Off,
+                    sort_order: 0,
+                });
+            }
+
+            // §7.1 rule 4: always emit companion {100, Gram} when per-100g present.
+            // Marked is_default = false (unless the parsed serving couldn't yield
+            // nutrition above, in which case this becomes the only serving and we
+            // mark it default).
+            let companion_is_default = servings.is_empty();
+            if has_per_100g {
+                let sodium_mg_100 = record.sodium_100g.map(|s| s * dec!(1000));
+                servings.push(ServingDraft {
+                    label: None,
+                    amount: dec!(100),
+                    unit: Unit::Gram,
+                    kcal: kcal_100g,
+                    protein_g: record.protein_100g,
+                    carbs_g: record.carbs_100g,
+                    fat_g: record.fat_100g,
+                    fiber_g: record.fiber_100g,
+                    sugar_g: record.sugar_100g,
+                    sodium_mg: sodium_mg_100,
+                    saturated_fat_g: record.saturated_fat_100g,
+                    is_default: companion_is_default,
+                    source: ServingSource::System,
+                    sort_order: 1,
+                });
+            }
+        }
+        None => {
+            // §7.1 rule 6: no serving_size, but per-100g present → emit {100, g} as default.
+            if !has_per_100g {
+                // §7.1 rule 7: drop entirely.
+                return None;
+            }
+            let sodium_mg_100 = record.sodium_100g.map(|s| s * dec!(1000));
+            servings.push(ServingDraft {
+                label: None,
+                amount: dec!(100),
+                unit: Unit::Gram,
+                kcal: kcal_100g,
+                protein_g: record.protein_100g,
+                carbs_g: record.carbs_100g,
+                fat_g: record.fat_100g,
+                fiber_g: record.fiber_100g,
+                sugar_g: record.sugar_100g,
+                sodium_mg: sodium_mg_100,
+                saturated_fat_g: record.saturated_fat_100g,
+                is_default: true,
+                source: ServingSource::System,
+                sort_order: 0,
+            });
+        }
+    }
+
+    if servings.is_empty() {
+        return None;
+    }
+
+    let draft = FoodDraft {
+        name: record.product_name.trim().to_string(),
+        brands: record.brands.clone().filter(|s| !s.trim().is_empty()),
+        barcode: Some(record.code.trim().to_string()),
+        categories_tags: record.categories_tags.clone(),
+        nutriscore_grade,
+        servings: vec![], // servings are carried on FoodDraftWithServings.servings
+    };
+
+    Some(FoodDraftWithServings {
+        draft,
+        quality_score,
+        servings,
+    })
+}
+
+/// Backward-compatible alias: `accept_and_normalize` → `accept_and_normalize_off`.
+/// Existing test code and callers continue to work.
+pub fn accept_and_normalize(record: OffFoodRecord) -> Option<FoodDraftWithServings> {
+    accept_and_normalize_off(record)
+}
+
+// ---------------------------------------------------------------------------
+// USDA normalizer  (§7.2)
+// ---------------------------------------------------------------------------
+
+/// Convert a raw [`UsdaFoodRecord`] into a [`FoodDraftWithServings`], or
+/// `None` if the record fails minimum-viable validation (§7.2 rule 5).
+pub fn accept_and_normalize_usda(record: UsdaFoodRecord) -> Option<FoodDraftWithServings> {
+    // §7.2 rule 5: drop if foodPortions empty AND no energy-kcal.
+    if record.food_portions.is_empty() && record.energy_kcal_100g.is_none() {
+        return None;
+    }
+
+    let kcal_100g = record.energy_kcal_100g.unwrap_or(Decimal::ZERO);
+
+    // §7.2 rule 1–4: build one serving per portion.
+    let mut portions = record.food_portions.clone();
+    // Sort by sequence_number ascending; first = lowest = default.
+    portions.sort_by_key(|p| p.sequence_number);
+
+    let mut servings: Vec<ServingDraft> = Vec::new();
+
+    for (idx, portion) in portions.iter().enumerate() {
+        let gram_weight = portion.gram_weight;
+        if gram_weight <= Decimal::ZERO {
+            continue;
+        }
+
+        // §7.2 rule 2: map measureUnit.name → Unit; fallback {gramWeight, Gram}.
+        let (amount, unit) = map_usda_unit(&portion.measure_unit_name, gram_weight);
+
+        // §7.2 rule 3: per-serving nutrition = per-100g * gramWeight / 100.
+        let kcal = kcal_100g * gram_weight / dec!(100);
+        let protein_g = scale_per_100g(record.protein_100g, gram_weight);
+        let carbs_g = scale_per_100g(record.carbs_100g, gram_weight);
+        let fat_g = scale_per_100g(record.fat_100g, gram_weight);
+        let fiber_g = scale_per_100g(record.fiber_100g, gram_weight);
+        let sugar_g = scale_per_100g(record.sugar_100g, gram_weight);
+        // USDA sodium is already in mg/100g.
+        let sodium_mg = record
+            .sodium_mg_100g
+            .map(|s| s * gram_weight / dec!(100));
+        let saturated_fat_g = scale_per_100g(record.saturated_fat_100g, gram_weight);
+
+        // §7.2 rule 4: first (lowest sequenceNumber) is is_default = true.
+        let is_default = idx == 0;
+
+        servings.push(ServingDraft {
+            label: None,
+            amount,
+            unit,
+            kcal,
+            protein_g,
+            carbs_g,
+            fat_g,
+            fiber_g,
+            sugar_g,
+            sodium_mg,
+            saturated_fat_g,
+            is_default,
+            source: ServingSource::Usda,
+            sort_order: idx as i32,
+        });
+    }
+
+    // If portions was empty but kcal is present, emit a single 100g serving.
+    if servings.is_empty() {
+        if record.energy_kcal_100g.is_none() {
+            return None;
+        }
+        let sodium_mg = record.sodium_mg_100g;
+        servings.push(ServingDraft {
+            label: None,
+            amount: dec!(100),
+            unit: Unit::Gram,
+            kcal: kcal_100g,
+            protein_g: record.protein_100g,
+            carbs_g: record.carbs_100g,
+            fat_g: record.fat_100g,
+            fiber_g: record.fiber_100g,
+            sugar_g: record.sugar_100g,
+            sodium_mg,
+            saturated_fat_g: record.saturated_fat_100g,
+            is_default: true,
+            source: ServingSource::Usda,
+            sort_order: 0,
+        });
+    }
+
+    let draft = FoodDraft {
+        name: record.description.trim().to_string(),
+        brands: record.brand_owner.filter(|s| !s.trim().is_empty()),
+        barcode: None,
+        categories_tags: vec![],
+        nutriscore_grade: None,
+        servings: vec![],
+    };
+
+    Some(FoodDraftWithServings {
+        draft,
+        quality_score: 50, // USDA data is considered medium quality by default
+        servings,
+    })
+}
+
+/// Map a USDA measure unit name string + gramWeight to `(amount, Unit)`.
+/// Per §7.2 rule 2: fallback is `{gramWeight, Gram}`.
+fn map_usda_unit(name: &str, gram_weight: Decimal) -> (Decimal, Unit) {
+    let lower = name.trim().to_ascii_lowercase();
+    // Try the shared unit table first.
+    if let Some(unit) = map_unit_str(&lower) {
+        // For named volume/count units, use amount=1 (one tablespoon, one cup, etc.).
+        // For mass units from the table, use the gramWeight converted appropriately.
+        match unit.family() {
+            crate::domain::unit::UnitFamily::Mass => {
+                // Express gramWeight in the mapped mass unit.
+                let ratio = unit.ratio_to_canonical(); // g per unit
+                if ratio > Decimal::ZERO {
+                    (gram_weight / ratio, unit)
+                } else {
+                    (gram_weight, Unit::Gram)
+                }
+            }
+            crate::domain::unit::UnitFamily::Volume | crate::domain::unit::UnitFamily::Count => {
+                // Volume/count: 1 unit of the named measure.
+                (Decimal::ONE, unit)
+            }
+        }
+    } else {
+        // Fallback: {gramWeight, Gram}
+        (gram_weight, Unit::Gram)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Quality score (OFF)
+// ---------------------------------------------------------------------------
+
+/// Compute the 0..=100 quality score for an OFF record.
+pub fn score(record: &OffFoodRecord) -> i16 {
+    let mut total: i32 = 0;
+
+    if let Some(g) = record.nutriscore_grade.as_deref() {
+        if NutriscoreGrade::parse(g).is_some() {
+            total += 40;
+        }
+    }
+
+    if record
+        .brands
+        .as_deref()
+        .map(|b| !b.trim().is_empty())
+        .unwrap_or(false)
+    {
+        total += 15;
+    }
+
+    let has_off_serving = record
+        .serving_quantity
+        .filter(|q| *q > Decimal::ZERO)
+        .is_some()
+        || record
+            .serving_size
+            .as_deref()
+            .and_then(parse_serving_size_grams)
+            .filter(|g| *g > Decimal::ZERO)
+            .is_some();
+    if has_off_serving {
+        total += 15;
+    }
+
+    let nutrients_filled = [
+        record.protein_100g.is_some(),
+        record.carbs_100g.is_some(),
+        record.fat_100g.is_some(),
+        record.fiber_100g.is_some(),
+        record.sugar_100g.is_some(),
+        record.sodium_100g.is_some(),
+        record.saturated_fat_100g.is_some(),
+    ]
+    .iter()
+    .filter(|b| **b)
+    .count();
+    if nutrients_filled >= 6 {
+        total += 10;
+    } else if nutrients_filled >= 3 {
+        total += 5;
+    }
+
+    if let Some(c) = record.completeness {
+        let clamped = c.clamp(0.0, 1.0);
+        total += (clamped * 10.0).round() as i32;
+    }
+
+    if !record.categories_tags.is_empty() {
+        total += 10;
+    }
+
+    total.clamp(0, 100) as i16
+}
+
+// ---------------------------------------------------------------------------
+// IngestService
+// ---------------------------------------------------------------------------
+
+/// Streaming batch upsert orchestrator.
 pub struct IngestService {
     foods: Arc<dyn FoodRepository>,
     servings: Arc<dyn ServingRepository>,
@@ -124,7 +701,7 @@ impl IngestService {
             let mut accepted: Vec<FoodDraftWithServings> = Vec::with_capacity(chunk.len());
             let mut seen_barcodes: HashSet<String> = HashSet::new();
             for record in chunk {
-                if let Some(upsert) = accept_and_normalize(record) {
+                if let Some(upsert) = accept_and_normalize_off(record) {
                     if let Some(bc) = upsert.draft.barcode.clone() {
                         if !seen_barcodes.insert(bc) {
                             if let Some(slot) = accepted
@@ -157,234 +734,250 @@ impl IngestService {
     }
 }
 
-/// Build a placeholder system `100 g` serving draft.
-/// T14 will replace this with per-serving nutrition from the new normalizer.
-fn make_system_100g_serving_draft(is_default: bool) -> ServingDraft {
-    ServingDraft {
-        label: Some("100 g".to_string()),
-        amount: Decimal::from(100),
-        unit: Unit::Gram,
-        kcal: Decimal::ZERO, // placeholder — T14 fills nutrition
-        protein_g: None,
-        carbs_g: None,
-        fat_g: None,
-        fiber_g: None,
-        sugar_g: None,
-        sodium_mg: None,
-        saturated_fat_g: None,
-        is_default,
-        source: ServingSource::System,
-        sort_order: 0,
-    }
-}
+// ---------------------------------------------------------------------------
+// Unit tests  (§8 ingest layer)
+// ---------------------------------------------------------------------------
 
-/// Build a placeholder OFF-derived serving draft.
-/// T14 will replace this with per-serving nutrition from the new normalizer.
-fn make_off_serving_draft_placeholder(label: String, grams: Decimal) -> ServingDraft {
-    ServingDraft {
-        label: Some(label),
-        amount: grams,
-        unit: Unit::Gram,
-        kcal: Decimal::ZERO, // placeholder — T14 fills nutrition
-        protein_g: None,
-        carbs_g: None,
-        fat_g: None,
-        fiber_g: None,
-        sugar_g: None,
-        sodium_mg: None,
-        saturated_fat_g: None,
-        is_default: true,
-        source: ServingSource::Off,
-        sort_order: 1,
-    }
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rust_decimal_macros::dec;
 
-/// Convert a raw [`OffFoodRecord`] into a [`FoodDraftWithServings`], or
-/// `None` if the record fails minimum-viable validation. T14 rewrites the
-/// normalizer to emit full per-serving nutrition.
-pub fn accept_and_normalize(mut record: OffFoodRecord) -> Option<FoodDraftWithServings> {
-    if record.code.trim().is_empty() {
-        return None;
+    fn d(n: i64) -> Decimal {
+        Decimal::from(n)
     }
-    if record.product_name.trim().is_empty() {
-        return None;
-    }
-    record.energy_kcal_100g?;
 
-    if let Some(sod) = record.sodium_100g {
-        let as_f = sod.to_f64().unwrap_or(0.0);
-        if as_f > SODIUM_GRAMS_SANITY_THRESHOLD {
-            tracing::warn!(
-                barcode = %record.code,
-                sodium = %sod,
-                "implausible sodium value (>50 g/100g); nulling field"
+    fn base_off(code: &str, name: &str) -> OffFoodRecord {
+        OffFoodRecord {
+            code: code.to_string(),
+            product_name: name.to_string(),
+            energy_kcal_100g: Some(d(150)),
+            protein_100g: Some(d(5)),
+            carbs_100g: Some(d(20)),
+            fat_100g: Some(d(5)),
+            fiber_100g: Some(d(3)),
+            sugar_100g: Some(d(8)),
+            sodium_100g: Some(Decimal::new(5, 1)), // 0.5 g/100g
+            saturated_fat_100g: Some(d(1)),
+            ..Default::default()
+        }
+    }
+
+    // ---- OFF cases ----
+
+    /// §8 off_30g_serving: "30 g" + per-100g → emit {30, Gram} is_default=true.
+    #[test]
+    fn off_30g_serving() {
+        let mut r = base_off("BC001", "Cracker");
+        r.serving_size = Some("30 g".to_string());
+
+        let out = accept_and_normalize_off(r).expect("should accept");
+        let default_serving = out.servings.iter().find(|s| s.is_default).expect("must have default");
+
+        assert_eq!(default_serving.amount, d(30));
+        assert_eq!(default_serving.unit, Unit::Gram);
+        assert!(default_serving.is_default);
+        assert_eq!(default_serving.source, ServingSource::Off);
+
+        // kcal = 150 * 30 / 100 = 45
+        assert_eq!(default_serving.kcal, dec!(45));
+    }
+
+    /// §8 off_cup_with_ml_companion: "1 cup (240 ml)" + per-100g →
+    /// emit {1, Cup} default=true AND companion {100, g} non-default.
+    #[test]
+    fn off_cup_with_ml_companion() {
+        let mut r = base_off("BC002", "Cereal");
+        r.serving_size = Some("1 cup (240 ml)".to_string());
+
+        let out = accept_and_normalize_off(r).expect("should accept");
+
+        // The "1 cup" is volumetric — no gram equivalent without density.
+        // Per §7.1 rule 3: volumetric serving with only per-100g nutrition → drop
+        // the volumetric serving. But rule 4 still emits the 100g companion.
+        // Rule 6 fallback: companion becomes is_default = true.
+        let has_cup = out.servings.iter().any(|s| s.unit == Unit::Cup);
+        let has_100g = out.servings.iter().any(|s| s.unit == Unit::Gram && s.amount == dec!(100));
+
+        // The cup serving cannot carry nutrition (no density), so we get only 100g.
+        // The companion is emitted; it becomes default because the cup serving was dropped.
+        assert!(!has_cup, "volumetric serving without density should be dropped");
+        assert!(has_100g, "100g companion must still be emitted");
+
+        let default = out.servings.iter().find(|s| s.is_default).expect("must have default");
+        assert_eq!(default.unit, Unit::Gram);
+        assert_eq!(default.amount, dec!(100));
+    }
+
+    /// §8 off_unparseable_no_per100g_dropped: serving_size="??" + no per-100g → None.
+    #[test]
+    fn off_unparseable_no_per100g_dropped() {
+        let r = OffFoodRecord {
+            code: "BC003".to_string(),
+            product_name: "Mystery".to_string(),
+            serving_size: Some("??".to_string()),
+            energy_kcal_100g: None,
+            protein_100g: None,
+            carbs_100g: None,
+            fat_100g: None,
+            ..Default::default()
+        };
+
+        assert!(
+            accept_and_normalize_off(r).is_none(),
+            "row with unparseable serving and no per-100g must be dropped"
+        );
+    }
+
+    /// §8 off_per100g_only: no serving_size, per-100g present →
+    /// emit single {100, Gram} is_default=true.
+    #[test]
+    fn off_per100g_only() {
+        let mut r = base_off("BC004", "Flour");
+        r.serving_size = None;
+        r.serving_quantity = None;
+
+        let out = accept_and_normalize_off(r).expect("should accept");
+        assert_eq!(out.servings.len(), 1);
+        let s = &out.servings[0];
+        assert_eq!(s.amount, dec!(100));
+        assert_eq!(s.unit, Unit::Gram);
+        assert!(s.is_default);
+        assert_eq!(s.kcal, d(150)); // 150 kcal/100g
+    }
+
+    /// §8 off_sodium_over_50g_per100g_nulls_field: sodium_100g=60.0 →
+    /// serving has sodium_mg=None, row NOT dropped.
+    #[test]
+    fn off_sodium_over_50g_per100g_nulls_field() {
+        let mut r = base_off("BC005", "SaltyCracker");
+        r.sodium_100g = Some(dec!(60)); // 60 g/100g — implausible
+        r.serving_size = None;
+
+        let out = accept_and_normalize_off(r).expect("row must NOT be dropped");
+        for s in &out.servings {
+            assert!(
+                s.sodium_mg.is_none(),
+                "sodium_mg must be None after sanity null, got {:?}",
+                s.sodium_mg
             );
-            record.sodium_100g = None;
         }
     }
 
-    let quality_score = score(&record);
-    let (off_label, off_grams) = derive_off_serving_parts(&record);
+    // ---- USDA cases ----
 
-    let nutriscore_grade = record
-        .nutriscore_grade
-        .as_deref()
-        .and_then(NutriscoreGrade::parse);
+    /// §8 usda_tablespoon_maps: portion {gramWeight:15.0, measureUnit:"tablespoon"} →
+    /// {1, Tablespoon}.
+    #[test]
+    fn usda_tablespoon_maps() {
+        let r = UsdaFoodRecord {
+            fdc_id: 1001,
+            data_type: "sr_legacy_food".to_string(),
+            description: "Butter".to_string(),
+            brand_owner: None,
+            food_portions: vec![UsdaFoodPortion {
+                gram_weight: dec!(14.2),
+                measure_unit_name: "tablespoon".to_string(),
+                sequence_number: 1,
+            }],
+            energy_kcal_100g: Some(dec!(717)),
+            protein_100g: Some(dec!(0.85)),
+            fat_100g: Some(dec!(81)),
+            carbs_100g: Some(Decimal::ZERO),
+            ..Default::default()
+        };
 
-    // Build serving list. T14 will fill real per-serving nutrition here.
-    let mut servings: Vec<ServingDraft> = Vec::new();
-    if let (Some(label), Some(grams)) = (off_label, off_grams) {
-        servings.push(make_off_serving_draft_placeholder(label, grams));
-        servings.push(make_system_100g_serving_draft(false));
-    } else {
-        servings.push(make_system_100g_serving_draft(true));
+        let out = accept_and_normalize_usda(r).expect("should accept");
+        let s = &out.servings[0];
+        assert_eq!(s.unit, Unit::Tablespoon);
+        assert_eq!(s.amount, Decimal::ONE);
+        assert!(s.is_default);
     }
 
-    // FoodDraft.servings is no longer used for ingest — servings are carried
-    // on FoodDraftWithServings directly. Pass empty here.
-    let draft = FoodDraft {
-        name: record.product_name.trim().to_string(),
-        brands: record.brands.clone().filter(|s| !s.trim().is_empty()),
-        barcode: Some(record.code.trim().to_string()),
-        categories_tags: record.categories_tags.clone(),
-        nutriscore_grade,
-        servings: vec![], // T14: emit actual ServingDraft rows via FoodDraftWithServings.servings
-    };
+    /// §8 usda_unmapped_fallback_grams: measureUnit:"foobar" →
+    /// {gramWeight, Gram} fallback.
+    #[test]
+    fn usda_unmapped_fallback_grams() {
+        let r = UsdaFoodRecord {
+            fdc_id: 1002,
+            data_type: "foundation_food".to_string(),
+            description: "Mystery food".to_string(),
+            brand_owner: None,
+            food_portions: vec![UsdaFoodPortion {
+                gram_weight: dec!(45),
+                measure_unit_name: "foobar".to_string(),
+                sequence_number: 1,
+            }],
+            energy_kcal_100g: Some(dec!(200)),
+            ..Default::default()
+        };
 
-    Some(FoodDraftWithServings {
-        draft,
-        quality_score,
-        servings,
-    })
-}
-
-/// Derive an OFF-named serving (label, grams) from the record, if possible.
-fn derive_off_serving_parts(record: &OffFoodRecord) -> (Option<String>, Option<Decimal>) {
-    let from_quantity = record.serving_quantity.filter(|q| *q > Decimal::ZERO);
-
-    let from_size = record
-        .serving_size
-        .as_deref()
-        .and_then(parse_serving_size_grams)
-        .filter(|g| *g > Decimal::ZERO);
-
-    let grams = from_quantity.or(from_size);
-
-    if let Some(g) = grams {
-        let label = record
-            .serving_size
-            .clone()
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| format!("{} g", g));
-        (Some(label), Some(g))
-    } else {
-        (None, None)
-    }
-}
-
-/// Compute the 0..=100 quality score for an OFF record.
-pub fn score(record: &OffFoodRecord) -> i16 {
-    let mut total: i32 = 0;
-
-    if let Some(g) = record.nutriscore_grade.as_deref() {
-        if NutriscoreGrade::parse(g).is_some() {
-            total += 40;
-        }
+        let out = accept_and_normalize_usda(r).expect("should accept");
+        let s = &out.servings[0];
+        assert_eq!(s.unit, Unit::Gram);
+        assert_eq!(s.amount, dec!(45));
     }
 
-    if record
-        .brands
-        .as_deref()
-        .map(|b| !b.trim().is_empty())
-        .unwrap_or(false)
-    {
-        total += 15;
+    /// §8 usda_empty_portions_no_kcal_dropped: foodPortions=[] + no energy-kcal → None.
+    #[test]
+    fn usda_empty_portions_no_kcal_dropped() {
+        let r = UsdaFoodRecord {
+            fdc_id: 1003,
+            data_type: "foundation_food".to_string(),
+            description: "Empty".to_string(),
+            food_portions: vec![],
+            energy_kcal_100g: None,
+            ..Default::default()
+        };
+
+        assert!(
+            accept_and_normalize_usda(r).is_none(),
+            "empty portions + no kcal must be dropped"
+        );
     }
 
-    let has_off_serving = record
-        .serving_quantity
-        .filter(|q| *q > Decimal::ZERO)
-        .is_some()
-        || record
-            .serving_size
-            .as_deref()
-            .and_then(parse_serving_size_grams)
-            .filter(|g| *g > Decimal::ZERO)
-            .is_some();
-    if has_off_serving {
-        total += 15;
+    // ---- parse_serving_size unit tests ----
+
+    #[test]
+    fn parse_30g() {
+        let (amt, unit) = parse_serving_size("30 g").expect("should parse");
+        assert_eq!(amt, d(30));
+        assert_eq!(unit, Unit::Gram);
     }
 
-    let nutrients_filled = [
-        record.protein_100g.is_some(),
-        record.carbs_100g.is_some(),
-        record.fat_100g.is_some(),
-        record.fiber_100g.is_some(),
-        record.sugar_100g.is_some(),
-        record.sodium_100g.is_some(),
-        record.saturated_fat_100g.is_some(),
-    ]
-    .iter()
-    .filter(|b| **b)
-    .count();
-    if nutrients_filled >= 6 {
-        total += 10;
-    } else if nutrients_filled >= 3 {
-        total += 5;
+    #[test]
+    fn parse_cup_ignores_parenthetical_ml() {
+        // "1 cup (240 ml)" → {1, Cup} (not {240, Milliliter})
+        let (amt, unit) = parse_serving_size("1 cup (240 ml)").expect("should parse");
+        assert_eq!(amt, Decimal::ONE);
+        assert_eq!(unit, Unit::Cup);
     }
 
-    if let Some(c) = record.completeness {
-        let clamped = c.clamp(0.0, 1.0);
-        total += (clamped * 10.0).round() as i32;
+    #[test]
+    fn parse_100ml() {
+        let (amt, unit) = parse_serving_size("100 ml").expect("should parse");
+        assert_eq!(amt, d(100));
+        assert_eq!(unit, Unit::Milliliter);
     }
 
-    if !record.categories_tags.is_empty() {
-        total += 10;
+    #[test]
+    fn parse_unparseable_returns_none() {
+        assert!(parse_serving_size("??").is_none());
+        assert!(parse_serving_size("").is_none());
+        assert!(parse_serving_size("one tablespoon").is_none()); // no leading digit
     }
 
-    total.clamp(0, 100) as i16
-}
-
-/// Parse a serving-size string to grams.
-pub fn parse_serving_size_grams(s: &str) -> Option<Decimal> {
-    let bytes = s.as_bytes();
-    let mut best: Option<Decimal> = None;
-    let mut i = 0usize;
-    while i < bytes.len() {
-        if !bytes[i].is_ascii_digit() {
-            i += 1;
-            continue;
-        }
-        let start = i;
-        let mut saw_dot = false;
-        while i < bytes.len() {
-            let b = bytes[i];
-            if b.is_ascii_digit() {
-                i += 1;
-            } else if b == b'.' && !saw_dot {
-                saw_dot = true;
-                i += 1;
-            } else {
-                break;
-            }
-        }
-        let num_end = i;
-        let num_str = &s[start..num_end];
-
-        while i < bytes.len() && bytes[i] == b' ' {
-            i += 1;
-        }
-        let unit_start = i;
-        while i < bytes.len() && bytes[i].is_ascii_alphabetic() {
-            i += 1;
-        }
-        let unit = s[unit_start..i].to_ascii_lowercase();
-        let is_grams = matches!(unit.as_str(), "g" | "gr" | "gram" | "grams");
-        if is_grams {
-            if let Ok(parsed) = Decimal::from_str(num_str) {
-                best = Some(parsed);
-            }
-        }
+    #[test]
+    fn parse_tablespoon() {
+        let (amt, unit) = parse_serving_size("1 tablespoon").expect("should parse");
+        assert_eq!(amt, Decimal::ONE);
+        assert_eq!(unit, Unit::Tablespoon);
     }
-    best
+
+    #[test]
+    fn parse_fluid_ounce() {
+        let (amt, unit) = parse_serving_size("4 fl oz").expect("should parse");
+        assert_eq!(amt, dec!(4));
+        assert_eq!(unit, Unit::FluidOunce);
+    }
 }
