@@ -77,16 +77,16 @@ class Serving {
   UnitFamily get family => unit.family;
 
   /// kcal for [quantity] of this serving (quantity is the multiplier
-  /// the log entry stores — 0.5 means half of one serving).
-  Decimal kcalFor(Decimal quantity) {
-    return (kcal * quantity).toDecimal(scaleOnInfinitePrecision: 6);
-  }
+  /// the log entry stores — 0.5 means half of one serving). The
+  /// `Decimal * Decimal` product is itself a `Decimal` (no rational
+  /// expansion), so no `.toDecimal()` rounding is needed.
+  Decimal kcalFor(Decimal quantity) => kcal * quantity;
 
   /// One macro field scaled by [quantity]. Returns null when the macro
   /// is null on the serving.
   Decimal? macroFor(Decimal quantity, Decimal? value) {
     if (value == null) return null;
-    return (value * quantity).toDecimal(scaleOnInfinitePrecision: 6);
+    return value * quantity;
   }
 
   Serving copyWith({

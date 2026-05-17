@@ -1223,10 +1223,9 @@ LogEntry computeLogEntry({
   required DateTime createdAt,
   String? note,
 }) {
-  Decimal? scale(Decimal? v) =>
-      v == null ? null : (v * quantity).toDecimal(scaleOnInfinitePrecision: 6);
+  Decimal? scale(Decimal? v) => v == null ? null : v * quantity;
 
-  final kcal = (serving.kcal * quantity).toDecimal(scaleOnInfinitePrecision: 6);
+  final kcal = serving.kcal * quantity;
   final snapshot = NutritionSnapshot(
     caloriesKcal: kcal,
     proteinG: scale(serving.proteinG),
@@ -1241,8 +1240,7 @@ LogEntry computeLogEntry({
   // `entered_amount` defaults to `serving.amount * quantity`, expressed
   // in the serving's own unit. The log-entry sheet will override this
   // when the user picked a different same-family unit at entry time.
-  final enteredAmount =
-      (serving.amount * quantity).toDecimal(scaleOnInfinitePrecision: 6);
+  final enteredAmount = serving.amount * quantity;
 
   return LogEntry(
     id: id,

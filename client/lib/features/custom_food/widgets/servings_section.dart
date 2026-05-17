@@ -1,3 +1,4 @@
+import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -569,8 +570,8 @@ class _MacroField extends StatelessWidget {
 
   final String label;
   final String unit;
-  final dynamic value;
-  final ValueChanged<dynamic> onChanged;
+  final Decimal? value;
+  final ValueChanged<Decimal?> onChanged;
 
   @override
   Widget build(BuildContext context) {

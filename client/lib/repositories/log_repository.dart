@@ -6,6 +6,7 @@ import '../data/outbox/log_outbox_notifier.dart';
 import '../domain/day_summary.dart';
 import '../domain/log_entry.dart';
 import '../domain/meal.dart';
+import '../domain/serving.dart';
 import '_fixtures.dart' as fx;
 import 'food_repository.dart';
 import 'goal_repository.dart';
