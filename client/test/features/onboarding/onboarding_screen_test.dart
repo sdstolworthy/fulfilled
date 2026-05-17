@@ -65,6 +65,12 @@ class _FakeGoalRepository implements GoalRepository {
   Future<List<Goal>> all() async => <Goal>[];
 
   @override
+  Future<Goal> update(Goal goal) async => goal;
+
+  @override
+  Future<void> delete(String id) async {}
+
+  @override
   Future<Goal> makeActive(String id) async =>
       throw UnimplementedError('not used in test');
 

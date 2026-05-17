@@ -3,8 +3,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fulfilled/domain/enums.dart';
 import 'package:fulfilled/domain/food.dart';
-import 'package:fulfilled/domain/nutrition.dart';
 import 'package:fulfilled/domain/serving.dart';
+import 'package:fulfilled/domain/unit.dart';
 import 'package:fulfilled/features/search/search_screen.dart';
 import 'package:fulfilled/features/search/widgets/quick_chip_row.dart';
 import 'package:fulfilled/features/search/widgets/search_field.dart';
@@ -37,16 +37,15 @@ Food _food({
     brand: brand,
     source: source,
     isCustom: source == FoodSource.user,
-    nutritionPer100g: NutritionPer100g(
-      energyKcal: Decimal.fromInt(kcal),
-    ),
     servings: <Serving>[
       Serving(
         id: '${id}_s100',
-        name: '1 serving (100 g)',
-        grams: Decimal.fromInt(100),
+        label: '1 serving (100 g)',
+        amount: Decimal.fromInt(100),
+        unit: Unit.g,
+        kcal: Decimal.fromInt(kcal),
         isDefault: true,
-        source: ServingSource.system,
+        source: ServingSource.off,
       ),
     ],
   );

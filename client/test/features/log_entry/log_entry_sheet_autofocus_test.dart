@@ -8,6 +8,7 @@ import 'package:fulfilled/domain/log_entry.dart';
 import 'package:fulfilled/domain/meal.dart';
 import 'package:fulfilled/domain/nutrition.dart';
 import 'package:fulfilled/domain/serving.dart';
+import 'package:fulfilled/domain/unit.dart';
 import 'package:fulfilled/features/log_entry/log_entry_sheet.dart';
 import 'package:fulfilled/theme/theme_data.dart';
 
@@ -35,17 +36,16 @@ Food _testFood() {
     isCustom: false,
     qualityScore: null,
     nutriscore: null,
-    nutritionPer100g: NutritionPer100g(
-      energyKcal: Decimal.fromInt(100),
-      proteinG: Decimal.fromInt(10),
-      carbsG: Decimal.fromInt(20),
-      fatG: Decimal.zero,
-    ),
     servings: <Serving>[
       Serving(
         id: 'sv_100g',
-        name: '100 g',
-        grams: Decimal.fromInt(100),
+        label: '100 g',
+        amount: Decimal.fromInt(100),
+        unit: Unit.g,
+        kcal: Decimal.fromInt(100),
+        proteinG: Decimal.fromInt(10),
+        carbsG: Decimal.fromInt(20),
+        fatG: Decimal.zero,
         isDefault: true,
         source: ServingSource.user,
         sortOrder: 0,
@@ -65,7 +65,8 @@ LogEntry _existingEntry() {
     consumedOn: DateTime(today.year, today.month, today.day),
     meal: Meal.lunch,
     quantity: Decimal.parse('1.5'),
-    gramsTotal: Decimal.fromInt(150),
+    enteredAmount: Decimal.fromInt(150),
+    enteredUnit: Unit.g,
     nutritionSnapshot: NutritionSnapshot(
       caloriesKcal: Decimal.fromInt(150),
     ),

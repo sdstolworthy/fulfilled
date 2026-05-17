@@ -4,8 +4,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fulfilled/domain/enums.dart';
 import 'package:fulfilled/domain/food.dart';
-import 'package:fulfilled/domain/nutrition.dart';
 import 'package:fulfilled/domain/serving.dart';
+import 'package:fulfilled/domain/unit.dart';
+import 'package:fulfilled/providers/repository_providers.dart';
 import 'package:fulfilled/repositories/food_repository.dart';
 import 'package:fulfilled/routing/app_router.dart';
 import 'package:fulfilled/theme/theme_data.dart';
@@ -30,7 +31,7 @@ class _StubFoodRepository extends FoodRepository {
   final Object? byBarcodeResult;
 
   @override
-  Future<Food> byBarcode(String barcode) async {
+  Future<Food?> byBarcode(String barcode) async {
     final res = byBarcodeResult;
     if (res is Food) return res;
     if (res is FoodNotFoundError) throw res;
@@ -43,14 +44,15 @@ Food _seedFood(String id) => Food(
       name: 'Stubbed food',
       source: FoodSource.off,
       isCustom: false,
-      nutritionPer100g: NutritionPer100g(energyKcal: Decimal.fromInt(100)),
       servings: <Serving>[
         Serving(
           id: '${id}_100g',
-          name: '100 g',
-          grams: Decimal.fromInt(100),
+          label: '100 g',
+          amount: Decimal.fromInt(100),
+          unit: Unit.g,
+          kcal: Decimal.fromInt(100),
           isDefault: true,
-          source: ServingSource.system,
+          source: ServingSource.off,
         ),
       ],
     );

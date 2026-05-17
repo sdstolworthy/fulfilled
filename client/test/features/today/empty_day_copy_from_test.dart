@@ -28,6 +28,7 @@ import 'package:fulfilled/domain/log_entry.dart';
 import 'package:fulfilled/domain/meal.dart';
 import 'package:fulfilled/domain/nutrition.dart';
 import 'package:fulfilled/domain/serving.dart';
+import 'package:fulfilled/domain/unit.dart';
 import 'package:fulfilled/domain/weight.dart';
 import 'package:fulfilled/features/today/today_screen.dart';
 import 'package:fulfilled/providers/food_providers.dart';
@@ -152,7 +153,8 @@ LogEntry _entry({
       consumedOn: on,
       meal: meal,
       quantity: Decimal.one,
-      gramsTotal: Decimal.fromInt(170),
+      enteredAmount: Decimal.fromInt(170),
+      enteredUnit: Unit.g,
       nutritionSnapshot:
           NutritionSnapshot(caloriesKcal: Decimal.fromInt(kcal)),
       note: null,
@@ -165,14 +167,15 @@ Food _food(String id) => Food(
       name: id,
       source: FoodSource.off,
       isCustom: false,
-      nutritionPer100g: NutritionPer100g(energyKcal: Decimal.fromInt(100)),
       servings: <Serving>[
         Serving(
           id: '${id}_s',
-          name: '1 serving',
-          grams: Decimal.fromInt(100),
+          label: '1 serving',
+          amount: Decimal.fromInt(100),
+          unit: Unit.g,
+          kcal: Decimal.fromInt(100),
           isDefault: true,
-          source: ServingSource.system,
+          source: ServingSource.off,
         ),
       ],
     );
@@ -245,7 +248,8 @@ List<Override> _baselineOverrides({
     ];
 
 _FakeLogRepository _buildRepo({List<LogEntry> entriesForSource = const []}) {
-  final api = ApiClient(Dio());
+  final api =
+      ApiClient(Dio(), baseUrl: 'https://test.example/api/v1');
   return _FakeLogRepository(
     api: api,
     foodRepository: FoodRepository(api),

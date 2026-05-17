@@ -2,7 +2,8 @@ import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fulfilled/domain/enums.dart';
-import 'package:fulfilled/domain/nutrition.dart';
+import 'package:fulfilled/domain/serving.dart';
+import 'package:fulfilled/domain/unit.dart';
 import 'package:fulfilled/features/food_detail/widgets/nutrition_table.dart';
 import 'package:fulfilled/theme/theme_data.dart';
 
@@ -14,8 +15,7 @@ import 'package:fulfilled/theme/theme_data.dart';
 ///   - The expected source label appears.
 ///   - No `"quality"` substring leaks (defensive against accidental
 ///     re-introduction).
-///   - No `"0."` numeric prefix appears in the meta line (we used to
-///     render `"OFF data · quality 0.86"`).
+///   - No `"0."` numeric prefix appears in the meta line.
 
 void main() {
   group('NutritionTable source-only meta', () {
@@ -73,7 +73,7 @@ Widget _harness({required FoodSource source, required int? qualityScore}) {
     theme: buildLightTheme(),
     home: Scaffold(
       body: NutritionTable(
-        nutrition: _nutrition(),
+        serving: _serving(),
         source: source,
         qualityScore: qualityScore,
       ),
@@ -81,9 +81,13 @@ Widget _harness({required FoodSource source, required int? qualityScore}) {
   );
 }
 
-NutritionPer100g _nutrition() {
-  return NutritionPer100g(
-    energyKcal: Decimal.parse('57'),
+Serving _serving() {
+  return Serving(
+    id: 'sv_100g',
+    label: '100 g',
+    amount: Decimal.fromInt(100),
+    unit: Unit.g,
+    kcal: Decimal.parse('57'),
     proteinG: Decimal.parse('10.3'),
     carbsG: Decimal.parse('3.6'),
     sugarG: Decimal.parse('3.2'),
@@ -91,5 +95,7 @@ NutritionPer100g _nutrition() {
     saturatedFatG: Decimal.parse('0.1'),
     fiberG: Decimal.parse('0.0'),
     sodiumMg: Decimal.parse('36'),
+    isDefault: true,
+    source: ServingSource.off,
   );
 }

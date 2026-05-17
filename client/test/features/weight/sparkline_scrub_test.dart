@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fulfilled/domain/enums.dart';
 import 'package:fulfilled/domain/weight.dart';
+import 'package:fulfilled/repositories/goal_repository.dart';
 import 'package:fulfilled/features/weight/widgets/weight_sparkline.dart';
 import 'package:fulfilled/providers/goal_providers.dart';
 import 'package:fulfilled/providers/weight_providers.dart';
@@ -60,7 +61,9 @@ Widget _harness({
 }) {
   return ProviderScope(
     overrides: <Override>[
-      activeGoalProvider.overrideWith((_) async => null),
+      activeGoalProvider.overrideWith(
+        (_) async => throw GoalNotFoundError(DateTime(2026, 5, 14)),
+      ),
       weightHistoryProvider.overrideWith((_) async => const <WeightEntry>[]),
       for (final r in WeightRange.values)
         weightSeriesProvider(r).overrideWith((_) async => series),
@@ -93,7 +96,9 @@ Widget _scrollHarness({
 }) {
   return ProviderScope(
     overrides: <Override>[
-      activeGoalProvider.overrideWith((_) async => null),
+      activeGoalProvider.overrideWith(
+        (_) async => throw GoalNotFoundError(DateTime(2026, 5, 14)),
+      ),
       weightHistoryProvider.overrideWith((_) async => const <WeightEntry>[]),
       for (final r in WeightRange.values)
         weightSeriesProvider(r).overrideWith((_) async => series),

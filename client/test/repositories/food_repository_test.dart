@@ -7,7 +7,7 @@ import 'package:fulfilled/data/api_client.dart';
 import 'package:fulfilled/domain/enums.dart';
 import 'package:fulfilled/domain/food.dart';
 import 'package:fulfilled/domain/food_patch.dart';
-import 'package:fulfilled/domain/nutrition.dart';
+import 'package:fulfilled/domain/unit.dart';
 import 'package:fulfilled/repositories/food_repository.dart';
 
 import '../data/fake_dio_adapter.dart';
@@ -53,7 +53,8 @@ void main() {
     String? barcode = '8410076473203',
     String? defaultServingId = 'sv_1',
     String? defaultServingLabel = '1 container (170 g)',
-    String? defaultServingGrams = '170.00',
+    String? defaultServingAmount = '170.00',
+    String defaultServingUnit = 'g',
     String? caloriesPerServing = '100',
   }) =>
       <String, dynamic>{
@@ -66,7 +67,8 @@ void main() {
           'default_serving': <String, dynamic>{
             'id': defaultServingId,
             'label': defaultServingLabel,
-            'grams': defaultServingGrams,
+            'amount': defaultServingAmount,
+            'unit': defaultServingUnit,
           },
         'calories_per_serving': caloriesPerServing,
       };
@@ -77,7 +79,6 @@ void main() {
     String name = 'My custom food',
     String? brands,
     String? barcode,
-    Map<String, dynamic>? nutrition,
     List<Map<String, dynamic>>? servings,
   }) =>
       <String, dynamic>{
@@ -88,13 +89,6 @@ void main() {
         'name': name,
         'brands': brands,
         'categories_tags': <String>[],
-        'nutrition': nutrition ??
-            <String, dynamic>{
-              'energy_kcal': '200',
-              'protein_g': '10',
-              'carbs_g': '20',
-              'fat_g': '5',
-            },
         'nutriscore': null,
         'quality_score': 0,
         'servings': servings ??
@@ -102,7 +96,12 @@ void main() {
               <String, dynamic>{
                 'id': 'sv_100g',
                 'label': '100 g',
-                'grams': '100.00',
+                'amount': '100.00',
+                'unit': 'g',
+                'kcal': '200',
+                'protein_g': '10',
+                'carbs_g': '20',
+                'fat_g': '5',
                 'is_default': true,
                 'source': 'system',
                 'sort_order': 0,
@@ -113,7 +112,9 @@ void main() {
   Map<String, dynamic> servingWire({
     String id = 'sv_new',
     String label = '1 cup',
-    String grams = '240.00',
+    String amount = '1',
+    String unit = 'cup',
+    String kcal = '149',
     bool isDefault = false,
     String source = 'user',
     int sortOrder = 1,
@@ -121,7 +122,9 @@ void main() {
       <String, dynamic>{
         'id': id,
         'label': label,
-        'grams': grams,
+        'amount': amount,
+        'unit': unit,
+        'kcal': kcal,
         'is_default': isDefault,
         'source': source,
         'sort_order': sortOrder,
@@ -163,7 +166,7 @@ void main() {
       // `isDefault: true` so `food.defaultServingId` resolves.
       expect(hits.first.servings, hasLength(1));
       expect(hits.first.defaultServingId, equals('sv_1'));
-      expect(hits.first.servings.first.grams, equals(Decimal.parse('170.00')));
+      expect(hits.first.servings.first.amount, equals(Decimal.parse('170.00')));
       // `calories_per_serving` should round-trip through
       // `caloriesPerDefaultServing` (back-computed from per-100 g).
       expect(
@@ -256,7 +259,7 @@ void main() {
       expect(food.id, equals('f_xyz'));
       // T-17: decimals decoded via Decimal.parse(value.toString()).
       expect(
-        food.nutritionPer100g.energyKcal,
+        food.defaultServing.kcal,
         equals(Decimal.parse('200')),
       );
       expect(food.servings, hasLength(1));
@@ -327,17 +330,23 @@ void main() {
       final created = await repo.createCustom(FoodCreate(
         name: 'Brand new food',
         brand: 'Test brand',
-        nutrition: NutritionPer100g(
-          energyKcal: Decimal.parse('150'),
-          proteinG: Decimal.parse('10'),
-        ),
+        servings: <ServingCreate>[
+          ServingCreate(
+            label: '100 g',
+            amount: Decimal.parse('100'),
+            unit: Unit.g,
+            kcal: Decimal.parse('150'),
+            proteinG: Decimal.parse('10'),
+            isDefault: true,
+          ),
+        ],
       ));
 
       expect(adapter.requests.single.method, equalsIgnoringCase('POST'));
       expect(adapter.requests.single.path, equals('/foods'));
       expect(captured!['name'], equals('Brand new food'));
       expect(captured!['brands'], equals('Test brand'));
-      expect((captured!['nutrition'] as Map)['energy_kcal'], equals('150'));
+      expect((captured!['servings'] as List).first['kcal'], equals('150'));
 
       expect(created.id, equals('f_new'));
       expect(created.source, equals(FoodSource.user));
@@ -421,7 +430,12 @@ void main() {
 
       final serving = await repo.addServing(
         'f_owner',
-        ServingCreate(label: '1 cup', grams: Decimal.parse('240')),
+        ServingCreate(
+          label: '1 cup',
+          amount: Decimal.parse('1'),
+          unit: Unit.cup,
+          kcal: Decimal.parse('149'),
+        ),
       );
 
       expect(
@@ -429,11 +443,12 @@ void main() {
         equals('/foods/f_owner/servings'),
       );
       expect(captured!['label'], equals('1 cup'));
-      expect(captured!['grams'], equals('240'));
+      expect(captured!['amount'], equals('1'));
+      expect(captured!['unit'], equals('cup'));
       expect(captured!['is_default'], equals(false));
 
       expect(serving.id, equals('sv_new'));
-      expect(serving.grams, equals(Decimal.parse('240.00')));
+      expect(serving.amount, equals(Decimal.parse('1')));
     });
 
     test('404 maps to FoodNotFoundError', () async {
@@ -442,7 +457,12 @@ void main() {
       await expectLater(
         () => repo.addServing(
           'f_gone',
-          ServingCreate(label: '1 cup', grams: Decimal.parse('240')),
+          ServingCreate(
+            label: '1 cup',
+            amount: Decimal.parse('1'),
+            unit: Unit.cup,
+            kcal: Decimal.parse('149'),
+          ),
         ),
         throwsA(isA<FoodNotFoundError>()),
       );
@@ -460,13 +480,18 @@ void main() {
 
       final out = await repo.updateServing(
         'sv_x',
-        ServingPatch(label: 'renamed', grams: Decimal.parse('250')),
+        ServingPatch(
+          label: 'renamed',
+          amount: Decimal.parse('250'),
+          unit: Unit.g,
+        ),
       );
 
       expect(adapter.requests.single.path, equals('/servings/sv_x'));
       expect(adapter.requests.single.method, equalsIgnoringCase('PATCH'));
       expect(captured!['label'], equals('renamed'));
-      expect(captured!['grams'], equals('250'));
+      expect(captured!['amount'], equals('250'));
+      expect(captured!['unit'], equals('g'));
       expect(out.name, equals('renamed'));
     });
 

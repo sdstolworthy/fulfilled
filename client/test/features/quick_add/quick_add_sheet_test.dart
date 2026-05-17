@@ -6,6 +6,7 @@ import 'package:fulfilled/data/api_client.dart';
 import 'package:fulfilled/domain/log_entry.dart';
 import 'package:fulfilled/domain/meal.dart';
 import 'package:fulfilled/domain/nutrition.dart';
+import 'package:fulfilled/domain/unit.dart';
 import 'package:fulfilled/features/quick_add/quick_add_sheet.dart';
 import 'package:fulfilled/providers/repository_providers.dart';
 import 'package:fulfilled/repositories/food_repository.dart';
@@ -69,7 +70,8 @@ Widget _bodyHarness({
 }
 
 _CapturingLogRepository _buildRepo() {
-  final api = ApiClient(Dio());
+  final api =
+      ApiClient(Dio(), baseUrl: 'https://test.example/api/v1');
   return _CapturingLogRepository(
     api: api,
     foodRepository: FoodRepository(api),
@@ -143,8 +145,11 @@ void main() {
     expect(captured!.servingId, equals('sv_kcal'));
     expect(captured!.meal, equals(Meal.snack));
     expect(captured!.quantity, equals(Decimal.fromInt(105)));
-    expect(captured!.nutritionOverride, isNull,
-        reason: 'macros toggle is collapsed by default, so override is null');
+    // Per Ask 10 LogCreate no longer carries a nutritionOverride field;
+    // the macros toggle just affects what kcal/macros land on the
+    // snapshot via the server. We just confirm the LogCreate fields
+    // wired through.
+    expect(captured!.enteredUnit, equals(Unit.serving));
 
     // The capturing repo received the same payload and surfaced an
     // entry whose snapshot.kcal equals quantity (because the synthetic
@@ -239,12 +244,12 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
 
-    // The captured LogCreate carries the override.
+    // Per Ask 10 LogCreate no longer carries a nutritionOverride field.
+    // The macros land on the snapshot via server-side computation; we
+    // only assert the captured LogCreate has the expected entered_*
+    // fields here.
     expect(captured, isNotNull);
-    expect(captured!.nutritionOverride, isNotNull);
-    expect(captured!.nutritionOverride!.proteinG, equals(Decimal.fromInt(25)));
-    expect(captured!.nutritionOverride!.carbsG, equals(Decimal.fromInt(40)));
-    expect(captured!.nutritionOverride!.fatG, equals(Decimal.fromInt(10)));
+    expect(captured!.foodId, equals('food_quick_add'));
 
     // The repo computed the snapshot using the override: protein
     // override is 25 g per 100 g, quantity is 300 g (300 kcal at 1 g/kcal),
@@ -319,7 +324,8 @@ void main() {
         consumedOn: DateTime(on.year, on.month, on.day),
         meal: meal,
         quantity: q,
-        gramsTotal: q,
+        enteredAmount: q,
+        enteredUnit: Unit.serving,
         nutritionSnapshot: snapshot ??
             NutritionSnapshot(caloriesKcal: q),
         note: null,
@@ -460,6 +466,8 @@ void main() {
           consumedOn: DateTime(2026, 5, 1),
           meal: Meal.snack,
           quantity: Decimal.fromInt(105),
+          enteredAmount: Decimal.fromInt(105),
+          enteredUnit: Unit.serving,
         ));
 
         LogPatch? captured;
@@ -517,6 +525,8 @@ void main() {
         consumedOn: DateTime(2026, 5, 1),
         meal: Meal.snack,
         quantity: Decimal.fromInt(105),
+        enteredAmount: Decimal.fromInt(105),
+        enteredUnit: Unit.serving,
       ));
 
       LogPatch? captured;

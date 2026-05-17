@@ -70,6 +70,9 @@ class _FakeGoalRepository implements GoalRepository {
       throw UnimplementedError('not used in test');
 
   @override
+  Future<void> delete(String id) async {}
+
+  @override
   Future<Goal> create(GoalCreate data) async {
     lastCreate = data;
     return Goal(

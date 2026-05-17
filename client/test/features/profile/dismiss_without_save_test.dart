@@ -23,11 +23,12 @@ import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fulfilled/domain/drafts.dart';
 import 'package:fulfilled/domain/enums.dart';
 import 'package:fulfilled/domain/food.dart';
 import 'package:fulfilled/domain/log_entry.dart';
-import 'package:fulfilled/domain/nutrition.dart';
 import 'package:fulfilled/domain/serving.dart';
+import 'package:fulfilled/domain/unit.dart';
 import 'package:fulfilled/features/custom_food/custom_food_screen.dart';
 import 'package:fulfilled/features/log_entry/log_entry_sheet.dart';
 import 'package:fulfilled/providers/draft_providers.dart';
@@ -44,17 +45,16 @@ Food _testFood() {
     name: 'Test food',
     source: FoodSource.off,
     isCustom: false,
-    nutritionPer100g: NutritionPer100g(
-      energyKcal: Decimal.fromInt(100),
-      proteinG: Decimal.fromInt(10),
-      carbsG: Decimal.fromInt(20),
-      fatG: Decimal.zero,
-    ),
     servings: <Serving>[
       Serving(
         id: 'sv_100g',
-        name: '100 g',
-        grams: Decimal.fromInt(100),
+        label: '100 g',
+        amount: Decimal.fromInt(100),
+        unit: Unit.g,
+        kcal: Decimal.fromInt(100),
+        proteinG: Decimal.fromInt(10),
+        carbsG: Decimal.fromInt(20),
+        fatG: Decimal.zero,
         isDefault: true,
         source: ServingSource.user,
       ),
@@ -125,7 +125,15 @@ void main() {
       );
       final notifier = container.read(customFoodDraftProvider.notifier);
       notifier.setName('Stash this');
-      notifier.setEnergyKcal(Decimal.fromInt(123));
+      notifier.setServings(<DraftServing>[
+        DraftServing(
+          label: '100 g',
+          amount: Decimal.fromInt(100),
+          unit: Unit.g,
+          kcal: Decimal.fromInt(123),
+          isDefault: true,
+        ),
+      ]);
       await tester.pump();
 
       // Tap Cancel — a dirty draft triggers the destructive confirm
@@ -136,10 +144,11 @@ void main() {
       await tester.tap(find.text('Keep editing'));
       await tester.pumpAndSettle();
 
-      // Draft survives — name + kcal still present.
+      // Draft survives — name + servings still present.
       final after = container.read(customFoodDraftProvider);
       expect(after.name, equals('Stash this'));
-      expect(after.energyKcal, equals(Decimal.fromInt(123)));
+      expect(after.servings, hasLength(1));
+      expect(after.servings.first.kcal, equals(Decimal.fromInt(123)));
     },
   );
 

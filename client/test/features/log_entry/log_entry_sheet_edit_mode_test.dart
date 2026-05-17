@@ -8,8 +8,11 @@ import 'package:fulfilled/domain/log_entry.dart';
 import 'package:fulfilled/domain/meal.dart';
 import 'package:fulfilled/domain/nutrition.dart';
 import 'package:fulfilled/domain/serving.dart';
+import 'package:fulfilled/domain/unit.dart';
 import 'package:fulfilled/features/log_entry/log_entry_sheet.dart';
 import 'package:fulfilled/providers/repository_providers.dart';
+import 'package:fulfilled/repositories/food_repository.dart';
+import 'package:fulfilled/repositories/goal_repository.dart';
 import 'package:fulfilled/repositories/log_repository.dart';
 import 'package:fulfilled/routing/routes.dart';
 import 'package:fulfilled/theme/theme_data.dart';
@@ -30,25 +33,29 @@ Food _testFood() {
     isCustom: false,
     qualityScore: null,
     nutriscore: null,
-    nutritionPer100g: NutritionPer100g(
-      energyKcal: Decimal.fromInt(100),
-      proteinG: Decimal.fromInt(10),
-      carbsG: Decimal.fromInt(20),
-      fatG: Decimal.zero,
-    ),
     servings: <Serving>[
       Serving(
         id: 'sv_100g',
-        name: '100 g',
-        grams: Decimal.fromInt(100),
+        label: '100 g',
+        amount: Decimal.fromInt(100),
+        unit: Unit.g,
+        kcal: Decimal.fromInt(100),
+        proteinG: Decimal.fromInt(10),
+        carbsG: Decimal.fromInt(20),
+        fatG: Decimal.zero,
         isDefault: true,
         source: ServingSource.user,
         sortOrder: 0,
       ),
       Serving(
         id: 'sv_50g',
-        name: '50 g',
-        grams: Decimal.fromInt(50),
+        label: '50 g',
+        amount: Decimal.fromInt(50),
+        unit: Unit.g,
+        kcal: Decimal.fromInt(50),
+        proteinG: Decimal.fromInt(5),
+        carbsG: Decimal.fromInt(10),
+        fatG: Decimal.zero,
         isDefault: false,
         source: ServingSource.user,
         sortOrder: 1,
@@ -80,7 +87,8 @@ LogEntry _existingEntry({
     consumedOn: DateTime(on.year, on.month, on.day),
     meal: meal,
     quantity: q,
-    gramsTotal: Decimal.fromInt(servingId == 'sv_50g' ? 50 : 100) * q,
+    enteredAmount: Decimal.fromInt(servingId == 'sv_50g' ? 50 : 100) * q,
+    enteredUnit: Unit.g,
     nutritionSnapshot: NutritionSnapshot(
       caloriesKcal: Decimal.fromInt(75),
     ),
@@ -122,7 +130,9 @@ class _RecordingLogRepository extends LogRepository {
     // before we got to compare assertions. Return an arbitrary entry;
     // the sheet only forwards it to `Navigator.pop`, which the test
     // ignores.
-    return _stubReturn ?? throw StateError('no stub return configured');
+    final stub = _stubReturn;
+    if (stub == null) throw StateError('no stub return configured');
+    return stub;
   }
 
   /// What [update] returns on the happy path. Set per-test if the

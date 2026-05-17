@@ -197,6 +197,8 @@ void main() {
         consumedOn: sundayThisWeek,
         meal: Meal.dinner,
         quantity: Decimal.one,
+        enteredAmount: serving.amount,
+        enteredUnit: serving.unit,
       ));
 
       // The provider's next read picks up the new day — this is what

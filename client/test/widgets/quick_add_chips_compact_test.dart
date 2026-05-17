@@ -24,8 +24,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fulfilled/domain/enums.dart';
 import 'package:fulfilled/domain/food.dart';
-import 'package:fulfilled/domain/nutrition.dart';
 import 'package:fulfilled/domain/serving.dart';
+import 'package:fulfilled/domain/unit.dart';
 import 'package:fulfilled/theme/theme_data.dart';
 import 'package:fulfilled/widgets/quick_add_chips.dart';
 import 'package:go_router/go_router.dart';
@@ -36,14 +36,15 @@ Food _food(String id, String name) {
     name: name,
     source: FoodSource.user,
     isCustom: true,
-    nutritionPer100g: NutritionPer100g(energyKcal: Decimal.fromInt(100)),
     servings: <Serving>[
       Serving(
         id: '${id}_s',
-        name: '1 serving (100 g)',
-        grams: Decimal.fromInt(100),
+        label: '1 serving (100 g)',
+        amount: Decimal.fromInt(100),
+        unit: Unit.g,
+        kcal: Decimal.fromInt(100),
         isDefault: true,
-        source: ServingSource.system,
+        source: ServingSource.user,
       ),
     ],
   );

@@ -9,11 +9,12 @@ import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fulfilled/domain/drafts.dart';
 import 'package:fulfilled/domain/enums.dart';
 import 'package:fulfilled/domain/food.dart';
 import 'package:fulfilled/domain/food_patch.dart';
-import 'package:fulfilled/domain/nutrition.dart';
 import 'package:fulfilled/domain/serving.dart';
+import 'package:fulfilled/domain/unit.dart';
 import 'package:fulfilled/features/custom_food/custom_food_screen.dart';
 import 'package:fulfilled/providers/draft_providers.dart';
 import 'package:fulfilled/providers/repository_providers.dart';
@@ -61,19 +62,18 @@ Food _seedFood() {
     brand: 'Homemade',
     source: FoodSource.user,
     isCustom: true,
-    nutritionPer100g: NutritionPer100g(
-      energyKcal: Decimal.fromInt(248),
-      proteinG: Decimal.fromInt(14),
-      carbsG: Decimal.fromInt(22),
-      fatG: Decimal.fromInt(13),
-    ),
     servings: <Serving>[
       Serving(
-        id: 'sv_seed_100g',
-        name: '100 g',
-        grams: Decimal.fromInt(100),
+        id: 'sv_seed_slice',
+        label: '1 slice',
+        amount: Decimal.fromInt(220),
+        unit: Unit.g,
+        kcal: Decimal.fromInt(248),
+        proteinG: Decimal.fromInt(14),
+        carbsG: Decimal.fromInt(22),
+        fatG: Decimal.fromInt(13),
         isDefault: true,
-        source: ServingSource.system,
+        source: ServingSource.user,
       ),
     ],
   );
@@ -175,11 +175,19 @@ void main() {
       );
       final notifier = container.read(customFoodDraftProvider.notifier);
       notifier.setName('Retry me');
-      notifier.setEnergyKcal(Decimal.fromInt(100));
-      notifier.setProteinG(Decimal.fromInt(10));
-      notifier.setCarbsG(Decimal.fromInt(20));
-      notifier.setFatG(Decimal.fromInt(5));
-      notifier.setSodiumMg(Decimal.fromInt(150));
+      notifier.setServings(<DraftServing>[
+        DraftServing(
+          label: '100 g',
+          amount: Decimal.fromInt(100),
+          unit: Unit.g,
+          kcal: Decimal.fromInt(100),
+          proteinG: Decimal.fromInt(10),
+          carbsG: Decimal.fromInt(20),
+          fatG: Decimal.fromInt(5),
+          sodiumMg: Decimal.fromInt(150),
+          isDefault: true,
+        ),
+      ]);
       await tester.pump();
 
       // Tap footer Save — repo throws on the first attempt.
@@ -233,7 +241,18 @@ void main() {
       await repo.createCustom(FoodCreate(
         name: existing.name,
         brand: existing.brand,
-        nutrition: existing.nutritionPer100g,
+        servings: <ServingCreate>[
+          ServingCreate(
+            label: existing.servings.first.label,
+            amount: existing.servings.first.amount,
+            unit: existing.servings.first.unit,
+            kcal: existing.servings.first.kcal,
+            proteinG: existing.servings.first.proteinG,
+            carbsG: existing.servings.first.carbsG,
+            fatG: existing.servings.first.fatG,
+            isDefault: true,
+          ),
+        ],
       ));
       // The first call above counted; reset so the assertions focus
       // on screen-driven calls below.

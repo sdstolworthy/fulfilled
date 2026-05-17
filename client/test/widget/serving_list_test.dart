@@ -1,19 +1,21 @@
 import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fulfilled/domain/enums.dart';
-import 'package:fulfilled/domain/nutrition.dart';
 import 'package:fulfilled/domain/serving.dart';
+import 'package:fulfilled/domain/unit.dart';
 import 'package:fulfilled/theme/theme_data.dart';
 import 'package:fulfilled/widgets/serving_list.dart';
 
 /// T-002 — `ServingList` canonical widget (read-only variant).
 ///
 /// Acceptance criteria:
-/// - The synthetic 100 g serving always renders with a `Synthetic` badge
-///   (T-10).
 /// - Tapping a row emits `onSelect(id)`.
 /// - `selectedId` controls the selected visual.
+///
+/// Per Ask 10 the synthetic 100 g serving concept is gone; tests that
+/// asserted on the SYNTHETIC badge are removed.
 Widget _harness(Widget child) {
   return MaterialApp(
     theme: buildLightTheme(),
@@ -21,64 +23,59 @@ Widget _harness(Widget child) {
   );
 }
 
-Serving _synthetic() => Serving(
+Serving _hundredGram() => Serving(
       id: 'sv_100g',
-      name: '100 g',
-      grams: Decimal.fromInt(100),
+      label: '100 g',
+      amount: Decimal.fromInt(100),
+      unit: Unit.g,
+      kcal: Decimal.fromInt(100),
+      proteinG: Decimal.fromInt(10),
+      carbsG: Decimal.fromInt(20),
+      fatG: Decimal.zero,
       isDefault: false,
-      source: ServingSource.system,
+      source: ServingSource.user,
       sortOrder: 0,
     );
 
-Serving _named({required String id, required String name, required int g}) =>
+Serving _named({required String id, required String label, required int g}) =>
     Serving(
       id: id,
-      name: name,
-      grams: Decimal.fromInt(g),
+      label: label,
+      amount: Decimal.fromInt(g),
+      unit: Unit.g,
+      kcal: Decimal.fromInt(g),
       isDefault: false,
       source: ServingSource.off,
       sortOrder: 1,
     );
 
-NutritionPer100g _nutrition() => NutritionPer100g(
-      energyKcal: Decimal.fromInt(100),
-      proteinG: Decimal.fromInt(10),
-      carbsG: Decimal.fromInt(20),
-      fatG: Decimal.zero,
-    );
-
 void main() {
-  testWidgets('synthetic 100 g serving always renders with the badge',
-      (tester) async {
+  testWidgets('single serving renders', (tester) async {
     await tester.pumpWidget(
       _harness(
         ServingList(
-          servings: <Serving>[_synthetic()],
-          nutritionPer100g: _nutrition(),
+          servings: <Serving>[_hundredGram()],
         ),
       ),
     );
 
     expect(find.text('100 g'), findsOneWidget);
-    expect(find.text('SYNTHETIC'), findsOneWidget);
   });
 
-  testWidgets('synthetic + named servings both render', (tester) async {
+  testWidgets('two servings both render', (tester) async {
     await tester.pumpWidget(
       _harness(
         ServingList(
           servings: <Serving>[
-            _synthetic(),
-            _named(id: 'sv_container', name: '1 container', g: 170),
+            _hundredGram(),
+            _named(id: 'sv_container', label: '1 container', g: 170),
           ],
-          nutritionPer100g: _nutrition(),
         ),
       ),
     );
 
     expect(find.text('100 g'), findsOneWidget);
     expect(find.text('1 container'), findsOneWidget);
-    expect(find.text('SYNTHETIC'), findsOneWidget);
   });
 
   testWidgets('tapping a row emits onSelect(id)', (tester) async {
@@ -87,10 +84,9 @@ void main() {
       _harness(
         ServingList(
           servings: <Serving>[
-            _synthetic(),
-            _named(id: 'sv_container', name: '1 container', g: 170),
+            _hundredGram(),
+            _named(id: 'sv_container', label: '1 container', g: 170),
           ],
-          nutritionPer100g: _nutrition(),
           onSelect: (id) => captured = id,
         ),
       ),
@@ -110,10 +106,9 @@ void main() {
       _harness(
         ServingList(
           servings: <Serving>[
-            _synthetic(),
-            _named(id: 'sv_container', name: '1 container', g: 170),
+            _hundredGram(),
+            _named(id: 'sv_container', label: '1 container', g: 170),
           ],
-          nutritionPer100g: _nutrition(),
           selectedId: 'sv_container',
           onSelect: (_) {},
         ),
@@ -122,6 +117,7 @@ void main() {
 
     // The selected row registers as a selected button in the semantics.
     final semantics = tester.getSemantics(find.bySemanticsLabel('1 container'));
+    // ignore: deprecated_member_use
     expect(semantics.hasFlag(SemanticsFlag.isSelected), isTrue);
   });
 
@@ -130,15 +126,13 @@ void main() {
     await tester.pumpWidget(
       _harness(
         ServingList(
-          servings: <Serving>[_synthetic()],
-          nutritionPer100g: _nutrition(),
+          servings: <Serving>[_hundredGram()],
         ),
       ),
     );
 
     // Without `onSelect` the row should not be wrapped in an InkWell —
-    // the read-only food-detail screen relies on this absence so the
-    // synthetic row isn't tappable.
+    // the read-only food-detail screen relies on this absence.
     expect(find.byType(InkWell), findsNothing);
   });
 }

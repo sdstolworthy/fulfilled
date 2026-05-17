@@ -34,6 +34,7 @@ import 'package:fulfilled/domain/log_entry.dart';
 import 'package:fulfilled/domain/meal.dart';
 import 'package:fulfilled/domain/nutrition.dart';
 import 'package:fulfilled/domain/serving.dart';
+import 'package:fulfilled/domain/unit.dart';
 import 'package:fulfilled/features/log_entry/log_entry_sheet.dart';
 import 'package:fulfilled/features/today/today_internals.dart';
 import 'package:fulfilled/providers/food_providers.dart';
@@ -58,17 +59,16 @@ Food _testFood() {
     isCustom: false,
     qualityScore: null,
     nutriscore: null,
-    nutritionPer100g: NutritionPer100g(
-      energyKcal: Decimal.fromInt(100),
-      proteinG: Decimal.fromInt(10),
-      carbsG: Decimal.fromInt(20),
-      fatG: Decimal.zero,
-    ),
     servings: <Serving>[
       Serving(
         id: 'sv_100g',
-        name: '100 g',
-        grams: Decimal.fromInt(100),
+        label: '100 g',
+        amount: Decimal.fromInt(100),
+        unit: Unit.g,
+        kcal: Decimal.fromInt(100),
+        proteinG: Decimal.fromInt(10),
+        carbsG: Decimal.fromInt(20),
+        fatG: Decimal.zero,
         isDefault: true,
         source: ServingSource.user,
         sortOrder: 0,
@@ -87,7 +87,8 @@ LogEntry _entry({String id = 'le_existing', String foodId = 'f_test'}) {
     consumedOn: DateTime(2026, 5, 14),
     meal: Meal.lunch,
     quantity: Decimal.one,
-    gramsTotal: Decimal.fromInt(100),
+    enteredAmount: Decimal.fromInt(100),
+    enteredUnit: Unit.g,
     nutritionSnapshot: NutritionSnapshot(
       caloriesKcal: Decimal.fromInt(100),
     ),
@@ -126,7 +127,8 @@ class _FakeLogRepository extends LogRepository {
   bool isPendingSync(String entryId) => _pending;
 }
 
-ApiClient _buildApi() => ApiClient(Dio());
+ApiClient _buildApi() =>
+    ApiClient(Dio(), baseUrl: 'https://test.example/api/v1');
 
 /// Pump a `MealSection` wired to `editLogEntry` exactly as the day view
 /// wires it in production. The harness lets each test pin
@@ -384,7 +386,8 @@ void main() {
         consumedOn: DateTime(2026, 5, 14),
         meal: Meal.snack,
         quantity: Decimal.fromInt(105),
-        gramsTotal: Decimal.fromInt(105),
+        enteredAmount: Decimal.fromInt(105),
+        enteredUnit: Unit.serving,
         nutritionSnapshot: NutritionSnapshot(
           caloriesKcal: Decimal.fromInt(105),
         ),

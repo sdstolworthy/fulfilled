@@ -24,6 +24,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fulfilled/data/api_client.dart';
 import 'package:fulfilled/domain/log_entry.dart';
 import 'package:fulfilled/domain/meal.dart';
+import 'package:fulfilled/domain/unit.dart';
 import 'package:fulfilled/repositories/_fixtures.dart';
 import 'package:fulfilled/repositories/food_repository.dart';
 import 'package:fulfilled/repositories/goal_repository.dart';
@@ -56,7 +57,8 @@ Map<String, dynamic> _entryBody({
   String consumedOn = '2026-05-17',
   String meal = 'breakfast',
   String quantity = '1.0',
-  String gramsTotal = '50.00',
+  String enteredAmount = '40.00',
+  String enteredUnit = 'g',
   String caloriesKcal = '190.00',
   String? proteinG = '6.50',
   String? note,
@@ -70,7 +72,8 @@ Map<String, dynamic> _entryBody({
       'consumed_on': consumedOn,
       'meal': meal,
       'quantity': quantity,
-      'grams_total': gramsTotal,
+      'entered_amount': enteredAmount,
+      'entered_unit': enteredUnit,
       'calories_kcal': caloriesKcal,
       'protein_g': proteinG,
       'carbs_g': null,
@@ -251,6 +254,8 @@ void main() {
         consumedOn: DateTime(2026, 5, 17),
         meal: Meal.breakfast,
         quantity: Decimal.one,
+        enteredAmount: Decimal.parse('40'),
+        enteredUnit: Unit.g,
       ));
 
       expect(h.adapter.requests.single.method, equalsIgnoringCase('POST'));
@@ -283,6 +288,8 @@ void main() {
         consumedOn: DateTime(2026, 5, 17),
         meal: Meal.snack,
         quantity: Decimal.parse('250'),
+        enteredAmount: Decimal.parse('250'),
+        enteredUnit: Unit.serving,
       ));
 
       expect(capturedPath, equals('/log/quick_add'));
@@ -308,6 +315,8 @@ void main() {
         consumedOn: DateTime(2026, 5, 17),
         meal: Meal.breakfast,
         quantity: Decimal.one,
+        enteredAmount: Decimal.parse('40'),
+        enteredUnit: Unit.g,
       ));
       expect(entry.id, equals('le_new'));
       expect(entry.nutritionSnapshot.caloriesKcal,
@@ -324,6 +333,8 @@ void main() {
           consumedOn: DateTime(2026, 5, 17),
           meal: Meal.breakfast,
           quantity: Decimal.one,
+          enteredAmount: Decimal.parse('40'),
+          enteredUnit: Unit.g,
         )),
         throwsA(isA<DioException>()),
       );

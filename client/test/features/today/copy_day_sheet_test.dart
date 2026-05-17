@@ -22,6 +22,7 @@ import 'package:fulfilled/data/api_client.dart';
 import 'package:fulfilled/domain/log_entry.dart';
 import 'package:fulfilled/domain/meal.dart';
 import 'package:fulfilled/domain/nutrition.dart';
+import 'package:fulfilled/domain/unit.dart';
 import 'package:fulfilled/features/today/widgets/copy_day_sheet.dart';
 import 'package:fulfilled/providers/repository_providers.dart';
 import 'package:fulfilled/repositories/food_repository.dart';
@@ -102,7 +103,8 @@ class _FakeLogRepository extends LogRepository {
   }
 }
 
-ApiClient _buildApi() => ApiClient(Dio());
+ApiClient _buildApi() =>
+    ApiClient(Dio(), baseUrl: 'https://test.example/api/v1');
 
 LogEntry _entry({
   required String id,
@@ -119,7 +121,8 @@ LogEntry _entry({
     consumedOn: on,
     meal: meal,
     quantity: Decimal.one,
-    gramsTotal: Decimal.fromInt(100),
+    enteredAmount: Decimal.fromInt(100),
+    enteredUnit: Unit.g,
     nutritionSnapshot:
         NutritionSnapshot(caloriesKcal: Decimal.fromInt(kcal)),
     note: null,

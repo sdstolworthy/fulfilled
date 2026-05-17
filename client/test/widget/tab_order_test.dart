@@ -7,8 +7,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fulfilled/domain/enums.dart';
 import 'package:fulfilled/domain/food.dart';
 import 'package:fulfilled/domain/log_entry.dart';
-import 'package:fulfilled/domain/nutrition.dart';
 import 'package:fulfilled/domain/serving.dart';
+import 'package:fulfilled/domain/unit.dart';
 import 'package:fulfilled/features/log_entry/log_entry_sheet.dart';
 import 'package:fulfilled/theme/theme_data.dart';
 
@@ -33,17 +33,16 @@ Food _food() {
     barcode: null,
     source: FoodSource.off,
     isCustom: false,
-    nutritionPer100g: NutritionPer100g(
-      energyKcal: Decimal.fromInt(100),
-      proteinG: Decimal.fromInt(10),
-      carbsG: Decimal.fromInt(20),
-      fatG: Decimal.zero,
-    ),
     servings: <Serving>[
       Serving(
         id: 'sv_100g',
-        name: '100 g',
-        grams: Decimal.fromInt(100),
+        label: '100 g',
+        amount: Decimal.fromInt(100),
+        unit: Unit.g,
+        kcal: Decimal.fromInt(100),
+        proteinG: Decimal.fromInt(10),
+        carbsG: Decimal.fromInt(20),
+        fatG: Decimal.zero,
         isDefault: true,
         source: ServingSource.user,
       ),

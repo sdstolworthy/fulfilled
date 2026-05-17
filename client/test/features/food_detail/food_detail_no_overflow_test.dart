@@ -4,8 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fulfilled/domain/enums.dart';
 import 'package:fulfilled/domain/food.dart';
-import 'package:fulfilled/domain/nutrition.dart';
 import 'package:fulfilled/domain/serving.dart';
+import 'package:fulfilled/domain/unit.dart';
 import 'package:fulfilled/features/food_detail/food_detail_screen.dart';
 import 'package:fulfilled/providers/food_providers.dart';
 import 'package:fulfilled/theme/theme_data.dart';
@@ -69,32 +69,23 @@ Food _yogurt() {
     source: FoodSource.off,
     isCustom: false,
     qualityScore: 86,
-    nutritionPer100g: NutritionPer100g(
-      energyKcal: Decimal.parse('57'),
-      proteinG: Decimal.parse('10.3'),
-      carbsG: Decimal.parse('3.6'),
-      sugarG: Decimal.parse('3.2'),
-      fatG: Decimal.parse('0.2'),
-      saturatedFatG: Decimal.parse('0.1'),
-      fiberG: Decimal.parse('0.0'),
-      sodiumMg: Decimal.parse('36'),
-    ),
     servings: <Serving>[
       Serving(
         id: 's_cup',
-        name: '1 cup',
-        grams: Decimal.parse('227'),
+        label: '1 cup',
+        amount: Decimal.parse('1'),
+        unit: Unit.cup,
+        kcal: Decimal.parse('129'),
+        proteinG: Decimal.parse('23.4'),
+        carbsG: Decimal.parse('8.2'),
+        sugarG: Decimal.parse('7.3'),
+        fatG: Decimal.parse('0.5'),
+        saturatedFatG: Decimal.parse('0.2'),
+        fiberG: Decimal.parse('0.0'),
+        sodiumMg: Decimal.parse('82'),
         isDefault: true,
         source: ServingSource.off,
         sortOrder: 0,
-      ),
-      Serving(
-        id: 's_100g',
-        name: '100 g',
-        grams: Decimal.fromInt(100),
-        isDefault: false,
-        source: ServingSource.system,
-        sortOrder: 99,
       ),
     ],
   );

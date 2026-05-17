@@ -14,6 +14,7 @@ import 'package:fulfilled/domain/day_summary.dart';
 import 'package:fulfilled/domain/log_entry.dart';
 import 'package:fulfilled/domain/meal.dart';
 import 'package:fulfilled/domain/nutrition.dart';
+import 'package:fulfilled/domain/unit.dart';
 import 'package:fulfilled/theme/theme_data.dart';
 import 'package:fulfilled/widgets/meal_section.dart';
 
@@ -26,7 +27,8 @@ LogEntry _quickAddEntry(int kcal) => LogEntry(
       consumedOn: DateTime(2026, 5, 14),
       meal: Meal.snack,
       quantity: Decimal.fromInt(kcal),
-      gramsTotal: Decimal.fromInt(kcal),
+      enteredAmount: Decimal.fromInt(kcal),
+      enteredUnit: Unit.serving,
       nutritionSnapshot:
           NutritionSnapshot(caloriesKcal: Decimal.fromInt(kcal)),
       createdAt: DateTime(2026, 5, 14, 15),
@@ -42,7 +44,8 @@ LogEntry _regularEntry() => LogEntry(
       consumedOn: DateTime(2026, 5, 14),
       meal: Meal.snack,
       quantity: Decimal.one,
-      gramsTotal: Decimal.fromInt(182),
+      enteredAmount: Decimal.fromInt(182),
+      enteredUnit: Unit.g,
       nutritionSnapshot:
           NutritionSnapshot(caloriesKcal: Decimal.fromInt(95)),
       createdAt: DateTime(2026, 5, 14, 15),

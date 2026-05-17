@@ -5,8 +5,8 @@ import 'package:go_router/go_router.dart';
 
 import 'package:fulfilled/domain/enums.dart';
 import 'package:fulfilled/domain/food.dart';
-import 'package:fulfilled/domain/nutrition.dart';
 import 'package:fulfilled/domain/serving.dart';
+import 'package:fulfilled/domain/unit.dart';
 import 'package:fulfilled/features/search/widgets/search_result_row.dart';
 import 'package:fulfilled/theme/theme_data.dart';
 
@@ -31,16 +31,15 @@ Food _food({
     brand: brand,
     source: FoodSource.off,
     isCustom: false,
-    nutritionPer100g: NutritionPer100g(
-      energyKcal: Decimal.fromInt(kcal),
-    ),
     servings: <Serving>[
       Serving(
         id: 'sv_1',
-        name: servingLabel,
-        grams: Decimal.fromInt(170),
+        label: servingLabel,
+        amount: Decimal.fromInt(170),
+        unit: Unit.g,
+        kcal: Decimal.fromInt(kcal),
         isDefault: true,
-        source: ServingSource.system,
+        source: ServingSource.off,
       ),
     ],
   );

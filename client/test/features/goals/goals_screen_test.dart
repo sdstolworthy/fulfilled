@@ -92,6 +92,12 @@ class _RecordingGoalRepository implements GoalRepository {
   Future<List<Goal>> all() async => _all;
 
   @override
+  Future<Goal> update(Goal goal) async => goal;
+
+  @override
+  Future<void> delete(String id) async {}
+
+  @override
   Future<Goal> create(GoalCreate data) async {
     createCalls.add(data);
     final now = DateTime.now();

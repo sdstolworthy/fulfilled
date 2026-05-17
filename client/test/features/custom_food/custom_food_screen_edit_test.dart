@@ -16,8 +16,8 @@ import 'package:fulfilled/domain/drafts.dart';
 import 'package:fulfilled/domain/enums.dart';
 import 'package:fulfilled/domain/food.dart';
 import 'package:fulfilled/domain/food_patch.dart';
-import 'package:fulfilled/domain/nutrition.dart';
 import 'package:fulfilled/domain/serving.dart';
+import 'package:fulfilled/domain/unit.dart';
 import 'package:fulfilled/features/custom_food/custom_food_screen.dart';
 import 'package:fulfilled/providers/draft_providers.dart';
 import 'package:fulfilled/providers/repository_providers.dart';
@@ -58,20 +58,19 @@ Food _seedFood({
     barcode: barcode,
     source: FoodSource.user,
     isCustom: true,
-    nutritionPer100g: NutritionPer100g(
-      energyKcal: Decimal.fromInt(248),
-      proteinG: Decimal.fromInt(14),
-      carbsG: Decimal.fromInt(22),
-      fatG: Decimal.fromInt(13),
-      sodiumMg: Decimal.fromInt(410),
-    ),
     servings: <Serving>[
       Serving(
-        id: 'sv_seed_100g',
-        name: '100 g',
-        grams: Decimal.fromInt(100),
+        id: 'sv_seed_slice',
+        label: '1 slice',
+        amount: Decimal.fromInt(220),
+        unit: Unit.g,
+        kcal: Decimal.fromInt(248),
+        proteinG: Decimal.fromInt(14),
+        carbsG: Decimal.fromInt(22),
+        fatG: Decimal.fromInt(13),
+        sodiumMg: Decimal.fromInt(410),
         isDefault: true,
-        source: ServingSource.system,
+        source: ServingSource.user,
         sortOrder: 0,
       ),
     ],
@@ -160,11 +159,15 @@ void main() {
 
       expect(draft.name, food.name);
       expect(draft.brand, food.brand);
-      expect(draft.energyKcal, food.nutritionPer100g.energyKcal);
-      expect(draft.proteinG, food.nutritionPer100g.proteinG);
-      expect(draft.carbsG, food.nutritionPer100g.carbsG);
-      expect(draft.fatG, food.nutritionPer100g.fatG);
-      expect(draft.sodiumMg, food.nutritionPer100g.sodiumMg);
+      // Each draft serving mirrors the seeded food's serving.
+      expect(draft.servings, hasLength(food.servings.length));
+      final ds = draft.servings.first;
+      final fs = food.servings.first;
+      expect(ds.kcal, fs.kcal);
+      expect(ds.proteinG, fs.proteinG);
+      expect(ds.carbsG, fs.carbsG);
+      expect(ds.fatG, fs.fatG);
+      expect(ds.sodiumMg, fs.sodiumMg);
     },
   );
 
@@ -233,16 +236,20 @@ void main() {
       );
       final notifier = container.read(customFoodDraftProvider.notifier);
 
-      // Mutate only the energy figure — name + brand + macros + sodium
-      // are untouched. The emitted patch should carry only the
-      // nutrition field; name / brands / barcode / servings must all
+      // Mutate only the first serving's kcal. The emitted patch should
+      // carry only the servings field; name / brands / barcode must all
       // be omitted.
-      notifier.setEnergyKcal(Decimal.fromInt(300));
+      final existingServing = container.read(customFoodDraftProvider).servings.first;
+      notifier.updateServingAt(
+        0,
+        existingServing.copyWith(kcal: Decimal.fromInt(300)),
+      );
       await tester.pumpAndSettle();
 
       repo.toReturn = food.copyWith(
-        nutritionPer100g: food.nutritionPer100g
-            .copyWith(energyKcal: Decimal.fromInt(300)),
+        servings: <Serving>[
+          food.servings.first.copyWith(kcal: Decimal.fromInt(300)),
+        ],
       );
       await tester.tap(find.text('Save changes').last);
       await tester.pumpAndSettle();
@@ -254,12 +261,8 @@ void main() {
       expect(patch.barcode, isNull);
       expect(patch.clearBrand, isFalse);
       expect(patch.clearBarcode, isFalse);
-      expect(patch.servings, isNull);
-      expect(patch.nutritionPer100g, isNotNull);
-      expect(
-        patch.nutritionPer100g!.energyKcal,
-        Decimal.fromInt(300),
-      );
+      expect(patch.servings, isNotNull);
+      expect(patch.servings!.first.kcal, Decimal.fromInt(300));
 
       // Defence-in-depth: serialized JSON must never carry food_id.
       expect(patch.toJson().containsKey('food_id'), isFalse);
@@ -286,7 +289,6 @@ void main() {
         name: food.name,
         source: FoodSource.user,
         isCustom: true,
-        nutritionPer100g: food.nutritionPer100g,
         servings: food.servings,
       );
       await tester.tap(find.text('Save changes').last);

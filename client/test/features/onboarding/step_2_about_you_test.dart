@@ -1,5 +1,6 @@
 import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fulfilled/domain/enums.dart';
@@ -70,6 +71,9 @@ class _FakeGoalRepository implements GoalRepository {
   @override
   Future<Goal> update(Goal goal) async =>
       throw UnimplementedError('not used in test');
+
+  @override
+  Future<void> delete(String id) async {}
 
   @override
   Future<Goal> create(GoalCreate data) async {

@@ -4,8 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fulfilled/domain/enums.dart';
 import 'package:fulfilled/domain/food.dart';
-import 'package:fulfilled/domain/nutrition.dart';
 import 'package:fulfilled/domain/serving.dart';
+import 'package:fulfilled/domain/unit.dart';
 import 'package:fulfilled/features/my_foods/my_foods_screen.dart';
 import 'package:fulfilled/features/search/widgets/search_result_row.dart';
 import 'package:fulfilled/providers/food_providers.dart';
@@ -31,14 +31,15 @@ Food _userFood({required String id, required String name, int kcal = 120}) {
     name: name,
     source: FoodSource.user,
     isCustom: true,
-    nutritionPer100g: NutritionPer100g(energyKcal: Decimal.fromInt(kcal)),
     servings: <Serving>[
       Serving(
         id: '${id}_s100',
-        name: '1 serving (100 g)',
-        grams: Decimal.fromInt(100),
+        label: '1 serving (100 g)',
+        amount: Decimal.fromInt(100),
+        unit: Unit.g,
+        kcal: Decimal.fromInt(kcal),
         isDefault: true,
-        source: ServingSource.system,
+        source: ServingSource.user,
       ),
     ],
   );
@@ -239,14 +240,15 @@ void main() {
         name: 'Public food',
         source: FoodSource.off,
         isCustom: false,
-        nutritionPer100g: NutritionPer100g(energyKcal: Decimal.fromInt(100)),
         servings: <Serving>[
           Serving(
             id: 'sv_off_100g',
-            name: '100 g',
-            grams: Decimal.fromInt(100),
+            label: '100 g',
+            amount: Decimal.fromInt(100),
+            unit: Unit.g,
+            kcal: Decimal.fromInt(100),
             isDefault: true,
-            source: ServingSource.system,
+            source: ServingSource.off,
           ),
         ],
       );

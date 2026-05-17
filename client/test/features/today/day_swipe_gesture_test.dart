@@ -29,6 +29,7 @@ import 'package:fulfilled/domain/log_entry.dart';
 import 'package:fulfilled/domain/meal.dart';
 import 'package:fulfilled/domain/nutrition.dart';
 import 'package:fulfilled/domain/serving.dart';
+import 'package:fulfilled/domain/unit.dart';
 import 'package:fulfilled/domain/weight.dart';
 import 'package:fulfilled/features/today/today_internals.dart';
 import 'package:fulfilled/features/today/today_screen.dart';
@@ -83,7 +84,8 @@ LogEntry _entry(DateTime consumedOn, String name, Meal meal, int kcal) {
     consumedOn: consumedOn,
     meal: meal,
     quantity: Decimal.one,
-    gramsTotal: Decimal.fromInt(100),
+    enteredAmount: Decimal.fromInt(100),
+    enteredUnit: Unit.g,
     nutritionSnapshot: NutritionSnapshot(
       caloriesKcal: Decimal.fromInt(kcal),
     ),
@@ -97,14 +99,15 @@ Food _food(String id) => Food(
       name: id,
       source: FoodSource.off,
       isCustom: false,
-      nutritionPer100g: NutritionPer100g(energyKcal: Decimal.fromInt(100)),
       servings: <Serving>[
         Serving(
           id: '${id}_s',
-          name: '1 serving',
-          grams: Decimal.fromInt(100),
+          label: '1 serving',
+          amount: Decimal.fromInt(100),
+          unit: Unit.g,
+          kcal: Decimal.fromInt(100),
           isDefault: true,
-          source: ServingSource.system,
+          source: ServingSource.off,
         ),
       ],
     );

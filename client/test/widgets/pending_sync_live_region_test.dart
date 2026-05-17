@@ -28,6 +28,7 @@ import 'package:fulfilled/domain/enums.dart';
 import 'package:fulfilled/domain/log_entry.dart';
 import 'package:fulfilled/domain/meal.dart';
 import 'package:fulfilled/domain/nutrition.dart';
+import 'package:fulfilled/domain/unit.dart';
 import 'package:fulfilled/theme/theme_data.dart';
 import 'package:fulfilled/widgets/meal_section.dart';
 
@@ -40,7 +41,8 @@ LogEntry _entry() => LogEntry(
       consumedOn: DateTime(2026, 5, 14),
       meal: Meal.lunch,
       quantity: Decimal.one,
-      gramsTotal: Decimal.fromInt(170),
+      enteredAmount: Decimal.fromInt(170),
+      enteredUnit: Unit.g,
       nutritionSnapshot: NutritionSnapshot(
         caloriesKcal: Decimal.fromInt(120),
       ),
