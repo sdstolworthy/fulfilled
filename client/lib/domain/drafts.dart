@@ -1,107 +1,67 @@
 import 'package:decimal/decimal.dart';
 
 import 'enums.dart';
-import 'nutrition.dart';
+import 'unit.dart';
 
-/// Draft for screen 05 — custom food creation. Mirrors the eventual
-/// `FoodCreate` payload but with everything optional so the form can be
-/// filled incrementally and validated at the leaf.
+/// Draft for screen 05 — custom food creation. Per Ask 10 the
+/// per-100g nutrition panel is gone; nutrition lives on each
+/// [DraftServing] instead. The form is a list of servings plus
+/// identity metadata (name, brand, barcode).
 ///
-/// `servings` carries label + grams pairs; the 100 g system serving is
-/// auto-seeded server-side so the draft does not include it (gotcha in
-/// architecture §9 screen 05).
-///
-/// Validation lives on this class — `errors` returns a list of
-/// per-field error codes. The sticky footer copy ("Fix N errors") reads
-/// `errors.length`.
+/// Validation: at least one serving with a positive amount + non-null
+/// kcal is required. Each serving's required fields are validated on
+/// the serving itself. The footer "Fix N errors" reads `errors.length`.
 class CustomFoodDraft {
   const CustomFoodDraft({
     this.name = '',
     this.brand,
     this.barcode,
-    this.energyKcal,
-    this.proteinG,
-    this.carbsG,
-    this.fatG,
-    this.fiberG,
-    this.sugarG,
-    this.sodiumMg,
-    this.saturatedFatG,
-    this.userServings = const <DraftServing>[],
+    this.servings = const <DraftServing>[],
   });
 
   final String name;
   final String? brand;
   final String? barcode;
 
-  /// Per-100 g nutrition. Required client-side: `energyKcal`, `proteinG`,
-  /// `carbsG`, `fatG` — architecture gotcha "client validation is
-  /// additive". The other fields are optional.
-  final Decimal? energyKcal;
-  final Decimal? proteinG;
-  final Decimal? carbsG;
-  final Decimal? fatG;
-  final Decimal? fiberG;
-  final Decimal? sugarG;
-  final Decimal? sodiumMg;
-  final Decimal? saturatedFatG;
-
-  final List<DraftServing> userServings;
+  /// User-defined servings. At least one is required to save.
+  final List<DraftServing> servings;
 
   CustomFoodDraft copyWith({
     String? name,
     String? brand,
     String? barcode,
-    Decimal? energyKcal,
-    Decimal? proteinG,
-    Decimal? carbsG,
-    Decimal? fatG,
-    Decimal? fiberG,
-    Decimal? sugarG,
-    Decimal? sodiumMg,
-    Decimal? saturatedFatG,
-    List<DraftServing>? userServings,
+    List<DraftServing>? servings,
   }) =>
       CustomFoodDraft(
         name: name ?? this.name,
         brand: brand ?? this.brand,
         barcode: barcode ?? this.barcode,
-        energyKcal: energyKcal ?? this.energyKcal,
-        proteinG: proteinG ?? this.proteinG,
-        carbsG: carbsG ?? this.carbsG,
-        fatG: fatG ?? this.fatG,
-        fiberG: fiberG ?? this.fiberG,
-        sugarG: sugarG ?? this.sugarG,
-        sodiumMg: sodiumMg ?? this.sodiumMg,
-        saturatedFatG: saturatedFatG ?? this.saturatedFatG,
-        userServings: userServings ?? this.userServings,
+        servings: servings ?? this.servings,
       );
 
   /// Codes of missing/invalid fields. Empty when the draft is savable.
+  ///
+  /// Per-row serving errors are surfaced as `serving:<index>:<field>`
+  /// so the editor row can highlight its own bad fields without
+  /// inventing a separate per-row error pipe.
   List<String> get errors {
     final out = <String>[];
     if (name.trim().isEmpty) out.add('name');
-    if (energyKcal == null) out.add('energy_kcal');
-    if (proteinG == null) out.add('protein_g');
-    if (carbsG == null) out.add('carbs_g');
-    if (fatG == null) out.add('fat_g');
+    if (servings.isEmpty) {
+      out.add('servings');
+    } else {
+      for (var i = 0; i < servings.length; i++) {
+        final s = servings[i];
+        if (s.amount == null || s.amount! <= Decimal.zero) {
+          out.add('serving:$i:amount');
+        }
+        if (s.kcal == null) out.add('serving:$i:kcal');
+      }
+    }
     return out;
   }
 
   bool get isValid => errors.isEmpty;
-
-  /// Snapshot the draft as the wire-shaped `NutritionPer100g`. Missing
-  /// macros become null; the caller is expected to gate on [isValid].
-  NutritionPer100g toNutrition() => NutritionPer100g(
-        energyKcal: energyKcal,
-        proteinG: proteinG,
-        carbsG: carbsG,
-        fatG: fatG,
-        fiberG: fiberG,
-        sugarG: sugarG,
-        sodiumMg: sodiumMg,
-        saturatedFatG: saturatedFatG,
-      );
 
   @override
   bool operator ==(Object other) =>
@@ -110,7 +70,87 @@ class CustomFoodDraft {
           other.name == name &&
           other.brand == brand &&
           other.barcode == barcode &&
-          other.energyKcal == energyKcal &&
+          _servingListEq(other.servings, servings);
+
+  @override
+  int get hashCode => Object.hash(
+        name,
+        brand,
+        barcode,
+        Object.hashAll(servings),
+      );
+}
+
+/// In-progress serving row in the custom-food form. Not a `Serving` —
+/// no id yet (the server allocates it on POST). Fields are nullable so
+/// a freshly-added row starts empty; `CustomFoodDraft.errors` flags
+/// any row that's still missing required fields at save time.
+class DraftServing {
+  const DraftServing({
+    this.label,
+    this.amount,
+    this.unit = Unit.g,
+    this.kcal,
+    this.proteinG,
+    this.carbsG,
+    this.fatG,
+    this.fiberG,
+    this.sugarG,
+    this.sodiumMg,
+    this.saturatedFatG,
+    this.isDefault = false,
+  });
+
+  final String? label;
+  final Decimal? amount;
+  final Unit unit;
+  final Decimal? kcal;
+  final Decimal? proteinG;
+  final Decimal? carbsG;
+  final Decimal? fatG;
+  final Decimal? fiberG;
+  final Decimal? sugarG;
+  final Decimal? sodiumMg;
+  final Decimal? saturatedFatG;
+  final bool isDefault;
+
+  DraftServing copyWith({
+    String? label,
+    Decimal? amount,
+    Unit? unit,
+    Decimal? kcal,
+    Decimal? proteinG,
+    Decimal? carbsG,
+    Decimal? fatG,
+    Decimal? fiberG,
+    Decimal? sugarG,
+    Decimal? sodiumMg,
+    Decimal? saturatedFatG,
+    bool? isDefault,
+  }) =>
+      DraftServing(
+        label: label ?? this.label,
+        amount: amount ?? this.amount,
+        unit: unit ?? this.unit,
+        kcal: kcal ?? this.kcal,
+        proteinG: proteinG ?? this.proteinG,
+        carbsG: carbsG ?? this.carbsG,
+        fatG: fatG ?? this.fatG,
+        fiberG: fiberG ?? this.fiberG,
+        sugarG: sugarG ?? this.sugarG,
+        sodiumMg: sodiumMg ?? this.sodiumMg,
+        saturatedFatG: saturatedFatG ?? this.saturatedFatG,
+        isDefault: isDefault ?? this.isDefault,
+      );
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is DraftServing &&
+          other.label == label &&
+          other.amount == amount &&
+          other.unit == unit &&
+          other.kcal == kcal &&
           other.proteinG == proteinG &&
           other.carbsG == carbsG &&
           other.fatG == fatG &&
@@ -118,14 +158,14 @@ class CustomFoodDraft {
           other.sugarG == sugarG &&
           other.sodiumMg == sodiumMg &&
           other.saturatedFatG == saturatedFatG &&
-          _servingListEq(other.userServings, userServings);
+          other.isDefault == isDefault;
 
   @override
   int get hashCode => Object.hash(
-        name,
-        brand,
-        barcode,
-        energyKcal,
+        label,
+        amount,
+        unit,
+        kcal,
         proteinG,
         carbsG,
         fatG,
@@ -133,24 +173,8 @@ class CustomFoodDraft {
         sugarG,
         sodiumMg,
         saturatedFatG,
-        Object.hashAll(userServings),
+        isDefault,
       );
-}
-
-/// In-progress serving row in the custom-food form. Not a `Serving` —
-/// no id yet (the server allocates it on POST).
-class DraftServing {
-  const DraftServing({required this.label, required this.grams});
-  final String label;
-  final Decimal grams;
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is DraftServing && other.label == label && other.grams == grams;
-
-  @override
-  int get hashCode => Object.hash(label, grams);
 }
 
 bool _servingListEq(List<DraftServing> a, List<DraftServing> b) {
@@ -198,20 +222,7 @@ class OnboardingDraft {
   final Decimal? rateKgPerWeek;
   final Decimal? targetWeightKg;
 
-  /// User-chosen display unit during onboarding. `null` means "no
-  /// explicit selection yet — fall back to
-  /// `defaultWeightUnitForLocale()` at read time". Set by step 2's
-  /// chooser the moment the user taps a segment (LU-008); read by
-  /// `onboardingWeightUnitProvider` (LU-006) and persisted at final
-  /// submit time alongside the rest of the profile patch.
   final WeightUnit? weightUnit;
-
-  /// User-chosen height display unit during onboarding. Mirror of
-  /// [weightUnit]. `null` means "no explicit selection yet — fall back
-  /// to the locale default at read time". Set by step 2's height
-  /// chooser once that widget lands (QL-104); read by
-  /// `onboardingHeightUnitProvider` (added by QL-104) and persisted at
-  /// final submit alongside the rest of the profile patch.
   final HeightUnit? heightUnit;
 
   OnboardingDraft copyWith({

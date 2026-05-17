@@ -5,47 +5,52 @@ import '../data/api_client.dart';
 import '../domain/enums.dart';
 import '../domain/food.dart';
 import '../domain/food_patch.dart';
-import '../domain/nutrition.dart';
 import '../domain/serving.dart';
+import '../domain/unit.dart';
+import '_fixtures.dart' as fx;
+
+/// Per Ask 10 the FE is racing ahead of the BE reshape — until the
+/// server emits the new `Serving` shape (amount + unit + per-serving
+/// nutrition), the repository serves seeded fixtures and the Dio
+/// surface below is dormant. Flip to `false` once the live API lands.
+const bool kUseFixtures = true;
 
 /// Read + write surface for the `Food` and `Serving` resources. Mirrors
 /// the `/foods/*` + `/servings/*` paths in `specs/openapi.yaml`.
 ///
-/// **List endpoints return `FoodSearchHit`, callers expect `Food`.** The
-/// openapi `/foods/search`, `/foods/mine`, `/foods/recent`,
-/// `/foods/frequent` endpoints return the slim `FoodSearchHit` shape
-/// (id + name + brand + barcode + default_serving preview + per-serving
-/// kcal). Every list-bound widget reads `Food`, so this repository
-/// projects each hit into a [Food] with a single synthetic default
-/// serving and an [NutritionPer100g] back-computed so
-/// [Food.caloriesPerDefaultServing] reproduces the wire
-/// `calories_per_serving` value. Screens that need full nutrition or the
-/// full serving list re-fetch via [get] (→ `foodDetailProvider`).
+/// **Fixture mode (Ask 10 stopgap).** When [kUseFixtures] is true, every
+/// public method short-circuits against an in-memory store seeded from
+/// [fx.buildSeedFoods]. Writes mutate the store; reads return projections
+/// from it. This lets the FE editor + log-entry flows run end-to-end
+/// against the new per-serving shape ahead of the BE landing.
 ///
-/// **Pagination envelope.** `/foods/search` and `/foods/mine` use the
-/// `PaginatedFoodSearchHits` envelope (`{results, total, limit,
-/// offset}`); `/foods/recent` and `/foods/frequent` are flat arrays.
-/// Per the Ask 6 watch-out, callers advance `offset` by
-/// `results.length` rather than by the requested `limit`.
-///
-/// **`byBarcode` returns `Food?`.** A 404 from `/foods/barcode/{barcode}`
-/// is the "no food known for that barcode" path — expected, not
-/// exceptional — and surfaces as `null`. Other resource-not-found errors
-/// (`get`, `updateCustom`, `addServing`) keep the throw-an-exception
-/// shape via [FoodNotFoundError].
+/// **Live-API mode.** The Dio-backed paths below are preserved verbatim
+/// (modulo type updates) so we can flip the flag the moment the BE
+/// emits the new shape. Pagination, decoders, error mapping all stay.
 class FoodRepository {
-  FoodRepository(this._api);
+  FoodRepository(this._api) {
+    if (kUseFixtures) _seedFixtureStore();
+  }
 
   final ApiClient _api;
 
-  /// Per-instance cache of `Food` rows we've already seen. Populated by
-  /// every successful read; consulted by [lookup] (sync) and
-  /// [prefetchByIds] (async batch-fill). Drives the FE-side join in
-  /// `LogRepository._decodeEntryWithDenorm` so the day-view shows food
-  /// names while we wait for Ask 9 (server-side denormalization) to
-  /// land. Once `LogEntry` carries `food_name` on the wire this cache
-  /// becomes informational — the entry already has the name.
+  /// In-memory store used when [kUseFixtures] is true. Mutated by
+  /// writes; read by every list/get call. Reset between widget tests
+  /// via [resetForTesting].
+  final List<Food> _store = <Food>[];
+
+  /// Per-instance cache populated by every successful read; consulted
+  /// by [lookup]. Retained behind [kUseFixtures] so live-mode rollback
+  /// remains drop-in.
   final Map<String, Food> _byIdCache = <String, Food>{};
+
+  void _seedFixtureStore() {
+    if (_store.isNotEmpty) return;
+    _store.addAll(fx.buildSeedFoods());
+    for (final f in _store) {
+      _byIdCache[f.id] = f;
+    }
+  }
 
   void _remember(Food food) {
     _byIdCache[food.id] = food;
@@ -53,14 +58,23 @@ class FoodRepository {
 
   // -------- Reads --------
 
-  /// `GET /foods/search?q=...&limit=&offset=`. Returns the decoded
-  /// `results` page. The server clamps `limit` above 500 and rejects an
-  /// empty `q` with 400.
   Future<List<Food>> search(
     String query, {
     int limit = 25,
     int offset = 0,
   }) async {
+    if (kUseFixtures) {
+      final q = query.trim().toLowerCase();
+      final hits = _store
+          .where((f) =>
+              f.id != fx.quickAddFoodId &&
+              (q.isEmpty ||
+                  f.name.toLowerCase().contains(q) ||
+                  (f.brand?.toLowerCase().contains(q) ?? false)))
+          .toList()
+        ..sort((a, b) => a.name.compareTo(b.name));
+      return hits.skip(offset).take(limit).toList();
+    }
     final resp = await _api.dio.get<dynamic>(
       '/foods/search',
       queryParameters: <String, dynamic>{
@@ -72,8 +86,14 @@ class FoodRepository {
     return _decodePaginatedHits(resp.data);
   }
 
-  /// `GET /foods/mine` — the caller's `source == user` foods.
   Future<List<Food>> mine({int limit = 100, int offset = 0}) async {
+    if (kUseFixtures) {
+      final hits = _store
+          .where((f) => f.source == FoodSource.user && f.id != fx.quickAddFoodId)
+          .toList()
+        ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      return hits.skip(offset).take(limit).toList();
+    }
     final resp = await _api.dio.get<dynamic>(
       '/foods/mine',
       queryParameters: <String, dynamic>{
@@ -84,9 +104,14 @@ class FoodRepository {
     return _decodePaginatedHits(resp.data);
   }
 
-  /// `GET /foods/recent?limit=`. Wire returns a flat JSON array of
-  /// [FoodSearchHit]s — no pagination envelope on this endpoint.
   Future<List<Food>> recent({int limit = 8}) async {
+    if (kUseFixtures) {
+      final hits = _store
+          .where((f) => f.id != fx.quickAddFoodId)
+          .toList()
+        ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      return hits.take(limit).toList();
+    }
     final resp = await _api.dio.get<dynamic>(
       '/foods/recent',
       queryParameters: <String, dynamic>{'limit': limit},
@@ -94,9 +119,12 @@ class FoodRepository {
     return _decodeHitArray(resp.data);
   }
 
-  /// `GET /foods/frequent?limit=`. Wire is a flat array; same shape as
-  /// `recent`.
   Future<List<Food>> frequent({int limit = 8}) async {
+    if (kUseFixtures) {
+      // Same projection as recent for fixture mode — the FE only cares
+      // that the list renders; rank-order is irrelevant against seeds.
+      return recent(limit: limit);
+    }
     final resp = await _api.dio.get<dynamic>(
       '/foods/frequent',
       queryParameters: <String, dynamic>{'limit': limit},
@@ -104,10 +132,13 @@ class FoodRepository {
     return _decodeHitArray(resp.data);
   }
 
-  /// `GET /foods/{id}` — full `FoodDetail` including the per-100 g
-  /// nutrition panel and the complete serving list. Throws
-  /// [FoodNotFoundError] on 404.
   Future<Food> get(String id) async {
+    if (kUseFixtures) {
+      final hit = _store.where((f) => f.id == id).toList();
+      if (hit.isEmpty) throw FoodNotFoundError(id);
+      _remember(hit.first);
+      return hit.first;
+    }
     try {
       final resp = await _api.dio.get<dynamic>('/foods/$id');
       final food = Food.fromJson(resp.data as Map<String, dynamic>);
@@ -119,14 +150,14 @@ class FoodRepository {
     }
   }
 
-  /// Batch-fill the per-instance cache with `Food` rows for every `id`
-  /// in [ids] that isn't already cached. Used by
-  /// `LogRepository.entriesForDate` (and friends) to enrich
-  /// `LogEntry.foodName` / `servingName` from the catalog while the
-  /// wire shape doesn't denormalize them (Ask 9). Missing IDs (404) are
-  /// silently skipped — the day-view falls back to the existing empty-
-  /// string render, which is no worse than the current state.
   Future<void> prefetchByIds(Iterable<String> ids) async {
+    if (kUseFixtures) {
+      for (final id in ids) {
+        final hit = _store.where((f) => f.id == id);
+        if (hit.isNotEmpty) _remember(hit.first);
+      }
+      return;
+    }
     final missing = ids.toSet().where((id) => !_byIdCache.containsKey(id));
     if (missing.isEmpty) return;
     await Future.wait(
@@ -137,18 +168,19 @@ class FoodRepository {
           // The food was deleted between log-time and now; the row still
           // has its snapshot kcal/macros — it just won't have a name.
         } on DioException {
-          // Network blip or 5xx — let the next read try again. We do not
-          // want a single food fetch failure to block the whole day view.
+          // Network blip — let the next read try again.
         }
       }),
     );
   }
 
-  /// `GET /foods/barcode/{barcode}`. **404 → null** — there's no food
-  /// known for the barcode is the expected outcome of a scan, not an
-  /// error. Screen 02's barcode flow redirects to `/foods/new?barcode=…`
-  /// on `null`; non-404 errors propagate as [DioException].
   Future<Food?> byBarcode(String barcode) async {
+    if (kUseFixtures) {
+      final hit = _store.where((f) => f.barcode == barcode).toList();
+      if (hit.isEmpty) return null;
+      _remember(hit.first);
+      return hit.first;
+    }
     try {
       final resp = await _api.dio.get<dynamic>('/foods/barcode/$barcode');
       final food = Food.fromJson(resp.data as Map<String, dynamic>);
@@ -162,14 +194,45 @@ class FoodRepository {
 
   // -------- Writes — Food --------
 
-  /// `POST /foods` — create a user-custom food. Server auto-seeds the
-  /// synthetic 100 g system serving and returns the full [FoodDetail].
-  ///
-  /// `@invalidates`
-  /// - `myFoodsProvider` — the new row joins the custom-food library.
-  /// - `customFoodCountProvider` — the `source == user` count ticked.
-  /// - `meProvider` — `User.customFoodCount` is derived from the count.
   Future<Food> createCustom(FoodCreate data) async {
+    if (kUseFixtures) {
+      final servings = <Serving>[];
+      for (var i = 0; i < data.servings.length; i++) {
+        final s = data.servings[i];
+        servings.add(Serving(
+          id: 'sv_${DateTime.now().microsecondsSinceEpoch}_$i',
+          label: s.label,
+          amount: s.amount,
+          unit: s.unit,
+          kcal: s.kcal,
+          proteinG: s.proteinG,
+          carbsG: s.carbsG,
+          fatG: s.fatG,
+          fiberG: s.fiberG,
+          sugarG: s.sugarG,
+          sodiumMg: s.sodiumMg,
+          saturatedFatG: s.saturatedFatG,
+          isDefault: s.isDefault ||
+              (i == 0 && data.servings.every((x) => !x.isDefault)),
+          source: ServingSource.user,
+          sortOrder: i + 1,
+        ));
+      }
+      final food = Food(
+        id: 'f_${DateTime.now().microsecondsSinceEpoch}',
+        createdAt: DateTime.now(),
+        name: data.name,
+        brand: data.brand,
+        barcode: data.barcode,
+        source: FoodSource.user,
+        isCustom: true,
+        servings: servings,
+        categoriesTags: data.categoriesTags,
+      );
+      _store.add(food);
+      _remember(food);
+      return food;
+    }
     final resp = await _api.dio.post<dynamic>(
       '/foods',
       data: data.toJson(),
@@ -177,20 +240,45 @@ class FoodRepository {
     return Food.fromJson(resp.data as Map<String, dynamic>);
   }
 
-  /// `PATCH /foods/{id}` — sparse-by-null update of a user-owned food.
-  /// Throws [FoodNotFoundError] on 404; other DioExceptions propagate.
-  ///
-  /// `food_id` is never on the wire — the [FoodPatch.toJson] contract
-  /// refuses to model one and the guard below catches subclasses.
-  ///
-  /// `@invalidates`
-  /// - `foodDetailProvider(foodId)` — the food's fields and serving
-  ///   list may have shifted.
-  /// - `myFoodsProvider` — display fields (name, brand) surface in
-  ///   the library list.
-  /// - `customFoodCountProvider` / `meProvider` — count is stable, but
-  ///   keep paired with `createCustom` for symmetry.
   Future<Food> updateCustom(String foodId, FoodPatch patch) async {
+    if (kUseFixtures) {
+      final i = _store.indexWhere((f) => f.id == foodId);
+      if (i < 0) throw FoodNotFoundError(foodId);
+      final original = _store[i];
+      final newServings = patch.servings == null
+          ? original.servings
+          : <Serving>[
+              for (var k = 0; k < patch.servings!.length; k++)
+                Serving(
+                  id: 'sv_${DateTime.now().microsecondsSinceEpoch}_$k',
+                  label: patch.servings![k].label,
+                  amount: patch.servings![k].amount!,
+                  unit: patch.servings![k].unit,
+                  kcal: patch.servings![k].kcal!,
+                  proteinG: patch.servings![k].proteinG,
+                  carbsG: patch.servings![k].carbsG,
+                  fatG: patch.servings![k].fatG,
+                  fiberG: patch.servings![k].fiberG,
+                  sugarG: patch.servings![k].sugarG,
+                  sodiumMg: patch.servings![k].sodiumMg,
+                  saturatedFatG: patch.servings![k].saturatedFatG,
+                  isDefault: patch.servings![k].isDefault ||
+                      (k == 0 &&
+                          patch.servings!.every((s) => !s.isDefault)),
+                  source: ServingSource.user,
+                  sortOrder: k + 1,
+                ),
+            ];
+      final updated = original.copyWith(
+        name: patch.name,
+        brand: patch.clearBrand ? null : (patch.brand ?? original.brand),
+        barcode: patch.clearBarcode ? null : (patch.barcode ?? original.barcode),
+        servings: newServings,
+      );
+      _store[i] = updated;
+      _remember(updated);
+      return updated;
+    }
     final body = patch.toJson();
     if (body.containsKey('food_id')) {
       throw StateError(
@@ -209,11 +297,14 @@ class FoodRepository {
     }
   }
 
-  /// `DELETE /foods/{id}`. Returns void on 204. Maps 404 → [FoodNotFoundError].
-  /// Server returns 403 if the food isn't owned by the caller and 409 if
-  /// log entries reference it — those propagate as [DioException] so the
-  /// call site can surface a SnackBar.
   Future<void> deleteCustom(String id) async {
+    if (kUseFixtures) {
+      final i = _store.indexWhere((f) => f.id == id);
+      if (i < 0) throw FoodNotFoundError(id);
+      _store.removeAt(i);
+      _byIdCache.remove(id);
+      return;
+    }
     try {
       await _api.dio.delete<void>('/foods/$id');
     } on DioException catch (e) {
@@ -224,15 +315,38 @@ class FoodRepository {
 
   // -------- Writes — Serving --------
 
-  /// `POST /foods/{food_id}/servings` — append a serving row. Server
-  /// fills in `id`, normalises `sort_order`, and assigns the requested
-  /// `is_default` (the prior default is unset by the server).
-  ///
-  /// Throws [FoodNotFoundError] on 404.
-  ///
-  /// `@invalidates`
-  /// - `foodDetailProvider(foodId)` — the food's serving list grew.
   Future<Serving> addServing(String foodId, ServingCreate input) async {
+    if (kUseFixtures) {
+      final i = _store.indexWhere((f) => f.id == foodId);
+      if (i < 0) throw FoodNotFoundError(foodId);
+      final food = _store[i];
+      final newServing = Serving(
+        id: 'sv_${DateTime.now().microsecondsSinceEpoch}',
+        label: input.label,
+        amount: input.amount,
+        unit: input.unit,
+        kcal: input.kcal,
+        proteinG: input.proteinG,
+        carbsG: input.carbsG,
+        fatG: input.fatG,
+        fiberG: input.fiberG,
+        sugarG: input.sugarG,
+        sodiumMg: input.sodiumMg,
+        saturatedFatG: input.saturatedFatG,
+        isDefault: input.isDefault,
+        source: ServingSource.user,
+        sortOrder: food.servings.length + 1,
+      );
+      final updatedServings = <Serving>[
+        if (input.isDefault)
+          for (final s in food.servings) s.copyWith(isDefault: false)
+        else
+          ...food.servings,
+        newServing,
+      ];
+      _store[i] = food.copyWith(servings: updatedServings);
+      return newServing;
+    }
     try {
       final resp = await _api.dio.post<dynamic>(
         '/foods/$foodId/servings',
@@ -245,11 +359,29 @@ class FoodRepository {
     }
   }
 
-  /// `PATCH /servings/{id}`. Sparse — only the keys present on the patch
-  /// are touched. The default-toggle is **not** modelled here; use
-  /// [setDefaultServing] for that (it's a separate endpoint per the
-  /// openapi `ServingPatch` doc comment).
   Future<Serving> updateServing(String id, ServingPatch patch) async {
+    if (kUseFixtures) {
+      for (var i = 0; i < _store.length; i++) {
+        final food = _store[i];
+        final si = food.servings.indexWhere((s) => s.id == id);
+        if (si < 0) continue;
+        final original = food.servings[si];
+        final updated = original.copyWith(
+          label: patch.label ?? original.label,
+          amount: patch.amount ?? original.amount,
+          unit: patch.unit ?? original.unit,
+          kcal: patch.kcal ?? original.kcal,
+          proteinG: patch.proteinG ?? original.proteinG,
+          carbsG: patch.carbsG ?? original.carbsG,
+          fatG: patch.fatG ?? original.fatG,
+          sortOrder: patch.sortOrder ?? original.sortOrder,
+        );
+        final newServings = <Serving>[...food.servings]..[si] = updated;
+        _store[i] = food.copyWith(servings: newServings);
+        return updated;
+      }
+      throw FoodNotFoundError(id);
+    }
     try {
       final resp = await _api.dio.patch<dynamic>(
         '/servings/$id',
@@ -262,10 +394,18 @@ class FoodRepository {
     }
   }
 
-  /// `DELETE /servings/{id}`. Returns void on 204. Server returns 409 if
-  /// the serving is the default for its food — that propagates so the
-  /// caller can surface a "promote another serving first" SnackBar.
   Future<void> deleteServing(String id) async {
+    if (kUseFixtures) {
+      for (var i = 0; i < _store.length; i++) {
+        final food = _store[i];
+        final si = food.servings.indexWhere((s) => s.id == id);
+        if (si < 0) continue;
+        final newServings = <Serving>[...food.servings]..removeAt(si);
+        _store[i] = food.copyWith(servings: newServings);
+        return;
+      }
+      throw FoodNotFoundError(id);
+    }
     try {
       await _api.dio.delete<void>('/servings/$id');
     } on DioException catch (e) {
@@ -274,10 +414,21 @@ class FoodRepository {
     }
   }
 
-  /// `POST /servings/{id}/default` — atomically flip the `is_default`
-  /// flag onto this serving, unsetting whichever sibling held it before.
-  /// Returns the serving in its post-flip state.
   Future<Serving> setDefaultServing(String id) async {
+    if (kUseFixtures) {
+      for (var i = 0; i < _store.length; i++) {
+        final food = _store[i];
+        final si = food.servings.indexWhere((s) => s.id == id);
+        if (si < 0) continue;
+        final newServings = <Serving>[
+          for (var k = 0; k < food.servings.length; k++)
+            food.servings[k].copyWith(isDefault: k == si),
+        ];
+        _store[i] = food.copyWith(servings: newServings);
+        return newServings[si];
+      }
+      throw FoodNotFoundError(id);
+    }
     try {
       final resp = await _api.dio.post<dynamic>('/servings/$id/default');
       return Serving.fromJson(resp.data as Map<String, dynamic>);
@@ -287,13 +438,8 @@ class FoodRepository {
     }
   }
 
-  // -------- Derived helpers (back-compat surface) --------
+  // -------- Derived helpers --------
 
-  /// Custom-food library — every `source == user` row owned by the
-  /// caller. Sorted by `created_at` descending so a freshly-saved
-  /// custom food surfaces at the top of My foods (FX-002). Backed by
-  /// [mine] — the server already filters to `user`-source and excludes
-  /// the `__quick_add__` sentinel.
   Future<List<Food>> customFoods({int limit = 100, int offset = 0}) async {
     final page = await mine(limit: limit, offset: offset);
     final sorted = <Food>[...page]
@@ -301,13 +447,12 @@ class FoodRepository {
     return sorted;
   }
 
-  /// Number of `source == user` rows owned by the caller. Drives
-  /// screen 08's "My foods · N" row.
-  ///
-  /// The server doesn't expose a dedicated count endpoint, so this
-  /// reads the `total` field from the `/foods/mine` pagination envelope
-  /// with `limit=0` — cheaper than walking the page.
   Future<int> customCount() async {
+    if (kUseFixtures) {
+      return _store
+          .where((f) => f.source == FoodSource.user && f.id != fx.quickAddFoodId)
+          .length;
+    }
     final resp = await _api.dio.get<dynamic>(
       '/foods/mine',
       queryParameters: <String, dynamic>{'limit': 0},
@@ -318,32 +463,21 @@ class FoodRepository {
     return 0;
   }
 
-  /// Synchronous cache lookup used by
-  /// [LogRepository._decodeEntryWithDenorm] to populate
-  /// `LogEntry.foodName` / `servingName`. Populated by every successful
-  /// read on this repository instance + by [prefetchByIds]. Returns
-  /// `null` on miss; callers fall back to whatever the wire carried
-  /// (empty string today, the denormalized `food_name` once Ask 9
-  /// lands).
   Food? lookup(String id) => _byIdCache[id];
 
-  /// Stub kept for source compatibility with `LogRepository.create`'s
-  /// optimistic path. Recent / frequent projections are server-derived
-  /// (`/foods/recent`, `/foods/frequent`) and the call site already
-  /// invalidates those providers, so there's no local state to nudge.
-  void noteFoodLogged(String foodId) {}
+  void noteFoodLogged(String foodId) {
+    // No-op against fixtures; the live-mode path also no-ops.
+  }
 
-  /// No-op kept for parity with the mock era — every read/write hits
-  /// the wire, so there's no in-memory state to reset.
-  static void resetForTesting() {}
+  /// Reset the fixture store. Tests call this between cases.
+  void resetForTesting() {
+    _store.clear();
+    _byIdCache.clear();
+    if (kUseFixtures) _seedFixtureStore();
+  }
 
-  // -------- Decoders --------
+  // -------- Live-mode decoders (dormant under kUseFixtures) --------
 
-  /// Decode a `PaginatedFoodSearchHits` envelope (`{results, total,
-  /// limit, offset}`) into a `List<Food>` projection. Each hit becomes a
-  /// `Food` with one synthetic default serving and a back-computed
-  /// per-100 g kcal so `food.caloriesPerDefaultServing` reproduces the
-  /// wire `calories_per_serving`.
   List<Food> _decodePaginatedHits(Object? data) {
     if (data is! Map<String, dynamic>) return const <Food>[];
     final results = (data['results'] as List<dynamic>? ?? const <dynamic>[])
@@ -366,11 +500,11 @@ class FoodRepository {
     return foods;
   }
 
-  /// Project a `FoodSearchHit` JSON map into a `Food`. The slim hit
-  /// shape carries `default_serving: {id, label, grams}` and
-  /// `calories_per_serving`; everything else (full nutrition panel,
-  /// alternate servings, `created_at`) is unavailable on a list call.
-  /// Callers that need it round-trip through [get].
+  /// Project a `FoodSearchHit` JSON map into a `Food`. Under the new
+  /// wire shape `default_serving` carries `{id, label?, amount, unit}`
+  /// plus a top-level `calories_per_serving` — we synthesize a single
+  /// serving with those values + the per-serving kcal. The full nutrition
+  /// only comes from `GET /foods/{id}`.
   Food _hitToFood(Map<String, dynamic> json) {
     Decimal? dec(Object? v) =>
         v == null ? null : Decimal.parse(v.toString());
@@ -380,101 +514,35 @@ class FoodRepository {
     final kcalPerServing = dec(json['calories_per_serving']);
 
     final servings = <Serving>[];
-    Decimal? per100Kcal;
-    if (defServing != null) {
-      final grams = Decimal.parse(defServing['grams'].toString());
+    if (defServing != null && kcalPerServing != null) {
+      final amount = dec(defServing['amount']) ?? Decimal.one;
+      final unitWire = defServing['unit'] as String?;
       servings.add(Serving(
         id: defServing['id'] as String,
-        name: defServing['label'] as String,
-        grams: grams,
-        // The hit's `default_serving` *is* the food's default by
-        // definition — stamp it so `Food.defaultServingId` picks it up.
+        label: defServing['label'] as String?,
+        amount: amount,
+        unit: unitWire == null ? Unit.g : Unit.fromWire(unitWire),
+        kcal: kcalPerServing,
         isDefault: true,
-        // Listing endpoints don't tell us the source; synthetic 100 g
-        // rows are flagged `system`, the rest are typically `user`.
-        // The detail fetch supplies the real value; for list-card
-        // rendering only `id` / `label` / `grams` are read.
-        source: grams == Decimal.fromInt(100)
-            ? ServingSource.system
-            : ServingSource.user,
+        source: ServingSource.system,
         sortOrder: 0,
       ));
-      // Back-compute per-100 g kcal so `caloriesPerDefaultServing`
-      // recomputes to the wire's `calories_per_serving`:
-      //   per100 × (grams / 100) = perServing  ⇒  per100 = perServing × 100 / grams.
-      if (kcalPerServing != null && grams > Decimal.zero) {
-        per100Kcal = (kcalPerServing * Decimal.fromInt(100) / grams)
-            .toDecimal(scaleOnInfinitePrecision: 6);
-      }
     }
 
     return Food(
       id: json['id'] as String,
       name: json['name'] as String,
-      // `FoodSearchHit` uses `brand` (singular) on the wire, *not*
-      // `brands` — the openapi schema is explicit.
       brand: json['brand'] as String?,
       barcode: json['barcode'] as String?,
       source: source,
       isCustom: source == FoodSource.user,
       qualityScore: null,
       nutriscore: null,
-      nutritionPer100g: NutritionPer100g(energyKcal: per100Kcal),
       servings: servings,
       categoriesTags: const <String>[],
-      // Listing endpoints don't carry `created_at`. Default to "now"
-      // matches `Food.fromJson`'s pre-backend fallback and keeps
-      // `customFoods()`'s newest-first sort stable across a single
-      // page (every projected row gets the same timestamp).
       createdAt: null,
     );
   }
-}
-
-/// Outgoing `POST /foods/{id}/servings` payload — screen 05 builds one
-/// per user-defined serving in the draft and the repository POSTs each
-/// one through [FoodRepository.addServing].
-///
-/// Mirrors the OpenAPI `ServingCreate` schema (`label`, `grams`,
-/// optional `is_default`, `source`, `sort_order`).
-class ServingCreate {
-  const ServingCreate({
-    required this.label,
-    required this.grams,
-    this.isDefault = false,
-    this.source,
-    this.sortOrder,
-  });
-
-  final String label;
-  final Decimal grams;
-  final bool isDefault;
-  final ServingSource? source;
-  final int? sortOrder;
-
-  Map<String, dynamic> toJson() => <String, dynamic>{
-        'label': label,
-        // T-17: decimals travel as number-shaped strings so the wire
-        // never inherits double drift.
-        'grams': grams.toString(),
-        'is_default': isDefault,
-        if (source != null) 'source': source!.wire,
-        if (sortOrder != null) 'sort_order': sortOrder,
-      };
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is ServingCreate &&
-          other.label == label &&
-          other.grams == grams &&
-          other.isDefault == isDefault &&
-          other.source == source &&
-          other.sortOrder == sortOrder;
-
-  @override
-  int get hashCode =>
-      Object.hash(label, grams, isDefault, source, sortOrder);
 }
 
 /// Outgoing `PATCH /servings/{id}` payload — sparse-by-null. Toggling
@@ -483,29 +551,47 @@ class ServingCreate {
 class ServingPatch {
   const ServingPatch({
     this.label,
-    this.grams,
+    this.amount,
+    this.unit,
+    this.kcal,
+    this.proteinG,
+    this.carbsG,
+    this.fatG,
     this.sortOrder,
   });
 
   final String? label;
-  final Decimal? grams;
+  final Decimal? amount;
+  final Unit? unit;
+  final Decimal? kcal;
+  final Decimal? proteinG;
+  final Decimal? carbsG;
+  final Decimal? fatG;
   final int? sortOrder;
 
-  bool get isEmpty => label == null && grams == null && sortOrder == null;
+  bool get isEmpty =>
+      label == null &&
+      amount == null &&
+      unit == null &&
+      kcal == null &&
+      proteinG == null &&
+      carbsG == null &&
+      fatG == null &&
+      sortOrder == null;
 
   Map<String, dynamic> toJson() => <String, dynamic>{
         if (label != null) 'label': label,
-        if (grams != null) 'grams': grams!.toString(),
+        if (amount != null) 'amount': amount!.toString(),
+        if (unit != null) 'unit': unit!.wire,
+        if (kcal != null) 'kcal': kcal!.toString(),
+        if (proteinG != null) 'protein_g': proteinG!.toString(),
+        if (carbsG != null) 'carbs_g': carbsG!.toString(),
+        if (fatG != null) 'fat_g': fatG!.toString(),
         if (sortOrder != null) 'sort_order': sortOrder,
       };
 }
 
-/// Thrown by [FoodRepository.get] / [FoodRepository.updateCustom] /
-/// [FoodRepository.deleteCustom] / [FoodRepository.addServing] /
-/// [FoodRepository.updateServing] / [FoodRepository.deleteServing] /
-/// [FoodRepository.setDefaultServing] when the server returns
-/// `404 not_found`. `byBarcode` maps 404 → `null` instead (no food for
-/// a scanned barcode is expected, not exceptional).
+/// Thrown by [FoodRepository] reads / mutators on a 404 / missing-id.
 class FoodNotFoundError implements Exception {
   FoodNotFoundError(this.lookupKey);
   final String lookupKey;

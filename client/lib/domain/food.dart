@@ -1,23 +1,25 @@
 import 'package:decimal/decimal.dart';
 
 import 'enums.dart';
-import 'nutrition.dart';
 import 'serving.dart';
+import 'unit.dart';
 
-/// A food in the catalogue. Composes `FoodDetail` + the screen-facing
-/// "is this mine?" helpers screen agents need.
+/// A food in the catalogue. Nutrition is no longer anchored to the food
+/// itself — per Ask 10 the food row carries identity + metadata only,
+/// and every nutritional fact lives on a [Serving]. The "what does
+/// `kcalPerDefaultServing` show?" computation just reads
+/// `defaultServing.kcal`; no per-100g × grams math.
 ///
 /// On the wire `FoodDetail` and `FoodSearchHit` are separate shapes:
 /// search returns a slim hit with `default_serving` + `calories_per_serving`,
-/// detail returns the full nutrition panel + all servings. This class is
-/// the *detail* shape — `FoodSearchHit` is a sibling type below.
+/// detail returns the full servings list. This class is the *detail*
+/// shape — `FoodSearchHit` is a sibling type below.
 class Food {
   Food({
     required this.id,
     required this.name,
     required this.source,
     required this.isCustom,
-    required this.nutritionPer100g,
     required this.servings,
     this.brand,
     this.barcode,
@@ -50,50 +52,34 @@ class Food {
   /// OFF Nutriscore grade. Null for `usda` and `user` foods.
   final NutriscoreGrade? nutriscore;
 
-  final NutritionPer100g nutritionPer100g;
   final List<Serving> servings;
   final List<String> categoriesTags;
 
-  /// Wall-clock timestamp when the food row was created. Mirrors the
-  /// planned wire field `created_at`. The pre-backend `fromJson`
-  /// tolerates a missing key by defaulting to "now" — once the Rust API
-  /// emits the column the default path is dead code (FX-002).
-  ///
-  /// `My foods` sorts by this descending so a freshly-saved custom food
-  /// surfaces at the top of the list (the "I just made this 30 seconds
-  /// ago — where is it?" flow).
+  /// Wall-clock timestamp when the food row was created. `My foods`
+  /// sorts by this descending so a freshly-saved custom food surfaces
+  /// at the top.
   final DateTime createdAt;
 
-  /// The id of the default serving. Asserts there's exactly one default
-  /// in the list — the contract per OpenAPI is "exactly one row with
-  /// `is_default = true`". Falls back to the first serving if no flag is
-  /// set (defensive — real wire data should always have one).
-  String get defaultServingId {
+  /// The default serving (the one with `is_default == true`). Falls
+  /// back to the first row if no flag is set (defensive — real wire
+  /// data should always have one).
+  Serving get defaultServing {
     for (final s in servings) {
-      if (s.isDefault) return s.id;
+      if (s.isDefault) return s;
     }
-    return servings.first.id;
+    return servings.first;
   }
 
-  /// Per-default-serving kcal for the search-hit / summary card. Returns
-  /// null if the food has no energy figure.
+  /// The id of the default serving — preserved for callers that only
+  /// need the id (e.g. `LogEntryCreate.servingId`).
+  String get defaultServingId => defaultServing.id;
+
+  /// Per-default-serving kcal for the search-hit / summary card. Per
+  /// Ask 10 this is just the default serving's `kcal` — no per-100g
+  /// math required.
   Decimal? get caloriesPerDefaultServing {
-    final per100 = nutritionPer100g.energyKcal;
-    if (per100 == null) return null;
-    Serving? def;
-    for (final s in servings) {
-      if (s.isDefault) {
-        def = s;
-        break;
-      }
-    }
-    def ??= servings.isEmpty ? null : servings.first;
-    if (def == null) return null;
-    // kcal × (grams / 100). Decimal division can yield infinite digits,
-    // so use a fixed scale on the rational result.
-    final ratio = (def.grams / Decimal.fromInt(100))
-        .toDecimal(scaleOnInfinitePrecision: 6);
-    return per100 * ratio;
+    if (servings.isEmpty) return null;
+    return defaultServing.kcal;
   }
 
   Food copyWith({
@@ -105,7 +91,6 @@ class Food {
     bool? isCustom,
     int? qualityScore,
     NutriscoreGrade? nutriscore,
-    NutritionPer100g? nutritionPer100g,
     List<Serving>? servings,
     List<String>? categoriesTags,
     DateTime? createdAt,
@@ -119,7 +104,6 @@ class Food {
         isCustom: isCustom ?? this.isCustom,
         qualityScore: qualityScore ?? this.qualityScore,
         nutriscore: nutriscore ?? this.nutriscore,
-        nutritionPer100g: nutritionPer100g ?? this.nutritionPer100g,
         servings: servings ?? this.servings,
         categoriesTags: categoriesTags ?? this.categoriesTags,
         createdAt: createdAt ?? this.createdAt,
@@ -127,9 +111,6 @@ class Food {
 
   factory Food.fromJson(Map<String, dynamic> json) {
     final source = FoodSource.fromWire(json['source'] as String);
-    // Pre-backend window: tolerate a missing `created_at` and default to
-    // "now". Once the Rust API emits the column every payload includes
-    // the key and the fallback is dead code (FX-002).
     final createdAtRaw = json['created_at'];
     return Food(
       id: json['id'] as String,
@@ -140,8 +121,6 @@ class Food {
       isCustom: source == FoodSource.user,
       qualityScore: (json['quality_score'] as num?)?.toInt(),
       nutriscore: NutriscoreGrade.fromWire(json['nutriscore'] as String?),
-      nutritionPer100g:
-          NutritionPer100g.fromJson(json['nutrition'] as Map<String, dynamic>),
       servings: ((json['servings'] as List<dynamic>?) ?? const <dynamic>[])
           .map((e) => Serving.fromJson(e as Map<String, dynamic>))
           .toList(),
@@ -163,7 +142,6 @@ class Food {
         if (barcode != null) 'barcode': barcode,
         if (qualityScore != null) 'quality_score': qualityScore,
         if (nutriscore != null) 'nutriscore': nutriscore!.wire,
-        'nutrition': nutritionPer100g.toJson(),
         'servings': servings.map((s) => s.toJson()).toList(),
         'categories_tags': categoriesTags,
         'created_at': createdAt.toIso8601String(),
@@ -181,7 +159,6 @@ class Food {
           other.isCustom == isCustom &&
           other.qualityScore == qualityScore &&
           other.nutriscore == nutriscore &&
-          other.nutritionPer100g == nutritionPer100g &&
           _listEq(other.servings, servings) &&
           _listEq(other.categoriesTags, categoriesTags) &&
           other.createdAt == createdAt;
@@ -196,7 +173,6 @@ class Food {
         isCustom,
         qualityScore,
         nutriscore,
-        nutritionPer100g,
         Object.hashAll(servings),
         Object.hashAll(categoriesTags),
         createdAt,
@@ -204,8 +180,9 @@ class Food {
 }
 
 /// Slim catalog row returned by `/foods/search`, `/foods/recent`,
-/// `/foods/frequent`. Mirrors `FoodSearchHit` + a `default_serving`
-/// preview.
+/// `/foods/frequent`. Mirrors `FoodSearchHit` from the OpenAPI; the
+/// `default_serving` block carries `{id, label?, amount, unit}` per
+/// the Ask-10 reshape (no `grams` field anymore).
 ///
 /// Screen agents use this for `SearchResultRow` and `QuickChipRow`. To
 /// open the log-entry sheet they re-fetch the full `Food` via
@@ -219,7 +196,8 @@ class FoodSearchHit {
     this.barcode,
     this.defaultServingId,
     this.defaultServingLabel,
-    this.defaultServingGrams,
+    this.defaultServingAmount,
+    this.defaultServingUnit,
     this.caloriesPerServing,
   });
 
@@ -229,8 +207,13 @@ class FoodSearchHit {
   final String? brand;
   final String? barcode;
   final String? defaultServingId;
+
+  /// Either the explicit `label` from the wire or the rendered
+  /// "amount + unit" string when the wire didn't carry a label.
   final String? defaultServingLabel;
-  final Decimal? defaultServingGrams;
+
+  final Decimal? defaultServingAmount;
+  final Unit? defaultServingUnit;
   final Decimal? caloriesPerServing;
 
   FoodSearchHit copyWith({
@@ -241,7 +224,8 @@ class FoodSearchHit {
     String? barcode,
     String? defaultServingId,
     String? defaultServingLabel,
-    Decimal? defaultServingGrams,
+    Decimal? defaultServingAmount,
+    Unit? defaultServingUnit,
     Decimal? caloriesPerServing,
   }) =>
       FoodSearchHit(
@@ -252,21 +236,15 @@ class FoodSearchHit {
         barcode: barcode ?? this.barcode,
         defaultServingId: defaultServingId ?? this.defaultServingId,
         defaultServingLabel: defaultServingLabel ?? this.defaultServingLabel,
-        defaultServingGrams: defaultServingGrams ?? this.defaultServingGrams,
+        defaultServingAmount: defaultServingAmount ?? this.defaultServingAmount,
+        defaultServingUnit: defaultServingUnit ?? this.defaultServingUnit,
         caloriesPerServing: caloriesPerServing ?? this.caloriesPerServing,
       );
 
   /// Project a hit from a full [Food]. The mock repository uses this so
   /// the same seed list backs detail, search, recent and frequent calls.
   factory FoodSearchHit.fromFood(Food food) {
-    Serving? def;
-    for (final s in food.servings) {
-      if (s.isDefault) {
-        def = s;
-        break;
-      }
-    }
-    def ??= food.servings.isEmpty ? null : food.servings.first;
+    final def = food.servings.isEmpty ? null : food.defaultServing;
     return FoodSearchHit(
       id: food.id,
       name: food.name,
@@ -275,7 +253,8 @@ class FoodSearchHit {
       barcode: food.barcode,
       defaultServingId: def?.id,
       defaultServingLabel: def?.name,
-      defaultServingGrams: def?.grams,
+      defaultServingAmount: def?.amount,
+      defaultServingUnit: def?.unit,
       caloriesPerServing: food.caloriesPerDefaultServing,
     );
   }
@@ -284,6 +263,7 @@ class FoodSearchHit {
     Decimal? dec(Object? v) =>
         v == null ? null : Decimal.parse(v.toString());
     final defServing = json['default_serving'] as Map<String, dynamic>?;
+    final unitWire = defServing?['unit'] as String?;
     return FoodSearchHit(
       id: json['id'] as String,
       name: json['name'] as String,
@@ -292,7 +272,8 @@ class FoodSearchHit {
       barcode: json['barcode'] as String?,
       defaultServingId: defServing?['id'] as String?,
       defaultServingLabel: defServing?['label'] as String?,
-      defaultServingGrams: dec(defServing?['grams']),
+      defaultServingAmount: dec(defServing?['amount']),
+      defaultServingUnit: unitWire == null ? null : Unit.fromWire(unitWire),
       caloriesPerServing: dec(json['calories_per_serving']),
     );
   }
@@ -306,8 +287,10 @@ class FoodSearchHit {
         if (defaultServingId != null)
           'default_serving': <String, dynamic>{
             'id': defaultServingId,
-            'label': defaultServingLabel,
-            'grams': defaultServingGrams?.toString(),
+            if (defaultServingLabel != null) 'label': defaultServingLabel,
+            if (defaultServingAmount != null)
+              'amount': defaultServingAmount.toString(),
+            if (defaultServingUnit != null) 'unit': defaultServingUnit!.wire,
           },
         if (caloriesPerServing != null)
           'calories_per_serving': caloriesPerServing.toString(),
@@ -324,7 +307,8 @@ class FoodSearchHit {
           other.barcode == barcode &&
           other.defaultServingId == defaultServingId &&
           other.defaultServingLabel == defaultServingLabel &&
-          other.defaultServingGrams == defaultServingGrams &&
+          other.defaultServingAmount == defaultServingAmount &&
+          other.defaultServingUnit == defaultServingUnit &&
           other.caloriesPerServing == caloriesPerServing;
 
   @override
@@ -336,37 +320,85 @@ class FoodSearchHit {
         barcode,
         defaultServingId,
         defaultServingLabel,
-        defaultServingGrams,
+        defaultServingAmount,
+        defaultServingUnit,
         caloriesPerServing,
       );
 }
 
-/// Outgoing `POST /foods` payload — screens build one in the custom-food
-/// form and the repository POSTs it. Decimals are stored as `Decimal`
-/// here and serialized via `NutritionPer100g.toJson`.
+/// Outgoing `POST /servings` payload-shape used by both the
+/// `FoodCreate` body and the standalone `POST /foods/{id}/servings`
+/// endpoint. Per Ask 10 every serving carries its own nutrition; the
+/// food-level nutrition struct is gone.
+class ServingCreate {
+  const ServingCreate({
+    required this.amount,
+    required this.unit,
+    required this.kcal,
+    this.label,
+    this.proteinG,
+    this.carbsG,
+    this.fatG,
+    this.fiberG,
+    this.sugarG,
+    this.sodiumMg,
+    this.saturatedFatG,
+    this.isDefault = false,
+  });
+
+  final String? label;
+  final Decimal amount;
+  final Unit unit;
+  final Decimal kcal;
+  final Decimal? proteinG;
+  final Decimal? carbsG;
+  final Decimal? fatG;
+  final Decimal? fiberG;
+  final Decimal? sugarG;
+  final Decimal? sodiumMg;
+  final Decimal? saturatedFatG;
+  final bool isDefault;
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+        if (label != null) 'label': label,
+        'amount': amount.toString(),
+        'unit': unit.wire,
+        'kcal': kcal.toString(),
+        if (proteinG != null) 'protein_g': proteinG.toString(),
+        if (carbsG != null) 'carbs_g': carbsG.toString(),
+        if (fatG != null) 'fat_g': fatG.toString(),
+        if (fiberG != null) 'fiber_g': fiberG.toString(),
+        if (sugarG != null) 'sugar_g': sugarG.toString(),
+        if (sodiumMg != null) 'sodium_mg': sodiumMg.toString(),
+        if (saturatedFatG != null)
+          'saturated_fat_g': saturatedFatG.toString(),
+        'is_default': isDefault,
+      };
+}
+
+/// Outgoing `POST /foods` payload. Per Ask 10 the body is `{name,
+/// brand?, barcode?, servings: [ServingCreate]}` — no top-level
+/// nutrition. **At least one serving is required.**
 class FoodCreate {
   const FoodCreate({
     required this.name,
-    required this.nutrition,
+    required this.servings,
     this.brand,
     this.barcode,
-    this.nutriscore,
     this.categoriesTags = const <String>[],
-  });
+  }) : assert(servings.length > 0, 'FoodCreate requires ≥ 1 serving');
 
   final String name;
   final String? brand;
   final String? barcode;
-  final NutritionPer100g nutrition;
-  final NutriscoreGrade? nutriscore;
+  final List<ServingCreate> servings;
   final List<String> categoriesTags;
 
   Map<String, dynamic> toJson() => <String, dynamic>{
         'name': name,
         if (brand != null) 'brands': brand,
         if (barcode != null) 'barcode': barcode,
-        'nutrition': nutrition.toJson(),
-        if (nutriscore != null) 'nutriscore_grade': nutriscore!.wire,
+        'servings': servings.map((s) => s.toJson()).toList(),
         'categories_tags': categoriesTags,
       };
 }

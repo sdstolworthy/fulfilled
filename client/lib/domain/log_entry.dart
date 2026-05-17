@@ -2,18 +2,20 @@ import 'package:decimal/decimal.dart';
 
 import 'meal.dart';
 import 'nutrition.dart';
+import 'unit.dart';
 
-/// One row in the food log. Mirrors `LogEntry` from the OpenAPI schema —
-/// the nutrition snapshot is **flat** on the wire (`calories_kcal`,
-/// `protein_g`, …) and we lift it into a [NutritionSnapshot] in the
-/// presentation model so screens have a tidy `entry.nutritionSnapshot`
-/// instead of nine sibling fields.
+/// One row in the food log. Mirrors `LogEntry` from the OpenAPI schema
+/// under Ask 10 — the per-100g math is gone. The wire carries:
 ///
-/// The food name + serving name are denormalized onto this entry so the
-/// day-view's `FoodRow` can render without a second fetch. The wire
-/// does *not* return them — the mock repository fills them from its
-/// catalog; the eventual real client will either join server-side or
-/// resolve via a foods cache.
+/// - `quantity` — multiplier against the referenced serving's nutrition
+/// - `entered_amount` + `entered_unit` — exactly what the user typed at
+///   entry time (preserved across serving edits / deletes)
+/// - the snapshotted nutrition fields (`calories_kcal`, macros) — lifted
+///   into [NutritionSnapshot] as before.
+///
+/// The food name + serving name are denormalized onto the entry by the
+/// server (Ask 9 / 10c) so the day-view's `FoodRow` renders without a
+/// second fetch.
 class LogEntry {
   const LogEntry({
     required this.id,
@@ -22,7 +24,8 @@ class LogEntry {
     required this.consumedOn,
     required this.meal,
     required this.quantity,
-    required this.gramsTotal,
+    required this.enteredAmount,
+    required this.enteredUnit,
     required this.nutritionSnapshot,
     required this.createdAt,
     required this.updatedAt,
@@ -40,8 +43,19 @@ class LogEntry {
   /// User-local calendar date. `YYYY-MM-DD` on the wire (T-16).
   final DateTime consumedOn;
   final Meal meal;
+
+  /// Multiplier against the referenced serving — `0.5` means "half a
+  /// cup" when the serving is `{1, cup}`. Always derivable from
+  /// [enteredAmount] + the serving's `amount` after a within-family
+  /// conversion, but stored so the snapshot pattern survives serving
+  /// edits.
   final Decimal quantity;
-  final Decimal gramsTotal;
+
+  /// What the user typed at entry time. Preserved across serving
+  /// edits and deletes so the "you logged X" display never lies.
+  final Decimal enteredAmount;
+  final Unit enteredUnit;
+
   final NutritionSnapshot nutritionSnapshot;
   final String? note;
   final DateTime createdAt;
@@ -56,7 +70,8 @@ class LogEntry {
     DateTime? consumedOn,
     Meal? meal,
     Decimal? quantity,
-    Decimal? gramsTotal,
+    Decimal? enteredAmount,
+    Unit? enteredUnit,
     NutritionSnapshot? nutritionSnapshot,
     String? note,
     DateTime? createdAt,
@@ -71,15 +86,16 @@ class LogEntry {
         consumedOn: consumedOn ?? this.consumedOn,
         meal: meal ?? this.meal,
         quantity: quantity ?? this.quantity,
-        gramsTotal: gramsTotal ?? this.gramsTotal,
+        enteredAmount: enteredAmount ?? this.enteredAmount,
+        enteredUnit: enteredUnit ?? this.enteredUnit,
         nutritionSnapshot: nutritionSnapshot ?? this.nutritionSnapshot,
         note: note ?? this.note,
         createdAt: createdAt ?? this.createdAt,
         updatedAt: updatedAt ?? this.updatedAt,
       );
 
-  /// Convenience getter — calorie count, the only frozen number the day
-  /// view actually displays per row.
+  /// Convenience getter — calorie count, the only frozen number the
+  /// day view actually displays per row.
   Decimal get kcal => nutritionSnapshot.caloriesKcal;
 
   factory LogEntry.fromJson(Map<String, dynamic> json) {
@@ -88,17 +104,14 @@ class LogEntry {
     return LogEntry(
       id: json['id'] as String,
       foodId: json['food_id'] as String,
-      // `food_name` / `serving_name` are not in the OpenAPI shape but the
-      // mock repository denormalizes them. Fall back to "" on a real
-      // response so this `fromJson` is safe for both seed JSON and
-      // hypothetical wire JSON.
       foodName: (json['food_name'] as String?) ?? '',
       servingId: json['serving_id'] as String?,
       servingName: json['serving_name'] as String?,
       consumedOn: DateTime.parse(json['consumed_on'] as String),
       meal: Meal.fromWire(json['meal'] as String),
       quantity: dec('quantity'),
-      gramsTotal: dec('grams_total'),
+      enteredAmount: dec('entered_amount'),
+      enteredUnit: Unit.fromWire(json['entered_unit'] as String),
       nutritionSnapshot: NutritionSnapshot.fromJson(json),
       note: json['note'] as String?,
       createdAt: DateTime.parse(json['created_at'] as String),
@@ -116,7 +129,8 @@ class LogEntry {
       'consumed_on': _isoDate(consumedOn),
       'meal': meal.wire,
       'quantity': quantity.toString(),
-      'grams_total': gramsTotal.toString(),
+      'entered_amount': enteredAmount.toString(),
+      'entered_unit': enteredUnit.wire,
       if (note != null) 'note': note,
       'created_at': createdAt.toIso8601String(),
       'updated_at': updatedAt.toIso8601String(),
@@ -137,7 +151,8 @@ class LogEntry {
           other.consumedOn == consumedOn &&
           other.meal == meal &&
           other.quantity == quantity &&
-          other.gramsTotal == gramsTotal &&
+          other.enteredAmount == enteredAmount &&
+          other.enteredUnit == enteredUnit &&
           other.nutritionSnapshot == nutritionSnapshot &&
           other.note == note &&
           other.createdAt == createdAt &&
@@ -153,7 +168,8 @@ class LogEntry {
         consumedOn,
         meal,
         quantity,
-        gramsTotal,
+        enteredAmount,
+        enteredUnit,
         nutritionSnapshot,
         note,
         createdAt,
@@ -165,22 +181,15 @@ class LogEntry {
 /// builds one and hands it to `log_repository.update`. The patch is
 /// sparse on the wire — only fields the user actually changed are
 /// emitted. `food_id` is **never** serialised: the OpenAPI spec
-/// explicitly forbids mutating the food on PATCH (PM ruling), so it is
-/// not even modeled here. Callers that try to patch the food must
-/// instead delete + recreate the entry.
-///
-/// `clearNote` is the one piece of out-of-band signalling we need:
-/// "absence" of a key on the wire means "leave unchanged", while
-/// `"note": null` means "clear the existing note". The sheet sets
-/// `clearNote: true` when the user blanked a previously-non-null note.
-/// If both `note` and `clearNote` are set, the explicit `note` wins —
-/// `clearNote` only fires when `note == null`.
+/// explicitly forbids mutating the food on PATCH.
 class LogPatch {
   const LogPatch({
     this.servingId,
     this.consumedOn,
     this.meal,
     this.quantity,
+    this.enteredAmount,
+    this.enteredUnit,
     this.note,
     this.clearNote = false,
   });
@@ -189,33 +198,29 @@ class LogPatch {
   final DateTime? consumedOn;
   final Meal? meal;
   final Decimal? quantity;
+  final Decimal? enteredAmount;
+  final Unit? enteredUnit;
   final String? note;
-
-  /// When `true` and [note] is null, emit `'note': null` to clear an
-  /// existing note. When `false` (default), an unset [note] is omitted
-  /// from the wire entirely. Ignored when [note] is non-null — the
-  /// explicit value always wins.
   final bool clearNote;
 
-  /// `true` iff every patchable field is unset and we're not clearing
-  /// the note. The submit handler short-circuits on this to skip
-  /// no-op PATCHes.
   bool get isEmpty =>
       servingId == null &&
       consumedOn == null &&
       meal == null &&
       quantity == null &&
+      enteredAmount == null &&
+      enteredUnit == null &&
       note == null &&
       !clearNote;
 
-  /// Sparse JSON encoder. Only emits keys for set fields. Never emits
-  /// `food_id` — see class docs.
   Map<String, dynamic> toJson() {
     final m = <String, dynamic>{};
     if (servingId != null) m['serving_id'] = servingId;
     if (consumedOn != null) m['consumed_on'] = _isoDate(consumedOn!);
     if (meal != null) m['meal'] = meal!.wire;
     if (quantity != null) m['quantity'] = quantity.toString();
+    if (enteredAmount != null) m['entered_amount'] = enteredAmount.toString();
+    if (enteredUnit != null) m['entered_unit'] = enteredUnit!.wire;
     if (note != null) {
       m['note'] = note;
     } else if (clearNote) {
@@ -225,10 +230,6 @@ class LogPatch {
   }
 }
 
-/// Thrown by `LogRepository.update` (and any future single-entry
-/// lookup) when the entry id is not in the store. Mirrors
-/// `FoodNotFoundError` from `food_repository.dart` — same shape so
-/// screen-level `try/catch` blocks read uniformly.
 class LogEntryNotFoundError implements Exception {
   LogEntryNotFoundError(this.entryId);
 
@@ -238,22 +239,10 @@ class LogEntryNotFoundError implements Exception {
   String toString() => 'LogEntryNotFoundError: $entryId';
 }
 
-/// Outgoing `POST /log` payload. Screen 04's log-entry sheet builds one
-/// and hands it to `log_repository.create`. The mock repository computes
-/// the frozen snapshot from the food's per-100 g + the serving's grams +
-/// the quantity — matching the server's behavior.
-///
-/// **Quick-add macros override.** The Quick-add affordance on the Today
-/// header logs raw kcal against the synthetic `food_quick_add` food (per
-/// 100 g = 100 kcal, 1 g serving), so `quantity` maps 1:1 to kcal. When
-/// the user toggles "Add macros" the sheet supplies a sparse
-/// [nutritionOverride] (energy + P/C/F only) on the create payload; the
-/// mock `LogRepository.create` substitutes this for the computed
-/// `nutritionPer100g` before running the existing `computeLogEntry` math.
-/// On the wire this is a non-standard addition — the field is **not**
-/// serialised by [toJson] (it's a client-only seam until the spec adds a
-/// "free-form calories" endpoint). Normal log-entry flows leave it null
-/// and the existing snapshot computation is preserved byte-for-byte.
+/// Outgoing `POST /log` payload. Mirrors the new wire shape under Ask
+/// 10: drop `grams_total`, add `entered_amount` + `entered_unit`.
+/// `serving_id` is required (every log entry references a serving;
+/// quick-add uses the per-user sentinel food's "1 serving" entry).
 class LogCreate {
   const LogCreate({
     required this.foodId,
@@ -261,8 +250,9 @@ class LogCreate {
     required this.consumedOn,
     required this.meal,
     required this.quantity,
+    required this.enteredAmount,
+    required this.enteredUnit,
     this.note,
-    this.nutritionOverride,
   });
 
   final String foodId;
@@ -270,15 +260,9 @@ class LogCreate {
   final DateTime consumedOn;
   final Meal meal;
   final Decimal quantity;
+  final Decimal enteredAmount;
+  final Unit enteredUnit;
   final String? note;
-
-  /// Optional per-100 g panel override. When non-null, the mock
-  /// repository substitutes this for the food's `nutritionPer100g`
-  /// before computing the frozen snapshot — enabling the Quick-add
-  /// sheet's "Add macros" toggle to carry user-supplied P/C/F values
-  /// without needing a new "free-form calories" wire endpoint. Not
-  /// emitted by [toJson]; this is a client-only seam.
-  final NutritionPer100g? nutritionOverride;
 
   Map<String, dynamic> toJson() => <String, dynamic>{
         'food_id': foodId,
@@ -286,6 +270,8 @@ class LogCreate {
         'consumed_on': _isoDate(consumedOn),
         'meal': meal.wire,
         'quantity': quantity.toString(),
+        'entered_amount': enteredAmount.toString(),
+        'entered_unit': enteredUnit.wire,
         if (note != null) 'note': note,
       };
 }

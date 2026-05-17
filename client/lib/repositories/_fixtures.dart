@@ -1,17 +1,13 @@
 // MOCK ONLY — this entire file is deletable once the real API is wired.
 //
-// Seed data for the mock repositories. The numbers are realistic enough to
-// drive every screen (the day view's ring, the meal sections, the weight
-// sparkline, the goal hero, etc.) without anyone being startled by a
-// number that doesn't make sense for a real human. They are not, however,
-// stable enough to assert on in screen-level golden tests — anything that
-// pins the entire seed in place will need updating when the real API
-// lands.
+// Seed data for the mock repositories, reshaped to Ask 10's per-serving
+// nutrition model. Each food has 1+ servings; every serving carries its
+// own kcal + macros + an {amount, unit} declaration. No per-100g math.
 //
-// The data references the "today" anchor returned by [mockToday]; every
-// date-shaped fixture is relative to it so the day view always has data
-// for the date the user sees. Tests that need a deterministic clock
-// override [_clockOverride] via [setMockClockForTesting].
+// The per-serving numbers were synthesized from the previous per-100g
+// fixtures × the serving grams that used to live on `Serving.grams` —
+// so the realism is preserved end-to-end (the day view's totals and
+// the per-meal subtotals land at the same neighborhoods as before).
 
 import 'package:decimal/decimal.dart';
 
@@ -23,25 +19,20 @@ import '../domain/log_entry.dart';
 import '../domain/meal.dart';
 import '../domain/nutrition.dart';
 import '../domain/serving.dart';
+import '../domain/unit.dart';
 import '../domain/user.dart';
 import '../domain/weight.dart';
 
-/// Test-controllable clock. Production callers see real "now".
+/// Test-controllable clock.
 DateTime Function()? _clockOverride;
 
-/// `DateTime.now()` for fixtures. Default is local now; tests inject a
-/// fixed clock to keep the seed deterministic.
 DateTime mockNow() => (_clockOverride ?? DateTime.now)();
 
-/// Today, midnight local — the anchor for every date-shaped fixture
-/// below. Stripping the time component matches the wire's `YYYY-MM-DD`
-/// convention (T-16: dates are local-calendar, not UTC).
 DateTime mockToday() {
   final n = mockNow();
   return DateTime(n.year, n.month, n.day);
 }
 
-/// Override for tests. Pass `null` to restore real `DateTime.now`.
 void setMockClockForTesting(DateTime Function()? clock) {
   _clockOverride = clock;
 }
@@ -85,45 +76,21 @@ User buildSeedUser({
 
 // ─── Foods ───────────────────────────────────────────────────────────────
 //
-// Each food carries:
-//   - a stable `id` (used by log entries below; do not renumber)
-//   - per-100 g nutrition (sodium in mg on the presentation model)
-//   - servings, exactly one of which has `isDefault = true`
-//   - one synthetic 100 g `ServingSource.system` serving (T-10)
-//
-// The mix is intentional: ~12 OFF, ~9 USDA, 4 user — 25 total — enough
-// to show source variety in `SearchResultRow` and the "My foods · N"
-// row on screen 08.
-//
-// **Quick-add synthetic food** (`food_quick_add`). The "Quick add
-// calories" affordance on the Today header logs raw kcal without
-// scanning a real food. To reuse the existing `LogCreate` path we mint
-// a synthetic food whose per-100 g panel is exactly 100 kcal — its
-// one serving (`sv_kcal`) is 1 g, so the existing log math collapses
-// to `quantity == kcal value`. We piggy-back on `FoodSource.user`
-// because no `synthetic` variant exists yet (and PM ruled we don't add
-// one for v1); `FoodRepository.customFoods` and `customCount`
-// explicitly skip this id so it never surfaces in "My foods".
+// Per-serving nutrition (kcal + macros) inlined. Mix of mass / volume /
+// count units so the editor + log-entry sheet have variety to render.
 
-/// Stable id of the synthetic Quick-add food. Referenced from the Today
-/// header's quick-add sheet and from `FoodRepository`'s My-foods filter.
+/// Stable id of the synthetic Quick-add food. The Today header's
+/// "Quick add calories" affordance logs against this row.
 const String quickAddFoodId = 'food_quick_add';
 
-/// Stable id of the synthetic 1 g `kcal` serving on the Quick-add food.
+/// Stable id of the synthetic `serving` row on the Quick-add food.
+/// `{amount: 1, unit: serving, kcal: 1}` — so a user-typed kcal value
+/// rides on the log entry's `quantity` field 1:1.
 const String quickAddServingId = 'sv_kcal';
-
-Serving _systemHundredG(String id) => Serving(
-      id: id,
-      name: '100 g',
-      grams: _d('100'),
-      isDefault: false,
-      source: ServingSource.system,
-      sortOrder: 100,
-    );
 
 List<Food> buildSeedFoods() {
   return <Food>[
-    // ── OFF (branded, off-shelf) ──
+    // ── OFF (branded) ──────────────────────────────────────────────
     Food(
       id: 'f_greek_yogurt_plain',
       createdAt: _daysAgo(82),
@@ -134,34 +101,41 @@ List<Food> buildSeedFoods() {
       isCustom: false,
       qualityScore: 86,
       nutriscore: NutriscoreGrade.b,
-      nutritionPer100g: NutritionPer100g(
-        energyKcal: _d('59'),
-        proteinG: _d('10'),
-        carbsG: _d('3.6'),
-        fatG: _d('0.4'),
-        fiberG: _d('0'),
-        sugarG: _d('3.2'),
-        sodiumMg: _d('36'),
-        saturatedFatG: _d('0.1'),
-      ),
       servings: <Serving>[
         Serving(
           id: 'sv_greek_yogurt_container',
-          name: '1 container (170 g)',
-          grams: _d('170'),
+          label: '1 container',
+          amount: _d('170'),
+          unit: Unit.g,
+          kcal: _d('100'),
+          proteinG: _d('17'),
+          carbsG: _d('6.1'),
+          fatG: _d('0.7'),
+          fiberG: _d('0'),
+          sugarG: _d('5.4'),
+          sodiumMg: _d('61'),
+          saturatedFatG: _d('0.2'),
           isDefault: true,
           source: ServingSource.off,
           sortOrder: 1,
         ),
         Serving(
           id: 'sv_greek_yogurt_cup',
-          name: '1 cup (245 g)',
-          grams: _d('245'),
+          label: '1 cup',
+          amount: _d('1'),
+          unit: Unit.cup,
+          kcal: _d('145'),
+          proteinG: _d('24.5'),
+          carbsG: _d('8.8'),
+          fatG: _d('1.0'),
+          fiberG: _d('0'),
+          sugarG: _d('7.8'),
+          sodiumMg: _d('88'),
+          saturatedFatG: _d('0.2'),
           isDefault: false,
           source: ServingSource.off,
           sortOrder: 2,
         ),
-        _systemHundredG('sv_greek_yogurt_100g'),
       ],
       categoriesTags: const <String>['dairies', 'yogurts'],
     ),
@@ -175,26 +149,24 @@ List<Food> buildSeedFoods() {
       isCustom: false,
       qualityScore: 71,
       nutriscore: NutriscoreGrade.c,
-      nutritionPer100g: NutritionPer100g(
-        energyKcal: _d('598'),
-        proteinG: _d('22.2'),
-        carbsG: _d('22.3'),
-        fatG: _d('51'),
-        fiberG: _d('5.3'),
-        sugarG: _d('9.2'),
-        sodiumMg: _d('429'),
-        saturatedFatG: _d('10'),
-      ),
       servings: <Serving>[
         Serving(
           id: 'sv_pb_tbsp',
-          name: '2 tbsp (32 g)',
-          grams: _d('32'),
+          label: '2 tbsp',
+          amount: _d('2'),
+          unit: Unit.tbsp,
+          kcal: _d('192'),
+          proteinG: _d('7.1'),
+          carbsG: _d('7.1'),
+          fatG: _d('16.3'),
+          fiberG: _d('1.7'),
+          sugarG: _d('2.9'),
+          sodiumMg: _d('137'),
+          saturatedFatG: _d('3.2'),
           isDefault: true,
           source: ServingSource.off,
           sortOrder: 1,
         ),
-        _systemHundredG('sv_pb_100g'),
       ],
       categoriesTags: const <String>['spreads', 'nut-butters'],
     ),
@@ -208,26 +180,24 @@ List<Food> buildSeedFoods() {
       isCustom: false,
       qualityScore: 91,
       nutriscore: NutriscoreGrade.a,
-      nutritionPer100g: NutritionPer100g(
-        energyKcal: _d('379'),
-        proteinG: _d('13.2'),
-        carbsG: _d('67.7'),
-        fatG: _d('6.5'),
-        fiberG: _d('10.1'),
-        sugarG: _d('0.9'),
-        sodiumMg: _d('6'),
-        saturatedFatG: _d('1.1'),
-      ),
       servings: <Serving>[
         Serving(
           id: 'sv_oats_half_cup',
-          name: '1/2 cup dry (40 g)',
-          grams: _d('40'),
+          label: '1/2 cup dry',
+          amount: _d('40'),
+          unit: Unit.g,
+          kcal: _d('152'),
+          proteinG: _d('5.3'),
+          carbsG: _d('27.1'),
+          fatG: _d('2.6'),
+          fiberG: _d('4.0'),
+          sugarG: _d('0.4'),
+          sodiumMg: _d('2.4'),
+          saturatedFatG: _d('0.4'),
           isDefault: true,
           source: ServingSource.off,
           sortOrder: 1,
         ),
-        _systemHundredG('sv_oats_100g'),
       ],
       categoriesTags: const <String>['cereals', 'oats'],
     ),
@@ -241,26 +211,24 @@ List<Food> buildSeedFoods() {
       isCustom: false,
       qualityScore: 64,
       nutriscore: NutriscoreGrade.c,
-      nutritionPer100g: NutritionPer100g(
-        energyKcal: _d('333'),
-        proteinG: _d('33.3'),
-        carbsG: _d('40'),
-        fatG: _d('13.3'),
-        fiberG: _d('23.3'),
-        sugarG: _d('3.3'),
-        sodiumMg: _d('500'),
-        saturatedFatG: _d('5'),
-      ),
       servings: <Serving>[
         Serving(
           id: 'sv_quest_bar',
-          name: '1 bar (60 g)',
-          grams: _d('60'),
+          label: '1 bar',
+          amount: _d('1'),
+          unit: Unit.piece,
+          kcal: _d('200'),
+          proteinG: _d('20'),
+          carbsG: _d('24'),
+          fatG: _d('8'),
+          fiberG: _d('14'),
+          sugarG: _d('2'),
+          sodiumMg: _d('300'),
+          saturatedFatG: _d('3'),
           isDefault: true,
           source: ServingSource.off,
           sortOrder: 1,
         ),
-        _systemHundredG('sv_quest_100g'),
       ],
       categoriesTags: const <String>['snacks', 'protein-bars'],
     ),
@@ -274,26 +242,24 @@ List<Food> buildSeedFoods() {
       isCustom: false,
       qualityScore: 78,
       nutriscore: NutriscoreGrade.b,
-      nutritionPer100g: NutritionPer100g(
-        energyKcal: _d('13'),
-        proteinG: _d('0.4'),
-        carbsG: _d('0.3'),
-        fatG: _d('1.1'),
-        fiberG: _d('0.4'),
-        sugarG: _d('0'),
-        sodiumMg: _d('72'),
-        saturatedFatG: _d('0.1'),
-      ),
       servings: <Serving>[
         Serving(
           id: 'sv_almond_milk_cup',
-          name: '1 cup (240 ml ≈ 240 g)',
-          grams: _d('240'),
+          label: '1 cup',
+          amount: _d('1'),
+          unit: Unit.cup,
+          kcal: _d('31'),
+          proteinG: _d('1'),
+          carbsG: _d('0.7'),
+          fatG: _d('2.6'),
+          fiberG: _d('1'),
+          sugarG: _d('0'),
+          sodiumMg: _d('173'),
+          saturatedFatG: _d('0.2'),
           isDefault: true,
           source: ServingSource.off,
           sortOrder: 1,
         ),
-        _systemHundredG('sv_almond_milk_100g'),
       ],
       categoriesTags: const <String>['beverages', 'plant-milks'],
     ),
@@ -307,26 +273,24 @@ List<Food> buildSeedFoods() {
       isCustom: false,
       qualityScore: 58,
       nutriscore: NutriscoreGrade.c,
-      nutritionPer100g: NutritionPer100g(
-        energyKcal: _d('400'),
-        proteinG: _d('15'),
-        carbsG: _d('70'),
-        fatG: _d('8.3'),
-        fiberG: _d('6.7'),
-        sugarG: _d('33.3'),
-        sodiumMg: _d('250'),
-        saturatedFatG: _d('1.7'),
-      ),
       servings: <Serving>[
         Serving(
           id: 'sv_clif_bar',
-          name: '1 bar (68 g)',
-          grams: _d('68'),
+          label: '1 bar',
+          amount: _d('1'),
+          unit: Unit.piece,
+          kcal: _d('272'),
+          proteinG: _d('10.2'),
+          carbsG: _d('47.6'),
+          fatG: _d('5.6'),
+          fiberG: _d('4.6'),
+          sugarG: _d('22.6'),
+          sodiumMg: _d('170'),
+          saturatedFatG: _d('1.2'),
           isDefault: true,
           source: ServingSource.off,
           sortOrder: 1,
         ),
-        _systemHundredG('sv_clif_100g'),
       ],
       categoriesTags: const <String>['snacks', 'energy-bars'],
     ),
@@ -340,26 +304,24 @@ List<Food> buildSeedFoods() {
       isCustom: false,
       qualityScore: 80,
       nutriscore: NutriscoreGrade.a,
-      nutritionPer100g: NutritionPer100g(
-        energyKcal: _d('357'),
-        proteinG: _d('12.5'),
-        carbsG: _d('71.4'),
-        fatG: _d('1.8'),
-        fiberG: _d('3.6'),
-        sugarG: _d('3.6'),
-        sodiumMg: _d('11'),
-        saturatedFatG: _d('0.4'),
-      ),
       servings: <Serving>[
         Serving(
           id: 'sv_penne_serving',
-          name: '1 serving dry (56 g)',
-          grams: _d('56'),
+          label: '1 serving dry',
+          amount: _d('56'),
+          unit: Unit.g,
+          kcal: _d('200'),
+          proteinG: _d('7'),
+          carbsG: _d('40'),
+          fatG: _d('1'),
+          fiberG: _d('2'),
+          sugarG: _d('2'),
+          sodiumMg: _d('6'),
+          saturatedFatG: _d('0.2'),
           isDefault: true,
           source: ServingSource.off,
           sortOrder: 1,
         ),
-        _systemHundredG('sv_penne_100g'),
       ],
       categoriesTags: const <String>['pastas'],
     ),
@@ -367,32 +329,30 @@ List<Food> buildSeedFoods() {
       id: 'f_dark_chocolate',
       createdAt: _daysAgo(54),
       name: 'Dark chocolate, 70%',
-      brand: "Lindt",
+      brand: 'Lindt',
       barcode: '0037466060309',
       source: FoodSource.off,
       isCustom: false,
       qualityScore: 62,
       nutriscore: NutriscoreGrade.d,
-      nutritionPer100g: NutritionPer100g(
-        energyKcal: _d('598'),
-        proteinG: _d('7.8'),
-        carbsG: _d('45.9'),
-        fatG: _d('42.6'),
-        fiberG: _d('10.9'),
-        sugarG: _d('24'),
-        sodiumMg: _d('20'),
-        saturatedFatG: _d('25.6'),
-      ),
       servings: <Serving>[
         Serving(
           id: 'sv_choco_square',
-          name: '2 squares (20 g)',
-          grams: _d('20'),
+          label: '2 squares',
+          amount: _d('20'),
+          unit: Unit.g,
+          kcal: _d('120'),
+          proteinG: _d('1.6'),
+          carbsG: _d('9.2'),
+          fatG: _d('8.5'),
+          fiberG: _d('2.2'),
+          sugarG: _d('4.8'),
+          sodiumMg: _d('4'),
+          saturatedFatG: _d('5.1'),
           isDefault: true,
           source: ServingSource.off,
           sortOrder: 1,
         ),
-        _systemHundredG('sv_choco_100g'),
       ],
       categoriesTags: const <String>['confectioneries', 'dark-chocolate'],
     ),
@@ -406,26 +366,24 @@ List<Food> buildSeedFoods() {
       isCustom: false,
       qualityScore: 88,
       nutriscore: NutriscoreGrade.c,
-      nutritionPer100g: NutritionPer100g(
-        energyKcal: _d('884'),
-        proteinG: _d('0'),
-        carbsG: _d('0'),
-        fatG: _d('100'),
-        fiberG: _d('0'),
-        sugarG: _d('0'),
-        sodiumMg: _d('2'),
-        saturatedFatG: _d('13.8'),
-      ),
       servings: <Serving>[
         Serving(
           id: 'sv_oo_tbsp',
-          name: '1 tbsp (13.5 g)',
-          grams: _d('13.5'),
+          label: '1 tbsp',
+          amount: _d('1'),
+          unit: Unit.tbsp,
+          kcal: _d('119'),
+          proteinG: _d('0'),
+          carbsG: _d('0'),
+          fatG: _d('13.5'),
+          fiberG: _d('0'),
+          sugarG: _d('0'),
+          sodiumMg: _d('0.3'),
+          saturatedFatG: _d('1.9'),
           isDefault: true,
           source: ServingSource.off,
           sortOrder: 1,
         ),
-        _systemHundredG('sv_oo_100g'),
       ],
       categoriesTags: const <String>['oils', 'olive-oil'],
     ),
@@ -439,26 +397,24 @@ List<Food> buildSeedFoods() {
       isCustom: false,
       qualityScore: 75,
       nutriscore: NutriscoreGrade.a,
-      nutritionPer100g: NutritionPer100g(
-        energyKcal: _d('250'),
-        proteinG: _d('12.5'),
-        carbsG: _d('41.7'),
-        fatG: _d('4.2'),
-        fiberG: _d('8.3'),
-        sugarG: _d('8.3'),
-        sodiumMg: _d('500'),
-        saturatedFatG: _d('0'),
-      ),
       servings: <Serving>[
         Serving(
           id: 'sv_bread_slice',
-          name: '1 slice (48 g)',
-          grams: _d('48'),
+          label: '1 slice',
+          amount: _d('1'),
+          unit: Unit.piece,
+          kcal: _d('120'),
+          proteinG: _d('6'),
+          carbsG: _d('20'),
+          fatG: _d('2'),
+          fiberG: _d('4'),
+          sugarG: _d('4'),
+          sodiumMg: _d('240'),
+          saturatedFatG: _d('0'),
           isDefault: true,
           source: ServingSource.off,
           sortOrder: 1,
         ),
-        _systemHundredG('sv_bread_100g'),
       ],
       categoriesTags: const <String>['breads', 'whole-grain'],
     ),
@@ -472,26 +428,24 @@ List<Food> buildSeedFoods() {
       isCustom: false,
       qualityScore: 82,
       nutriscore: NutriscoreGrade.b,
-      nutritionPer100g: NutritionPer100g(
-        energyKcal: _d('72'),
-        proteinG: _d('13.5'),
-        carbsG: _d('3.5'),
-        fatG: _d('1.2'),
-        fiberG: _d('0'),
-        sugarG: _d('3.5'),
-        sodiumMg: _d('320'),
-        saturatedFatG: _d('0.7'),
-      ),
       servings: <Serving>[
         Serving(
           id: 'sv_cottage_half_cup',
-          name: '1/2 cup (113 g)',
-          grams: _d('113'),
+          label: '1/2 cup',
+          amount: _d('0.5'),
+          unit: Unit.cup,
+          kcal: _d('81'),
+          proteinG: _d('15.3'),
+          carbsG: _d('4.0'),
+          fatG: _d('1.4'),
+          fiberG: _d('0'),
+          sugarG: _d('4.0'),
+          sodiumMg: _d('362'),
+          saturatedFatG: _d('0.8'),
           isDefault: true,
           source: ServingSource.off,
           sortOrder: 1,
         ),
-        _systemHundredG('sv_cottage_100g'),
       ],
       categoriesTags: const <String>['dairies', 'cheeses'],
     ),
@@ -505,60 +459,52 @@ List<Food> buildSeedFoods() {
       isCustom: false,
       qualityScore: 95,
       nutriscore: NutriscoreGrade.a,
-      nutritionPer100g: NutritionPer100g(
-        energyKcal: _d('0'),
-        proteinG: _d('0'),
-        carbsG: _d('0'),
-        fatG: _d('0'),
-        fiberG: _d('0'),
-        sugarG: _d('0'),
-        sodiumMg: _d('0'),
-        saturatedFatG: _d('0'),
-      ),
       servings: <Serving>[
         Serving(
           id: 'sv_lacroix_can',
-          name: '1 can (355 ml)',
-          grams: _d('355'),
+          label: '1 can',
+          amount: _d('355'),
+          unit: Unit.ml,
+          kcal: _d('0'),
+          proteinG: _d('0'),
+          carbsG: _d('0'),
+          fatG: _d('0'),
+          fiberG: _d('0'),
+          sugarG: _d('0'),
+          sodiumMg: _d('0'),
+          saturatedFatG: _d('0'),
           isDefault: true,
           source: ServingSource.off,
           sortOrder: 1,
         ),
-        _systemHundredG('sv_lacroix_100g'),
       ],
       categoriesTags: const <String>['beverages', 'sparkling-water'],
     ),
-    // ── USDA (generic / commodity) ──
+    // ── USDA (generic / commodity) ─────────────────────────────────
     Food(
       id: 'f_apple_raw',
       createdAt: _daysAgo(36),
       name: 'Apple, raw, with skin',
-      brand: null,
-      barcode: null,
       source: FoodSource.usda,
       isCustom: false,
-      qualityScore: null,
-      nutriscore: null,
-      nutritionPer100g: NutritionPer100g(
-        energyKcal: _d('52'),
-        proteinG: _d('0.3'),
-        carbsG: _d('14'),
-        fatG: _d('0.2'),
-        fiberG: _d('2.4'),
-        sugarG: _d('10.4'),
-        sodiumMg: _d('1'),
-        saturatedFatG: _d('0'),
-      ),
       servings: <Serving>[
         Serving(
           id: 'sv_apple_medium',
-          name: '1 medium (182 g)',
-          grams: _d('182'),
+          label: '1 medium',
+          amount: _d('1'),
+          unit: Unit.piece,
+          kcal: _d('95'),
+          proteinG: _d('0.5'),
+          carbsG: _d('25.5'),
+          fatG: _d('0.4'),
+          fiberG: _d('4.4'),
+          sugarG: _d('18.9'),
+          sodiumMg: _d('2'),
+          saturatedFatG: _d('0'),
           isDefault: true,
           source: ServingSource.system,
           sortOrder: 1,
         ),
-        _systemHundredG('sv_apple_100g'),
       ],
       categoriesTags: const <String>['fruits'],
     ),
@@ -568,25 +514,23 @@ List<Food> buildSeedFoods() {
       name: 'Banana, raw',
       source: FoodSource.usda,
       isCustom: false,
-      nutritionPer100g: NutritionPer100g(
-        energyKcal: _d('89'),
-        proteinG: _d('1.1'),
-        carbsG: _d('22.8'),
-        fatG: _d('0.3'),
-        fiberG: _d('2.6'),
-        sugarG: _d('12.2'),
-        sodiumMg: _d('1'),
-      ),
       servings: <Serving>[
         Serving(
           id: 'sv_banana_medium',
-          name: '1 medium (118 g)',
-          grams: _d('118'),
+          label: '1 medium',
+          amount: _d('1'),
+          unit: Unit.piece,
+          kcal: _d('105'),
+          proteinG: _d('1.3'),
+          carbsG: _d('26.9'),
+          fatG: _d('0.4'),
+          fiberG: _d('3.1'),
+          sugarG: _d('14.4'),
+          sodiumMg: _d('1'),
           isDefault: true,
           source: ServingSource.system,
           sortOrder: 1,
         ),
-        _systemHundredG('sv_banana_100g'),
       ],
       categoriesTags: const <String>['fruits'],
     ),
@@ -596,26 +540,24 @@ List<Food> buildSeedFoods() {
       name: 'Chicken breast, skinless, cooked',
       source: FoodSource.usda,
       isCustom: false,
-      nutritionPer100g: NutritionPer100g(
-        energyKcal: _d('165'),
-        proteinG: _d('31'),
-        carbsG: _d('0'),
-        fatG: _d('3.6'),
-        fiberG: _d('0'),
-        sugarG: _d('0'),
-        sodiumMg: _d('74'),
-        saturatedFatG: _d('1'),
-      ),
       servings: <Serving>[
         Serving(
           id: 'sv_chicken_breast_piece',
-          name: '1 breast (172 g)',
-          grams: _d('172'),
+          label: '1 breast',
+          amount: _d('172'),
+          unit: Unit.g,
+          kcal: _d('284'),
+          proteinG: _d('53.3'),
+          carbsG: _d('0'),
+          fatG: _d('6.2'),
+          fiberG: _d('0'),
+          sugarG: _d('0'),
+          sodiumMg: _d('127'),
+          saturatedFatG: _d('1.7'),
           isDefault: true,
           source: ServingSource.system,
           sortOrder: 1,
         ),
-        _systemHundredG('sv_chicken_100g'),
       ],
       categoriesTags: const <String>['meats', 'poultry'],
     ),
@@ -625,26 +567,24 @@ List<Food> buildSeedFoods() {
       name: 'Brown rice, cooked',
       source: FoodSource.usda,
       isCustom: false,
-      nutritionPer100g: NutritionPer100g(
-        energyKcal: _d('123'),
-        proteinG: _d('2.7'),
-        carbsG: _d('25.6'),
-        fatG: _d('1'),
-        fiberG: _d('1.6'),
-        sugarG: _d('0.4'),
-        sodiumMg: _d('4'),
-        saturatedFatG: _d('0.2'),
-      ),
       servings: <Serving>[
         Serving(
           id: 'sv_rice_cup',
-          name: '1 cup (195 g)',
-          grams: _d('195'),
+          label: '1 cup',
+          amount: _d('1'),
+          unit: Unit.cup,
+          kcal: _d('240'),
+          proteinG: _d('5.3'),
+          carbsG: _d('49.9'),
+          fatG: _d('2'),
+          fiberG: _d('3.1'),
+          sugarG: _d('0.8'),
+          sodiumMg: _d('8'),
+          saturatedFatG: _d('0.4'),
           isDefault: true,
           source: ServingSource.system,
           sortOrder: 1,
         ),
-        _systemHundredG('sv_rice_100g'),
       ],
       categoriesTags: const <String>['grains', 'rice'],
     ),
@@ -654,25 +594,23 @@ List<Food> buildSeedFoods() {
       name: 'Broccoli, cooked',
       source: FoodSource.usda,
       isCustom: false,
-      nutritionPer100g: NutritionPer100g(
-        energyKcal: _d('35'),
-        proteinG: _d('2.4'),
-        carbsG: _d('7.2'),
-        fatG: _d('0.4'),
-        fiberG: _d('3.3'),
-        sugarG: _d('1.4'),
-        sodiumMg: _d('41'),
-      ),
       servings: <Serving>[
         Serving(
           id: 'sv_broccoli_cup',
-          name: '1 cup (156 g)',
-          grams: _d('156'),
+          label: '1 cup',
+          amount: _d('1'),
+          unit: Unit.cup,
+          kcal: _d('55'),
+          proteinG: _d('3.7'),
+          carbsG: _d('11.2'),
+          fatG: _d('0.6'),
+          fiberG: _d('5.1'),
+          sugarG: _d('2.2'),
+          sodiumMg: _d('64'),
           isDefault: true,
           source: ServingSource.system,
           sortOrder: 1,
         ),
-        _systemHundredG('sv_broccoli_100g'),
       ],
       categoriesTags: const <String>['vegetables'],
     ),
@@ -682,26 +620,24 @@ List<Food> buildSeedFoods() {
       name: 'Egg, whole, cooked',
       source: FoodSource.usda,
       isCustom: false,
-      nutritionPer100g: NutritionPer100g(
-        energyKcal: _d('155'),
-        proteinG: _d('13'),
-        carbsG: _d('1.1'),
-        fatG: _d('11'),
-        fiberG: _d('0'),
-        sugarG: _d('1.1'),
-        sodiumMg: _d('124'),
-        saturatedFatG: _d('3.3'),
-      ),
       servings: <Serving>[
         Serving(
           id: 'sv_egg_large',
-          name: '1 large (50 g)',
-          grams: _d('50'),
+          label: '1 large',
+          amount: _d('1'),
+          unit: Unit.piece,
+          kcal: _d('78'),
+          proteinG: _d('6.5'),
+          carbsG: _d('0.6'),
+          fatG: _d('5.5'),
+          fiberG: _d('0'),
+          sugarG: _d('0.6'),
+          sodiumMg: _d('62'),
+          saturatedFatG: _d('1.7'),
           isDefault: true,
           source: ServingSource.system,
           sortOrder: 1,
         ),
-        _systemHundredG('sv_egg_100g'),
       ],
       categoriesTags: const <String>['eggs'],
     ),
@@ -711,26 +647,24 @@ List<Food> buildSeedFoods() {
       name: 'Avocado, raw',
       source: FoodSource.usda,
       isCustom: false,
-      nutritionPer100g: NutritionPer100g(
-        energyKcal: _d('160'),
-        proteinG: _d('2'),
-        carbsG: _d('8.5'),
-        fatG: _d('14.7'),
-        fiberG: _d('6.7'),
-        sugarG: _d('0.7'),
-        sodiumMg: _d('7'),
-        saturatedFatG: _d('2.1'),
-      ),
       servings: <Serving>[
         Serving(
           id: 'sv_avocado_half',
-          name: '1/2 fruit (100 g)',
-          grams: _d('100'),
+          label: '1/2 fruit',
+          amount: _d('100'),
+          unit: Unit.g,
+          kcal: _d('160'),
+          proteinG: _d('2'),
+          carbsG: _d('8.5'),
+          fatG: _d('14.7'),
+          fiberG: _d('6.7'),
+          sugarG: _d('0.7'),
+          sodiumMg: _d('7'),
+          saturatedFatG: _d('2.1'),
           isDefault: true,
           source: ServingSource.system,
           sortOrder: 1,
         ),
-        _systemHundredG('sv_avocado_100g'),
       ],
       categoriesTags: const <String>['fruits'],
     ),
@@ -740,26 +674,24 @@ List<Food> buildSeedFoods() {
       name: 'Salmon, Atlantic, cooked',
       source: FoodSource.usda,
       isCustom: false,
-      nutritionPer100g: NutritionPer100g(
-        energyKcal: _d('208'),
-        proteinG: _d('22.1'),
-        carbsG: _d('0'),
-        fatG: _d('13.4'),
-        fiberG: _d('0'),
-        sugarG: _d('0'),
-        sodiumMg: _d('59'),
-        saturatedFatG: _d('3.1'),
-      ),
       servings: <Serving>[
         Serving(
           id: 'sv_salmon_fillet',
-          name: '1 fillet (170 g)',
-          grams: _d('170'),
+          label: '1 fillet',
+          amount: _d('170'),
+          unit: Unit.g,
+          kcal: _d('354'),
+          proteinG: _d('37.6'),
+          carbsG: _d('0'),
+          fatG: _d('22.8'),
+          fiberG: _d('0'),
+          sugarG: _d('0'),
+          sodiumMg: _d('100'),
+          saturatedFatG: _d('5.3'),
           isDefault: true,
           source: ServingSource.system,
           sortOrder: 1,
         ),
-        _systemHundredG('sv_salmon_100g'),
       ],
       categoriesTags: const <String>['seafood', 'fish'],
     ),
@@ -769,26 +701,24 @@ List<Food> buildSeedFoods() {
       name: 'Spinach, raw',
       source: FoodSource.usda,
       isCustom: false,
-      nutritionPer100g: NutritionPer100g(
-        energyKcal: _d('23'),
-        proteinG: _d('2.9'),
-        carbsG: _d('3.6'),
-        fatG: _d('0.4'),
-        fiberG: _d('2.2'),
-        sugarG: _d('0.4'),
-        sodiumMg: _d('79'),
-        saturatedFatG: _d('0.1'),
-      ),
       servings: <Serving>[
         Serving(
           id: 'sv_spinach_cup',
-          name: '1 cup (30 g)',
-          grams: _d('30'),
+          label: '1 cup',
+          amount: _d('1'),
+          unit: Unit.cup,
+          kcal: _d('7'),
+          proteinG: _d('0.9'),
+          carbsG: _d('1.1'),
+          fatG: _d('0.1'),
+          fiberG: _d('0.7'),
+          sugarG: _d('0.1'),
+          sodiumMg: _d('24'),
+          saturatedFatG: _d('0'),
           isDefault: true,
           source: ServingSource.system,
           sortOrder: 1,
         ),
-        _systemHundredG('sv_spinach_100g'),
       ],
       categoriesTags: const <String>['vegetables', 'leafy-greens'],
     ),
@@ -798,59 +728,53 @@ List<Food> buildSeedFoods() {
       name: 'Almonds, raw',
       source: FoodSource.usda,
       isCustom: false,
-      nutritionPer100g: NutritionPer100g(
-        energyKcal: _d('579'),
-        proteinG: _d('21.2'),
-        carbsG: _d('21.6'),
-        fatG: _d('49.9'),
-        fiberG: _d('12.5'),
-        sugarG: _d('4.4'),
-        sodiumMg: _d('1'),
-        saturatedFatG: _d('3.8'),
-      ),
       servings: <Serving>[
         Serving(
           id: 'sv_almonds_ounce',
-          name: '1 oz (28 g)',
-          grams: _d('28'),
+          label: '1 oz',
+          amount: _d('1'),
+          unit: Unit.oz,
+          kcal: _d('162'),
+          proteinG: _d('5.9'),
+          carbsG: _d('6.0'),
+          fatG: _d('14'),
+          fiberG: _d('3.5'),
+          sugarG: _d('1.2'),
+          sodiumMg: _d('0.3'),
+          saturatedFatG: _d('1.1'),
           isDefault: true,
           source: ServingSource.system,
           sortOrder: 1,
         ),
-        _systemHundredG('sv_almonds_100g'),
       ],
       categoriesTags: const <String>['nuts'],
     ),
 
-    // ── User-custom ──
+    // ── User-custom ────────────────────────────────────────────────
     Food(
       id: 'f_moms_lasagna',
       createdAt: _daysAgo(35),
       name: "Mom's lasagna",
-      brand: null,
-      barcode: null,
       source: FoodSource.user,
       isCustom: true,
-      nutritionPer100g: NutritionPer100g(
-        energyKcal: _d('178'),
-        proteinG: _d('10.5'),
-        carbsG: _d('14.2'),
-        fatG: _d('8.7'),
-        fiberG: _d('1.3'),
-        sugarG: _d('3.1'),
-        sodiumMg: _d('420'),
-        saturatedFatG: _d('3.6'),
-      ),
       servings: <Serving>[
         Serving(
           id: 'sv_lasagna_slice',
-          name: '1 slice (220 g)',
-          grams: _d('220'),
+          label: '1 slice',
+          amount: _d('220'),
+          unit: Unit.g,
+          kcal: _d('392'),
+          proteinG: _d('23.1'),
+          carbsG: _d('31.2'),
+          fatG: _d('19.1'),
+          fiberG: _d('2.9'),
+          sugarG: _d('6.8'),
+          sodiumMg: _d('924'),
+          saturatedFatG: _d('7.9'),
           isDefault: true,
           source: ServingSource.user,
           sortOrder: 1,
         ),
-        _systemHundredG('sv_lasagna_100g'),
       ],
       categoriesTags: const <String>['user-recipes'],
     ),
@@ -860,25 +784,23 @@ List<Food> buildSeedFoods() {
       name: 'Home green smoothie',
       source: FoodSource.user,
       isCustom: true,
-      nutritionPer100g: NutritionPer100g(
-        energyKcal: _d('62'),
-        proteinG: _d('2.4'),
-        carbsG: _d('11.5'),
-        fatG: _d('1.1'),
-        fiberG: _d('2.7'),
-        sugarG: _d('7.8'),
-        sodiumMg: _d('45'),
-      ),
       servings: <Serving>[
         Serving(
           id: 'sv_smoothie_glass',
-          name: '1 large glass (450 g)',
-          grams: _d('450'),
+          label: '1 large glass',
+          amount: _d('450'),
+          unit: Unit.ml,
+          kcal: _d('279'),
+          proteinG: _d('10.8'),
+          carbsG: _d('51.8'),
+          fatG: _d('5'),
+          fiberG: _d('12.2'),
+          sugarG: _d('35.1'),
+          sodiumMg: _d('203'),
           isDefault: true,
           source: ServingSource.user,
           sortOrder: 1,
         ),
-        _systemHundredG('sv_smoothie_100g'),
       ],
       categoriesTags: const <String>['user-recipes'],
     ),
@@ -888,26 +810,24 @@ List<Food> buildSeedFoods() {
       name: "Dad's turkey chili",
       source: FoodSource.user,
       isCustom: true,
-      nutritionPer100g: NutritionPer100g(
-        energyKcal: _d('103'),
-        proteinG: _d('9.4'),
-        carbsG: _d('9.7'),
-        fatG: _d('3.1'),
-        fiberG: _d('2.4'),
-        sugarG: _d('2.1'),
-        sodiumMg: _d('380'),
-        saturatedFatG: _d('0.9'),
-      ),
       servings: <Serving>[
         Serving(
           id: 'sv_chili_bowl',
-          name: '1 bowl (340 g)',
-          grams: _d('340'),
+          label: '1 bowl',
+          amount: _d('340'),
+          unit: Unit.g,
+          kcal: _d('350'),
+          proteinG: _d('32'),
+          carbsG: _d('33'),
+          fatG: _d('10.5'),
+          fiberG: _d('8.2'),
+          sugarG: _d('7.1'),
+          sodiumMg: _d('1292'),
+          saturatedFatG: _d('3.1'),
           isDefault: true,
           source: ServingSource.user,
           sortOrder: 1,
         ),
-        _systemHundredG('sv_chili_100g'),
       ],
       categoriesTags: const <String>['user-recipes'],
     ),
@@ -917,62 +837,51 @@ List<Food> buildSeedFoods() {
       name: 'Office coffee w/ oat milk',
       source: FoodSource.user,
       isCustom: true,
-      nutritionPer100g: NutritionPer100g(
-        energyKcal: _d('15'),
-        proteinG: _d('0.4'),
-        carbsG: _d('2.6'),
-        fatG: _d('0.4'),
-        fiberG: _d('0'),
-        sugarG: _d('1.4'),
-        sodiumMg: _d('14'),
-      ),
       servings: <Serving>[
         Serving(
           id: 'sv_coffee_mug',
-          name: '1 mug (350 g)',
-          grams: _d('350'),
+          label: '1 mug',
+          amount: _d('350'),
+          unit: Unit.ml,
+          kcal: _d('53'),
+          proteinG: _d('1.4'),
+          carbsG: _d('9.1'),
+          fatG: _d('1.4'),
+          fiberG: _d('0'),
+          sugarG: _d('4.9'),
+          sodiumMg: _d('49'),
           isDefault: true,
           source: ServingSource.user,
           sortOrder: 1,
         ),
-        _systemHundredG('sv_coffee_100g'),
       ],
       categoriesTags: const <String>['user-recipes', 'beverages'],
     ),
 
-    // ── Synthetic: Quick add ───────────────────────────────────────────
+    // ── Synthetic: Quick add ───────────────────────────────────────
     //
     // Reserves the `food_quick_add` row so the Today header's "Quick
-    // add calories" affordance can POST a normal `LogCreate` against a
-    // real food id. The per-100 g panel is exactly 100 kcal and the
-    // single serving is 1 g — so the standard log math
-    // (`per100 × grams / 100 × quantity`) collapses to
-    // `quantity == kcal value`. Macros default to zero; the optional
-    // macros toggle on the quick-add sheet supplies an override via
-    // `LogCreate.nutritionOverride` when the user opts in.
-    //
-    // `source == user` is the least-bad enum value (no `synthetic`
-    // variant in v1 per PM); `FoodRepository.customFoods` /
-    // `customCount` skip this id by name so it never appears in "My
-    // foods".
+    // add calories" affordance can POST against a real food id. The
+    // sentinel serving is `{amount: 1, unit: serving, kcal: 1}` — so
+    // a user-typed kcal value rides on the log entry's `quantity`
+    // field 1:1 (snapshot kcal = quantity × 1).
     Food(
       id: quickAddFoodId,
       createdAt: _daysAgo(90),
       name: 'Quick add',
       source: FoodSource.user,
       isCustom: false,
-      nutritionPer100g: NutritionPer100g(
-        energyKcal: _d('100'),
-        proteinG: Decimal.zero,
-        carbsG: Decimal.zero,
-        fatG: Decimal.zero,
-        sodiumMg: Decimal.zero,
-      ),
       servings: <Serving>[
         Serving(
           id: quickAddServingId,
-          name: 'kcal',
-          grams: Decimal.one,
+          label: 'kcal',
+          amount: Decimal.one,
+          unit: Unit.serving,
+          kcal: Decimal.one,
+          proteinG: Decimal.zero,
+          carbsG: Decimal.zero,
+          fatG: Decimal.zero,
+          sodiumMg: Decimal.zero,
           isDefault: true,
           source: ServingSource.system,
           sortOrder: 0,
@@ -994,7 +903,6 @@ Goal buildSeedActiveGoal() {
     endedOn: null,
     startWeightKg: _d('82.4'),
     targetWeightKg: _d('76.0'),
-    // Lose 0.5 kg/week — signed negative on the wire convention.
     weeklyRateKg: _d('-0.5'),
     dailyCalorieTarget: 2150,
     proteinTargetG: _d('165'),
@@ -1025,22 +933,15 @@ Goal buildSeedPreviousGoal() {
 }
 
 // ─── Weight series ───────────────────────────────────────────────────────
-//
-// 30 days, slight downward trend with mild noise. The most recent entry
-// matches `buildSeedUser`'s `currentWeightKg` (79.4) so the profile and
-// weight screens agree.
 
 List<WeightEntry> buildSeedWeights() {
   final out = <WeightEntry>[];
-  // Start at 82.1 thirty days ago, lose ~0.07 kg/day on average with ±0.25
-  // kg of noise, landing at ~80 today. Deterministic — no RNG.
   const samples = <double>[
     82.1, 82.0, 81.9, 82.1, 81.8, 81.7, 81.5,
     81.6, 81.4, 81.2, 81.0, 81.1, 80.9, 80.8,
     80.7, 80.5, 80.6, 80.4, 80.3, 80.1, 80.2,
     80.0, 79.8, 79.9, 79.7, 79.6, 79.5, 79.6, 79.4, 79.4,
   ];
-  // Order: samples[0] is 29 days ago; samples.last is today.
   for (var i = 0; i < samples.length; i++) {
     final daysAgo = samples.length - 1 - i;
     final date = _daysAgo(daysAgo);
@@ -1058,11 +959,6 @@ List<WeightEntry> buildSeedWeights() {
 }
 
 // ─── Log entries ─────────────────────────────────────────────────────────
-//
-// Seven days of partial coverage (today and prior 6). Today gets all 4
-// meals populated so screen 01's day-view brief is satisfied. Prior days
-// have varying coverage to exercise the "empty meal section" and the
-// trend coloring on the ring across days.
 
 class _LogSeed {
   const _LogSeed({
@@ -1082,7 +978,6 @@ class _LogSeed {
 List<LogEntry> buildSeedLogEntries(List<Food> foods) {
   Food food(String id) => foods.firstWhere((f) => f.id == id);
 
-  // Map of [daysAgo] → seeds for that day. Today (0) is fully populated.
   final byDay = <int, List<_LogSeed>>{
     0: <_LogSeed>[
       _LogSeed(
@@ -1315,10 +1210,9 @@ int _hourForMeal(Meal m) {
   }
 }
 
-/// Build a [LogEntry] with a frozen snapshot computed from the food's
-/// per-100 g nutrition × the serving × quantity. This is what the
-/// server does on `POST /log`; the mock repository mirrors the math so
-/// the day summary and the entry both agree.
+/// Build a [LogEntry] with the frozen nutrition snapshot computed from
+/// `serving.<nutrient> × quantity`. Per Ask 10 the math no longer
+/// routes through per-100g — the serving carries its own nutrition.
 LogEntry computeLogEntry({
   required String id,
   required Food food,
@@ -1329,27 +1223,26 @@ LogEntry computeLogEntry({
   required DateTime createdAt,
   String? note,
 }) {
-  final gramsTotal = serving.grams * quantity;
-  // Ratio = grams / 100. Use Rational → Decimal with a fixed scale so we
-  // never carry an infinite expansion through the math.
-  final ratio = (gramsTotal / Decimal.fromInt(100))
-      .toDecimal(scaleOnInfinitePrecision: 6);
-
   Decimal? scale(Decimal? v) =>
-      v == null ? null : (v * ratio);
+      v == null ? null : (v * quantity).toDecimal(scaleOnInfinitePrecision: 6);
 
-  final per = food.nutritionPer100g;
-  final kcal = (per.energyKcal ?? Decimal.zero) * ratio;
+  final kcal = (serving.kcal * quantity).toDecimal(scaleOnInfinitePrecision: 6);
   final snapshot = NutritionSnapshot(
     caloriesKcal: kcal,
-    proteinG: scale(per.proteinG),
-    carbsG: scale(per.carbsG),
-    fatG: scale(per.fatG),
-    fiberG: scale(per.fiberG),
-    sugarG: scale(per.sugarG),
-    sodiumMg: scale(per.sodiumMg),
-    saturatedFatG: scale(per.saturatedFatG),
+    proteinG: scale(serving.proteinG),
+    carbsG: scale(serving.carbsG),
+    fatG: scale(serving.fatG),
+    fiberG: scale(serving.fiberG),
+    sugarG: scale(serving.sugarG),
+    sodiumMg: scale(serving.sodiumMg),
+    saturatedFatG: scale(serving.saturatedFatG),
   );
+
+  // `entered_amount` defaults to `serving.amount * quantity`, expressed
+  // in the serving's own unit. The log-entry sheet will override this
+  // when the user picked a different same-family unit at entry time.
+  final enteredAmount =
+      (serving.amount * quantity).toDecimal(scaleOnInfinitePrecision: 6);
 
   return LogEntry(
     id: id,
@@ -1360,7 +1253,8 @@ LogEntry computeLogEntry({
     consumedOn: consumedOn,
     meal: meal,
     quantity: quantity,
-    gramsTotal: gramsTotal,
+    enteredAmount: enteredAmount,
+    enteredUnit: serving.unit,
     nutritionSnapshot: snapshot,
     note: note,
     createdAt: createdAt,
@@ -1419,17 +1313,7 @@ DaySummary buildDaySummary({
 
 // ─── Weight series builder ───────────────────────────────────────────────
 
-/// Compute the 7-day moving average client-side (architect gotcha for
-/// screen 06). Window is the preceding 7 entries inclusive of `i`. For
-/// `i < 6` there aren't enough points; we leave `movingAvg7d` null.
-///
-/// Math stays in `Decimal` to honor T-17. The sum / 7 rational is
-/// resolved to 4 decimal places — plenty of precision for a chart axis
-/// label that formats to one decimal at the leaf.
 List<WeightSeriesPoint> buildWeightSeries(List<WeightEntry> entries) {
-  // Caller guarantees ascending-by-recordedOn order. Defensive sort here
-  // anyway — the mock fixture is already sorted, but future seed
-  // shuffles shouldn't break the moving-avg math.
   final sorted = <WeightEntry>[...entries]
     ..sort((a, b) => a.recordedOn.compareTo(b.recordedOn));
   final out = <WeightSeriesPoint>[];
