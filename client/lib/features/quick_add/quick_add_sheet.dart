@@ -6,7 +6,7 @@ import 'package:intl/intl.dart';
 
 import '../../domain/log_entry.dart';
 import '../../domain/meal.dart';
-import '../../domain/nutrition.dart';
+import '../../domain/unit.dart';
 import '../../form_factor/form_factor.dart';
 import '../../providers/log_providers.dart';
 import '../../providers/food_providers.dart';
@@ -310,14 +310,18 @@ class _QuickAddSheetBodyState extends ConsumerState<QuickAddSheetBody> {
     });
   }
 
-  /// Build the `LogCreate` payload from the current form state. The
-  /// quantity field maps directly to kcal because the synthetic
-  /// Quick-add food's per-100 g panel is 100 kcal and the `kcal`
-  /// serving is 1 g — so `quantity × 1 g × (100 kcal / 100 g) = kcal`.
+  /// Build the `LogCreate` payload from the current form state. Per
+  /// Ask 10 the quick-add sentinel food has a single serving
+  /// `{amount: 1, unit: serving, kcal: 1}` — so the user-typed kcal
+  /// rides on `quantity` 1:1. The fixture's `computeLogEntry` keys off
+  /// `quantity * serving.kcal` (= `quantity * 1`), so the snapshot
+  /// equals the user's kcal value.
   ///
-  /// When the macros toggle is on the override carries 100 kcal +
-  /// user-supplied P/C/F so the snapshot math at `LogRepository.create`
-  /// surfaces those macros on the entry.
+  /// Macros toggle (when on) is a v1.1 enhancement once the wire
+  /// supports per-entry macro overrides. For now those values are
+  /// captured locally but not sent — the macros panel is still useful
+  /// to gather the user's intent during the form, even if the snapshot
+  /// only records kcal until the BE adds the override field.
   LogCreate _buildLogCreate() {
     final kcal = _kcal ?? Decimal.one;
     return LogCreate(
@@ -326,20 +330,9 @@ class _QuickAddSheetBodyState extends ConsumerState<QuickAddSheetBody> {
       consumedOn: _date,
       meal: _meal,
       quantity: kcal,
+      enteredAmount: kcal,
+      enteredUnit: Unit.serving,
       note: null,
-      nutritionOverride: _macrosExpanded ? _buildOverride() : null,
-    );
-  }
-
-  /// Build the per-100 g override carrying the user-supplied macros.
-  /// Energy stays at 100 kcal so `quantity` still maps to kcal; only
-  /// the macro fields differ from the default zero panel.
-  NutritionPer100g _buildOverride() {
-    return NutritionPer100g(
-      energyKcal: Decimal.fromInt(100),
-      proteinG: _protein ?? Decimal.zero,
-      carbsG: _carbs ?? Decimal.zero,
-      fatG: _fat ?? Decimal.zero,
     );
   }
 
