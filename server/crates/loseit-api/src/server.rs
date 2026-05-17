@@ -208,12 +208,7 @@ pub async fn build_state(pool: PgPool, config: &AppConfig) -> Result<AppState> {
 /// I/O — so tests can swap in fakes and assert HTTP behaviour without a
 /// network.
 pub fn router(state: AppState) -> Router {
-    let public = routes::health::router();
-    let public = if state.auth.is_some() {
-        public.merge(routes::auth::router())
-    } else {
-        public
-    };
+    let public = routes::health::router().merge(routes::auth::router());
 
     let authed = Router::new()
         .merge(routes::profile::router())
