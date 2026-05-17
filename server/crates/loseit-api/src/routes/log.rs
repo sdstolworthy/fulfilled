@@ -137,7 +137,9 @@ struct ListLogQuery {
 struct LogEntryResponse {
     id: Uuid,
     food_id: Uuid,
+    food_name: String,
     serving_id: Option<Uuid>,
+    serving_name: Option<String>,
     consumed_on: NaiveDate,
     meal: &'static str,
     quantity: Decimal,
@@ -162,7 +164,9 @@ impl From<FoodLogEntry> for LogEntryResponse {
         Self {
             id: e.id,
             food_id: e.food_id,
+            food_name: e.food_name,
             serving_id: e.serving_id,
+            serving_name: e.serving_name,
             consumed_on: e.consumed_on,
             meal: e.meal.as_str(),
             quantity: e.quantity,

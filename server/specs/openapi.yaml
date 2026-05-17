@@ -1456,6 +1456,7 @@ components:
       required:
         - id
         - food_id
+        - food_name
         - consumed_on
         - meal
         - quantity
@@ -1466,9 +1467,12 @@ components:
       properties:
         id: { type: string, format: uuid }
         food_id: { type: string, format: uuid }
+        food_name: { type: string }
         serving_id:
           type: [string, "null"]
           format: uuid
+        serving_name:
+          type: [string, "null"]
         consumed_on: { type: string, format: date }
         meal: { $ref: "#/components/schemas/Meal" }
         quantity: { $ref: "#/components/schemas/Decimal" }

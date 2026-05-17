@@ -70,6 +70,8 @@ where
     // the quick-add sentinel when it exists. The wiring is harmless for tests
     // that never call quick_add (no sentinel rows → nothing to filter).
     logs_concrete.set_food_repo_for_sentinel_filter(foods_concrete.clone());
+    // Wire serving repo so every list/create path populates serving_name.
+    logs_concrete.set_serving_repo(servings_concrete.clone());
 
     let alice = users_concrete.create(&test_identity()).await.unwrap();
 
@@ -2194,4 +2196,135 @@ async fn copy_day_replicates_quick_add_entries_with_same_calories() {
     assert!(copied[0]["protein_g"].is_null());
     assert!(copied[0]["carbs_g"].is_null());
     assert!(copied[0]["fat_g"].is_null());
+}
+
+// =============================================================================
+// T04 — food_name + serving_name in GET /log response.
+// =============================================================================
+
+#[tokio::test]
+async fn list_log_entries_include_food_name_and_serving_name() {
+    // Seed a food named "Tomato paste" with a serving labelled "100 g",
+    // log one entry against them, and assert the GET /log response carries
+    // both names.
+    use std::sync::OnceLock;
+    let captured: Arc<OnceLock<(Uuid, Uuid)>> = Arc::new(OnceLock::new());
+    let captured_for_seed = captured.clone();
+    let (app, _alice) = build_test_app_with(move |foods, servings, _logs, _goals, alice| {
+        let foods = foods.clone();
+        let servings = servings.clone();
+        let captured = captured_for_seed.clone();
+        Box::pin(async move {
+            let food = foods
+                .create_custom(
+                    alice,
+                    &FoodDraft {
+                        name: "Tomato paste".into(),
+                        brands: None,
+                        barcode: None,
+                        categories_tags: vec![],
+                        nutrition: NutritionPer100g {
+                            energy_kcal: Some(Decimal::from(82)),
+                            ..Default::default()
+                        },
+                        nutriscore_grade: None,
+                    },
+                )
+                .await
+                .unwrap();
+            let serving = servings
+                .create(
+                    food.id,
+                    &ServingDraft {
+                        label: "100 g".into(),
+                        grams: Decimal::from(100),
+                        is_default: true,
+                        source: ServingSource::System,
+                        sort_order: 0,
+                    },
+                )
+                .await
+                .unwrap();
+            captured.set((food.id, serving.id)).unwrap();
+        })
+    })
+    .await;
+    let (food_id, serving_id) = *captured.get().unwrap();
+
+    // Create the log entry via the API.
+    let body = serde_json::json!({
+        "food_id": food_id,
+        "serving_id": serving_id,
+        "consumed_on": "2026-05-15",
+        "meal": "lunch",
+        "quantity": "1",
+    });
+    let resp = app
+        .clone()
+        .oneshot(authed_json_request("POST", "/api/v1/log", body))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    // GET /log and verify food_name + serving_name are populated.
+    let resp = app
+        .oneshot(authed_request(
+            "GET",
+            "/api/v1/log?from=2026-05-15&to=2026-05-15",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = read_json(resp.into_body()).await;
+    let results = body["results"].as_array().expect("results array");
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0]["food_name"], "Tomato paste");
+    assert_eq!(results[0]["serving_name"], "100 g");
+}
+
+#[tokio::test]
+async fn list_log_entries_quick_add_has_no_serving_name() {
+    // A quick_add entry has a sentinel serving ("kcal") so serving_name is
+    // non-null. food_name is the sentinel name (non-empty).
+    let (app, _alice) = build_test_app_with(|_f, _s, _l, _g, _u| Box::pin(async move {})).await;
+
+    // Trigger quick_add — provisions the sentinel food and stamps the entry.
+    let body = serde_json::json!({
+        "calories_kcal": "100",
+        "meal": "snack",
+        "consumed_on": "2026-05-15",
+    });
+    let resp = app
+        .clone()
+        .oneshot(authed_json_request("POST", "/api/v1/log/quick_add", body))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    // GET /log and check names.
+    let resp = app
+        .oneshot(authed_request(
+            "GET",
+            "/api/v1/log?from=2026-05-15&to=2026-05-15",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = read_json(resp.into_body()).await;
+    let results = body["results"].as_array().expect("results array");
+    assert_eq!(results.len(), 1);
+    // food_name must be non-empty (the sentinel's name).
+    assert!(
+        !results[0]["food_name"]
+            .as_str()
+            .unwrap_or("")
+            .is_empty(),
+        "food_name must be non-empty for a quick_add entry"
+    );
+    // serving_name is non-null: quick_add assigns the sentinel's default
+    // serving, so the LEFT JOIN always resolves it.
+    assert!(
+        !results[0]["serving_name"].is_null(),
+        "serving_name should be non-null for a quick_add entry (sentinel serving exists)"
+    );
 }
