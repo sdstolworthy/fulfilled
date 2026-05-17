@@ -73,7 +73,7 @@ where
     let logs: Arc<dyn LogRepository> = logs_concrete;
     let authn: Arc<dyn Authenticator> =
         Arc::new(FakeAuthenticator::new(TEST_TOKEN, test_identity()));
-    let state = AppState::from_ports(users, weights, goals, foods, servings, logs, authn, None);
+    let state = AppState::from_ports(users, weights, goals, foods, servings, logs, authn, None, None, false);
     (router(state), alice.id)
 }
 
