@@ -308,7 +308,8 @@ Page<void> _shellPage(BuildContext context, GoRouterState state, Widget child) {
 /// - On success → `pushReplacement('/foods/${food.id}')`. The user's
 ///   back button lands wherever they were before they pasted the
 ///   barcode, not on this transient screen.
-/// - On `FoodNotFoundError` → `pushReplacement('/foods/new?barcode=…')`
+/// - On a `null` return (server `404 not_found`) →
+///   `pushReplacement('/foods/new?barcode=…')`
 ///   so the custom-food form picks the barcode up via the `?barcode=`
 ///   query param (T-021).
 /// - On any other error → an inline "Couldn't look up …" message with
@@ -353,10 +354,14 @@ class _BarcodeResolveScreenState extends ConsumerState<_BarcodeResolveScreen> {
     try {
       final food = await repo.byBarcode(widget.barcode);
       if (!mounted) return;
+      // `byBarcode` maps the server's `404 not_found` (no food known for
+      // that barcode) to `null` — the expected scan miss surfaces as
+      // "open the create-custom screen pre-filled with this barcode".
+      if (food == null) {
+        context.pushReplacement('/foods/new?barcode=${widget.barcode}');
+        return;
+      }
       context.pushReplacement('/foods/${food.id}');
-    } on FoodNotFoundError {
-      if (!mounted) return;
-      context.pushReplacement('/foods/new?barcode=${widget.barcode}');
     } on Object catch (err) {
       if (!mounted) return;
       setState(() {

@@ -1,10 +1,10 @@
 import 'package:decimal/decimal.dart';
+import 'package:dio/dio.dart';
 
 import '../data/api_client.dart';
 import '../domain/enums.dart';
 import '../domain/weight.dart';
-import '_fixtures.dart';
-import '_mock_latency.dart';
+import '_fixtures.dart' show buildWeightSeries;
 
 /// Read + write surface for `WeightEntry`. Mirrors `/weights` paths in
 /// the OpenAPI doc.
@@ -22,51 +22,64 @@ import '_mock_latency.dart';
 class WeightRepository {
   WeightRepository(this._api);
 
-  // ignore: unused_field — kept for parity with the eventual real client.
   final ApiClient _api;
 
-  static List<WeightEntry>? _entries;
-  static int _seq = 0;
-
-  List<WeightEntry> get _state {
-    final cached = _entries;
-    if (cached != null) return cached;
-    final list = <WeightEntry>[...buildSeedWeights()]
-      ..sort((a, b) => a.recordedOn.compareTo(b.recordedOn));
-    _entries = list;
-    return list;
+  /// `GET /weights` — paginated history of the caller's weight entries,
+  /// newest recorded-day first.
+  ///
+  /// Envelope: `{ results, total, limit, offset }` per
+  /// `#/components/schemas/PaginatedWeights`. With no parameters the
+  /// server returns the 100 most-recent entries across the full
+  /// history (openapi.yaml line ~165). `since` / `until` map to the
+  /// `from` / `to` ISO-date query params; `limit` / `offset` pass
+  /// through.
+  Future<List<WeightEntry>> list({
+    DateTime? since,
+    DateTime? until,
+    int? limit,
+    int? offset,
+  }) async {
+    final Response<dynamic> resp;
+    try {
+      resp = await _api.dio.get<dynamic>(
+        '/weights',
+        queryParameters: <String, dynamic>{
+          if (since != null) 'from': _isoDate(since),
+          if (until != null) 'to': _isoDate(until),
+          if (limit != null) 'limit': limit,
+          if (offset != null) 'offset': offset,
+        },
+      );
+    } on DioException catch (e) {
+      throw _mapDioError(e);
+    }
+    final body = resp.data as Map<String, dynamic>;
+    final results = (body['results'] as List<dynamic>? ?? const <dynamic>[]);
+    return results
+        .map((r) => WeightEntry.fromJson(r as Map<String, dynamic>))
+        .toList(growable: false);
   }
 
-  /// Series for the chart, ascending by date. The range filters entries
-  /// to the last N days for `1W / 1M / 3M / 1Y`, or returns the full
-  /// history for `all`. Moving avg is computed over the unfiltered
-  /// history so an early-range point still has a meaningful average
-  /// (it sees the six prior entries even though they aren't drawn).
-  Future<List<WeightSeriesPoint>> series(WeightRange range) async {
-    await mockLatency();
-    final full = buildWeightSeries(_state);
-    final n = range.days;
-    if (n == null) return full;
-    if (full.length <= n) return full;
-    return full.sublist(full.length - n);
+  /// Most-recent weight entry. No dedicated `/weights/latest` endpoint
+  /// exists in the openapi spec — the server lists newest-first, so
+  /// `list(limit: 1)` is equivalent. Throws [WeightNotFoundError] if
+  /// the caller has no entries yet (the empty-history case).
+  Future<WeightEntry> latest() async {
+    final page = await list(limit: 1);
+    if (page.isEmpty) {
+      throw WeightNotFoundError._empty();
+    }
+    return page.first;
   }
 
-  /// Newest-first history list (screen 06 shows the last `limit`
-  /// entries with their date / weight / delta).
-  Future<List<WeightEntry>> history({int limit = 10}) async {
-    await mockLatency();
-    final out = <WeightEntry>[..._state]
-      ..sort((a, b) => b.recordedOn.compareTo(a.recordedOn));
-    if (out.length <= limit) return out;
-    return out.sublist(0, limit);
-  }
-
-  /// Append a weight entry. If an entry already exists for [date], the
-  /// new value replaces it — matches the OpenAPI `409 conflict` rule
-  /// ("one weight per local-day") by collapsing client-side. The
-  /// real client surfaces the 409 inline; the mock paves over it for
-  /// the optimistic insert path the architect calls out for `POST
-  /// /weights`.
+  /// `POST /weights` with a `WeightCreate` body. Returns the decoded
+  /// server response (id + timestamps populated by the server).
+  ///
+  /// The wire schema only carries `recorded_on`, `recorded_at_local`,
+  /// `weight_kg`, and optional `note` — [WeightEntry.toJson] additionally
+  /// emits `id` and `created_at`, but unknown keys on a create body are
+  /// ignored by the server. We hand-roll the body here to keep the wire
+  /// shape exactly what the server documents.
   ///
   /// `@invalidates`
   /// - `weightSeriesProvider(<range>)` for every range — the active
@@ -74,60 +87,112 @@ class WeightRepository {
   ///   inactive ranges so a range-switch repaints fresh.
   /// - `weightHistoryProvider` — the newest-first history list.
   /// - `meProvider` — `User.currentWeightKg` is derived from the
-  ///   most recent entry (see [mostRecentKg]).
+  ///   most recent entry (see [ProfileRepository.me]).
   ///
   /// Call sites are responsible for invalidating per T-18 (minimal +
   /// explicit); this list is the **contract** the call site reads. A
   /// new dependent provider is added by editing this list and the call
   /// sites in the same PR.
-  Future<WeightEntry> create(double weightKg, DateTime date) async {
-    await mockLatency();
-    final day = DateTime(date.year, date.month, date.day);
-    final now = DateTime.now();
-    final asDecimal = Decimal.parse(weightKg.toStringAsFixed(1));
-
-    final existingIdx =
-        _state.indexWhere((e) => _sameDay(e.recordedOn, day));
-    if (existingIdx >= 0) {
-      final replaced = _state[existingIdx].copyWith(
-        weightKg: asDecimal,
-        recordedAtLocal:
-            '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')}',
-      );
-      _state[existingIdx] = replaced;
-      return replaced;
+  Future<WeightEntry> createEntry(WeightEntry entry) async {
+    final body = <String, dynamic>{
+      'recorded_on': _isoDate(entry.recordedOn),
+      if (entry.recordedAtLocal != null)
+        'recorded_at_local': entry.recordedAtLocal,
+      'weight_kg': entry.weightKg.toString(),
+      if (entry.note != null) 'note': entry.note,
+    };
+    final Response<dynamic> resp;
+    try {
+      resp = await _api.dio.post<dynamic>('/weights', data: body);
+    } on DioException catch (e) {
+      throw _mapDioError(e);
     }
+    return WeightEntry.fromJson(resp.data as Map<String, dynamic>);
+  }
 
-    final id = 'w_new_${_seq++}_${now.microsecondsSinceEpoch}';
-    final created = WeightEntry(
-      id: id,
-      recordedOn: day,
+  /// Back-compat shim — the historical client surface accepts a raw
+  /// `(weightKg, date)` pair. New code should call [createEntry] with a
+  /// fully-formed [WeightEntry] instead.
+  ///
+  /// Decimal handling per T-17: parse from a one-decimal string so the
+  /// JSON wire shape stays a number-shaped string and never inherits
+  /// `double` drift.
+  Future<WeightEntry> create(double weightKg, DateTime date) async {
+    final now = DateTime.now();
+    final entry = WeightEntry(
+      id: '', // server assigns; the field is ignored on POST.
+      recordedOn: DateTime(date.year, date.month, date.day),
       recordedAtLocal:
           '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')}',
-      weightKg: asDecimal,
+      weightKg: Decimal.parse(weightKg.toStringAsFixed(1)),
       createdAt: now,
     );
-    _state.add(created);
-    _state.sort((a, b) => a.recordedOn.compareTo(b.recordedOn));
-    return created;
+    return createEntry(entry);
   }
 
-  bool _sameDay(DateTime a, DateTime b) =>
-      a.year == b.year && a.month == b.month && a.day == b.day;
-
-  /// Internal — drives [ProfileRepository.me] so the user's "current
-  /// weight" displays the most recent entry without two providers
-  /// disagreeing.
-  Decimal? mostRecentKg() {
-    if (_state.isEmpty) return null;
-    final sorted = <WeightEntry>[..._state]
-      ..sort((a, b) => b.recordedOn.compareTo(a.recordedOn));
-    return sorted.first.weightKg;
+  /// `DELETE /weights/{id}`. Returns void on 204; raises
+  /// [WeightNotFoundError] on 404.
+  Future<void> delete(String id) async {
+    try {
+      await _api.dio.delete<void>('/weights/$id');
+    } on DioException catch (e) {
+      throw _mapDioError(e, id: id);
+    }
   }
 
-  static void resetForTesting() {
-    _entries = <WeightEntry>[...buildSeedWeights()]
+  /// Series for the chart, ascending by date. The range filters entries
+  /// to the last N days for `1W / 1M / 3M / 1Y`, or returns the full
+  /// history for `all`. Moving avg is computed over the unfiltered
+  /// history so an early-range point still has a meaningful average
+  /// (it sees the six prior entries even though they aren't drawn).
+  ///
+  /// Backed by [list] — the server returns newest-first; we re-sort
+  /// ascending before handing to [buildWeightSeries].
+  Future<List<WeightSeriesPoint>> series(WeightRange range) async {
+    final raw = await list();
+    final asc = <WeightEntry>[...raw]
       ..sort((a, b) => a.recordedOn.compareTo(b.recordedOn));
-    _seq = 0;
+    final full = buildWeightSeries(asc);
+    final n = range.days;
+    if (n == null) return full;
+    if (full.length <= n) return full;
+    return full.sublist(full.length - n);
   }
+
+  /// Newest-first history list (screen 06 shows the last `limit`
+  /// entries with their date / weight / delta). Backed by [list] —
+  /// the server already returns newest-first.
+  Future<List<WeightEntry>> history({int limit = 10}) async {
+    return list(limit: limit);
+  }
+
+  Exception _mapDioError(DioException e, {String? id}) {
+    if (e.response?.statusCode == 404) {
+      return WeightNotFoundError(id: id);
+    }
+    return e;
+  }
+
+  static String _isoDate(DateTime d) =>
+      '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
+  /// No-op kept for test-harness parity with the previous mock-backed
+  /// implementation. Real state lives on the server; nothing to reset.
+  static void resetForTesting() {}
+}
+
+/// Thrown by [WeightRepository.latest] when the caller has no weight
+/// entries, and by [WeightRepository.delete] when the id is unknown
+/// (server 404). The id is null for the empty-history case.
+class WeightNotFoundError implements Exception {
+  WeightNotFoundError({this.id});
+
+  WeightNotFoundError._empty() : id = null;
+
+  final String? id;
+
+  @override
+  String toString() => id == null
+      ? 'WeightNotFoundError: no weight entries recorded'
+      : 'WeightNotFoundError: no weight entry with id $id';
 }

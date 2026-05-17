@@ -13,7 +13,16 @@ import 'package:fulfilled/repositories/profile_repository.dart';
 import 'package:fulfilled/repositories/weight_repository.dart';
 import 'package:fulfilled/repositories/_fixtures.dart';
 
-ApiClient buildTestApiClient() => ApiClient(Dio());
+/// Construct an `ApiClient` for repo tests. The `Dio` instance is
+/// real; tests that need to assert on the wire swap its
+/// `httpClientAdapter` for a `FakeDioAdapter`. The base URL is a
+/// non-routable sentinel — tests that don't override the adapter
+/// either don't issue network calls (mock-only flows) or fail fast
+/// with a `DioException`.
+ApiClient buildTestApiClient() => ApiClient(
+      Dio(BaseOptions(baseUrl: 'https://test.example/api/v1')),
+      baseUrl: 'https://test.example/api/v1',
+    );
 
 /// Reset every repository's in-memory state to the seed and shrink the
 /// mock latency to (effectively) zero so the awaits inside the mocks
