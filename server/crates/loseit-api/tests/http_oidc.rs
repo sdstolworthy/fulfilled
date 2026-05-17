@@ -196,6 +196,8 @@ async fn build_harness(with_oidc: bool) -> Harness {
             .build()
             .unwrap();
 
+        let authorize_url = format!("{}authorize/", issuer.clone());
+        let token_url = format!("{}token/", issuer.clone());
         let provider_config = OidcProviderConfig {
             id: "authentik".into(),
             display_name: "Authentik".into(),
@@ -203,6 +205,8 @@ async fn build_harness(with_oidc: bool) -> Harness {
             client_id: "test-client".into(),
             client_secret: "test-secret".into(),
             jwks_url: jwks_url.clone(),
+            authorize_url,
+            token_url,
             redirect_uri: "https://fe.example/api/v1/auth/oidc/authentik/callback".into(),
             icon_url: None,
             scopes: vec!["openid".into(), "profile".into(), "email".into()],

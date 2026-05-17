@@ -43,6 +43,14 @@ pub struct OidcProviderConfig {
     /// Provider JWKS URL. Defaults to `<issuer>/jwks/` (Authentik shape)
     /// when `OIDC_<ID>_JWKS_URL` is unset.
     pub jwks_url: String,
+    /// Provider authorization endpoint. Defaults to `<issuer>/authorize/`
+    /// when `OIDC_<ID>_AUTHORIZE_URL` is unset. Authentik publishes this at
+    /// the root `/application/o/authorize/`, not under the per-app issuer,
+    /// so deployments against Authentik must set the env var explicitly.
+    pub authorize_url: String,
+    /// Provider token endpoint. Defaults to `<issuer>/token/` when
+    /// `OIDC_<ID>_TOKEN_URL` is unset. Same Authentik caveat as above.
+    pub token_url: String,
     /// Our callback URL — must match the redirect URI registered in the
     /// provider exactly.
     pub redirect_uri: String,
@@ -197,6 +205,18 @@ fn load_oidc_provider(id: &str) -> Result<OidcProviderConfig> {
             issuer.trim_end_matches('/').to_owned() + "/"
         )
     });
+    let authorize_url = env::var(key("AUTHORIZE_URL")).unwrap_or_else(|_| {
+        format!(
+            "{}authorize/",
+            issuer.trim_end_matches('/').to_owned() + "/"
+        )
+    });
+    let token_url = env::var(key("TOKEN_URL")).unwrap_or_else(|_| {
+        format!(
+            "{}token/",
+            issuer.trim_end_matches('/').to_owned() + "/"
+        )
+    });
     let display_name = env::var(key("DISPLAY_NAME")).unwrap_or_else(|_| capitalize(id));
     let icon_url = env::var(key("ICON_URL")).ok();
     let scopes = env::var(key("SCOPES"))
@@ -216,6 +236,8 @@ fn load_oidc_provider(id: &str) -> Result<OidcProviderConfig> {
         client_id,
         client_secret,
         jwks_url,
+        authorize_url,
+        token_url,
         redirect_uri,
         icon_url,
         scopes,

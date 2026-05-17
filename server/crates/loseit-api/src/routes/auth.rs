@@ -136,11 +136,8 @@ fn build_authorize_url(
     code_challenge: &str,
     nonce: &str,
 ) -> String {
-    let mut url = url::Url::parse(&p.config.issuer).expect("issuer URL validated at boot");
-    url.path_segments_mut()
-        .unwrap()
-        .pop_if_empty()
-        .push("authorize");
+    let mut url =
+        url::Url::parse(&p.config.authorize_url).expect("authorize URL validated at boot");
     url.query_pairs_mut()
         .append_pair("response_type", "code")
         .append_pair("client_id", &p.config.client_id)
@@ -325,10 +322,9 @@ async fn exchange_code(
     code: &str,
     pkce_verifier: &str,
 ) -> Result<TokenResponse, ApiError> {
-    let token_url = format!("{}/token/", p.config.issuer.trim_end_matches('/'));
     let resp = p
         .http
-        .post(&token_url)
+        .post(&p.config.token_url)
         .form(&[
             ("grant_type", "authorization_code"),
             ("code", code),
