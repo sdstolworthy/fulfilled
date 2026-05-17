@@ -51,16 +51,16 @@ import 'routes.dart';
 final appRouterProvider = Provider<GoRouter>((ref) {
   // LOG-007 — the auth-gate.
   //
-  // `_AuthListenable` observes `authTokenProvider` and notifies on every
-  // flip; `GoRouter` re-evaluates `redirect` on the next frame. The
-  // subscription returned by `ref.listen` lives for the Provider's
+  // `_RouterRefreshListenable` observes `authTokenProvider` and notifies
+  // on every flip; `GoRouter` re-evaluates `redirect` on the next frame.
+  // The subscription returned by `ref.listen` lives for the Provider's
   // lifetime — the `appRouterProvider` is unauto-disposed and lives for
   // the app's lifetime, so there's nothing to dispose by hand.
-  final authListenable = _AuthListenable(ref);
+  final refreshListenable = _RouterRefreshListenable(ref);
   return GoRouter(
     initialLocation: Routes.todayPath,
     debugLogDiagnostics: false,
-    refreshListenable: authListenable,
+    refreshListenable: refreshListenable,
     // LOG-007 — synchronous redirect (go_router requires sync). Five
     // rules per architect_login.md §7.2, in this exact order:
     //
@@ -256,7 +256,7 @@ final appRouterProvider = Provider<GoRouter>((ref) {
 });
 
 // ---------------------------------------------------------------------------
-// LOG-007 — Auth-gate refresh listenable.
+// LOG-007 — Router refresh listenable.
 // ---------------------------------------------------------------------------
 
 /// Bridges `authTokenProvider` (Riverpod) to `GoRouter.refreshListenable`
@@ -267,8 +267,8 @@ final appRouterProvider = Provider<GoRouter>((ref) {
 /// The subscription returned by `ref.listen` lives for the lifetime of the
 /// owning Provider — `appRouterProvider` is unauto-disposed, so it lives
 /// for the app's lifetime. No manual cleanup needed.
-class _AuthListenable extends ChangeNotifier {
-  _AuthListenable(this._ref) {
+class _RouterRefreshListenable extends ChangeNotifier {
+  _RouterRefreshListenable(this._ref) {
     _ref.listen<String?>(authTokenProvider, (prev, next) {
       notifyListeners();
     });
