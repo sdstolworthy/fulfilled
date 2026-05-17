@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fulfilled/data/auth_token.dart';
 import 'package:fulfilled/data/outbox/log_outbox_notifier.dart';
+import 'package:fulfilled/data/secure_token_store.dart';
 import 'package:fulfilled/domain/enums.dart';
 import 'package:fulfilled/domain/user.dart';
 import 'package:fulfilled/providers/food_providers.dart';
@@ -14,6 +15,8 @@ import 'package:fulfilled/routing/app_router.dart';
 import 'package:fulfilled/theme/theme_data.dart';
 import 'package:go_router/go_router.dart';
 import 'package:hive/hive.dart';
+
+import '../../data/fake_secure_token_store.dart';
 
 /// T-019 — sign-out wiring widget test.
 ///
@@ -65,6 +68,7 @@ void main() {
     container = ProviderContainer(
       overrides: <Override>[
         outboxBoxProvider.overrideWithValue(outboxBox),
+        secureTokenStoreProvider.overrideWithValue(FakeSecureTokenStore()),
         meProvider.overrideWith((ref) async => _mockUser()),
         customFoodCountProvider.overrideWith((ref) async => 0),
       ],

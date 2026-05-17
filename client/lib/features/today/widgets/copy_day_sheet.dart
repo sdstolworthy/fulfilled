@@ -13,6 +13,7 @@ import '../../../providers/repository_providers.dart';
 import '../../../theme/context_extensions.dart';
 import '../../../widgets/icon_button_36.dart';
 import '../../../widgets/primary_button.dart';
+import '../../../widgets/snackbar_throttle.dart';
 import '../today_internals.dart' show pathForDay;
 
 /// Bottom sheet (compact) / dialog (expanded) shaped form for
@@ -339,7 +340,12 @@ class _CopyDaySheetState extends ConsumerState<CopyDaySheet> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _isSubmitting = false);
-      messenger?.showSnackBar(
+      // FX-004 (v1.1 follow-up): route the failure-path SnackBar
+      // through `SnackbarThrottle.show` — a 3 s per-(context, key)
+      // cooldown swallows the rapid double-tap stack-up that the
+      // retry-action button invites under a flaky-network burst.
+      SnackbarThrottle.show(
+        context,
         SnackBar(
           content: Text('Could not copy: $e'),
           action: SnackBarAction(
@@ -347,6 +353,7 @@ class _CopyDaySheetState extends ConsumerState<CopyDaySheet> {
             onPressed: () => _save(snapshot),
           ),
         ),
+        key: 'copy_day_sheet',
       );
     }
   }

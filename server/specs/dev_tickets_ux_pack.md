@@ -59,7 +59,7 @@ their `Owns files:` list, the dependency graph below sequences them.
 
 ## UX-101  Lift `QuickAddChips` to `lib/widgets/` (T-23)
 
-**Status**: pending
+**Status**: shipped (commit `e6288ee`)
 **Priority**: P0
 **Effort**: S
 **Depends on**: none
@@ -176,7 +176,7 @@ lands in UX-107 / §4.2).
 
 ## UX-102  Theme A PR 2 — avatar cut + bolt → FAB long-press menu
 
-**Status**: pending
+**Status**: shipped (commit `e6288ee`)
 **Priority**: P0
 **Effort**: M
 **Depends on**: none
@@ -360,7 +360,7 @@ clarifying rider), **T-20** (Semantics on each menu item).
 
 ## UX-103  Theme A PR 3 — `DaySwipeWrap` horizontal swipe gesture
 
-**Status**: pending
+**Status**: shipped (commit `90f2277`)
 **Priority**: P1
 **Effort**: M
 **Depends on**: none
@@ -521,7 +521,7 @@ gesture is invisible chrome on the existing scroll surface), **T-15**
 
 ## UX-104  Theme A PR 4 — `DatePill` + chevron removal
 
-**Status**: pending
+**Status**: shipped (commit `f9c1983`)
 **Priority**: P1
 **Effort**: S
 **Depends on**: UX-103
@@ -683,7 +683,7 @@ full title block; ≥ 44 px tall).
 
 ## UX-105  F1 — `LogRepository.copyDay` + `CopyDaySheet` + preview provider
 
-**Status**: pending
+**Status**: shipped (commit `e6288ee`)
 **Priority**: P0
 **Effort**: L
 **Depends on**: none
@@ -1001,7 +1001,7 @@ target-side providers, source-date is read-only), **T-24** Case 2
 
 ## UX-106  F1 — `MealSection` overflow + empty-day "Copy from another day"
 
-**Status**: pending
+**Status**: shipped (commit `f9c1983`)
 **Priority**: P0
 **Effort**: M
 **Depends on**: UX-105
@@ -1239,7 +1239,7 @@ parameters are part of the public API).
 
 ## UX-107  F2 — `QuickAddChips.compact` flag + Today compact mount
 
-**Status**: pending
+**Status**: shipped (commit `ded73e1`)
 **Priority**: P0
 **Effort**: M
 **Depends on**: UX-101
@@ -1482,7 +1482,7 @@ canonical per UX-101).
 
 ## UX-108  F4 — Sparkline scrub-to-read gesture
 
-**Status**: pending
+**Status**: shipped (commit `e6288ee`)
 **Priority**: P1
 **Effort**: M
 **Depends on**: none
@@ -1657,7 +1657,7 @@ summary; scrub is a sighted-user affordance), **T-21**
 
 ## UX-109  F5 — Log Weight pre-fill from most-recent history
 
-**Status**: pending
+**Status**: shipped (commit `90f2277`)
 **Priority**: P1
 **Effort**: S
 **Depends on**: none
@@ -1771,7 +1771,7 @@ unit), **T-17** (Decimal in, formatted out).
 
 ## UX-110  F10 — `weeklyLogDaysProvider` + `_WeekProgressPill`
 
-**Status**: pending
+**Status**: shipped (commit `f9c1983`)
 **Priority**: P1
 **Effort**: M
 **Depends on**: UX-105
@@ -1996,7 +1996,7 @@ the week-day-count lists `weeklyLogDaysProvider`), **T-20**
 
 ## UX-111  Theme C — dead-affordance sweep
 
-**Status**: pending
+**Status**: shipped (commit `90f2277`)
 **Priority**: P2
 **Effort**: S
 **Depends on**: none
@@ -2105,7 +2105,7 @@ Theme C ("delete in v1, restore when wired"). Same shape as QL-006
 
 ## UX-112  Cross-cutting polish bundle — Theme D + E + a11y + Goals + (dev) tag
 
-**Status**: pending
+**Status**: shipped (commit `90f2277`)
 **Priority**: P2
 **Effort**: M
 **Depends on**: none
@@ -2332,7 +2332,7 @@ primary actions — the Goals fix honours the rule).
 
 ## UX-113  T-12 clarifying rider — FAB long-press menu (doc only)
 
-**Status**: pending
+**Status**: shipped (commit `f9c1983`)
 **Priority**: P2
 **Effort**: S
 **Depends on**: UX-102

@@ -43,6 +43,13 @@ dependencies:
   # UUIDs for outbox entry ids and optimistic LogEntry ids.
   uuid: ^4.5.1
 
+  # Platform secure storage for the bearer token (iOS Keychain / Android
+  # EncryptedSharedPrefs / web `window.localStorage`). LOG-003 — architect
+  # §3.5, the one new pub dep in the login pack. The web tier is same-origin
+  # to the API so the localStorage value is gated by the browser's same-origin
+  # policy; documented in `data/secure_token_store.dart`.
+  flutter_secure_storage: ^9.2.2
+
   cupertino_icons: ^1.0.8
 
 dev_dependencies:

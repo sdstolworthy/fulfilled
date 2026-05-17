@@ -34,7 +34,13 @@ import '../theme/context_extensions.dart';
 /// Each sub-field is its own integer-only `TextField`. The +/- buttons
 /// on the pounds field carry / borrow across the stones field:
 /// `13 lb + 1 = 1 st 0 lb` and `0 lb − 1 = (stones − 1) st 13 lb`.
-/// State for the two integers lives in `_WeightStepperState`;
+/// **Typed** pounds values also carry (FX-005): typing `14` in the
+/// pounds field carries to `1 st 0 lb`, `27` to `1 st 13 lb`, etc. —
+/// the typed total decomposes as `n // 14 stones + n % 14 lb` and is
+/// added to the current stones (mirroring the +/- button math). Typed
+/// negatives are unreachable because the sub-field uses
+/// `FilteringTextInputFormatter.digitsOnly`. State for the two
+/// integers lives in `_WeightStepperState`;
 /// `onChanged(parseStoneToKg(stones, pounds))` fires on every commit.
 ///
 /// **Clamps.** [minKg] / [maxKg] are converted to the active unit at
@@ -316,6 +322,11 @@ class _WeightStepperState extends ConsumerState<WeightStepper> {
       return;
     }
     final parsed = int.tryParse(raw);
+    // The integer sub-fields use `FilteringTextInputFormatter.digitsOnly`,
+    // which strips `-` before the controller sees it — so `parsed < 0`
+    // is unreachable in practice. Keep the guard for source-level safety
+    // in case the formatter ever changes; the borrow path below would
+    // mirror `_decrementPounds` if it ever fired.
     if (parsed == null || parsed < 0) {
       revert();
       return;
@@ -325,8 +336,16 @@ class _WeightStepperState extends ConsumerState<WeightStepper> {
     if (isStones) {
       nextStones = parsed;
     } else {
-      // Pounds clamps at 0..13. Anything else snaps to the bound.
-      nextPounds = parsed > 13 ? 13 : parsed;
+      // FX-005: typed pounds >= 14 carry into stones, mirroring
+      // `_incrementPounds`. `14 → 1 st 0 lb`, `27 → 1 st 13 lb`, etc.
+      // The decomposition is `n // 14 stones + n % 14 lb` — the same
+      // shape `_syncStoneFromKg` uses but applied to the typed lb
+      // total rather than a kg-derived lb total. Carrying preserves
+      // the canonical kg the parent receives (parseStoneToKg(s, p)
+      // is linear in lb) so this is purely a UX upgrade over the
+      // previous clamp-at-13 behaviour.
+      nextStones = _stones + (parsed ~/ 14);
+      nextPounds = parsed % 14;
     }
     if (nextStones == _stones && nextPounds == _pounds) {
       // Re-seed text to canonical glyph (drops leading zeros etc).
@@ -337,7 +356,11 @@ class _WeightStepperState extends ConsumerState<WeightStepper> {
       _stones = nextStones;
       _pounds = nextPounds;
     });
-    ctrl.text = isStones ? '$_stones' : '$_pounds';
+    // Re-seed BOTH controllers — a carry from the pounds field needs
+    // the stones field to repaint with the bumped value even though we
+    // committed on the pounds field's blur.
+    _stonesCtrl.text = '$_stones';
+    _poundsCtrl.text = '$_pounds';
     widget.onChanged(parseStoneToKg(_stones, _pounds));
   }
 

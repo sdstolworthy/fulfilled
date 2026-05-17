@@ -34,8 +34,15 @@ import '../theme/context_extensions.dart';
 /// active sub-field's number on +/- tap that side-by-side suffered.) Each sub-field is its own integer-only
 /// `TextField`. The +/- buttons on the inches field carry / borrow
 /// across the feet field: `11 in + 1 = 1 ft 0 in` and
-/// `0 in − 1 = (feet − 1) ft 11 in`. State for the two integers lives
-/// in `_HeightStepperState`;
+/// `0 in − 1 = (feet − 1) ft 11 in`. **Typed** inches values also
+/// carry (FX-005): typing `13` in the inches field carries to
+/// `1 ft 1 in`, `25` to `2 ft 1 in`, etc. — the typed total
+/// decomposes as `n // 12 feet + n % 12 in` and is added to the
+/// current feet (mirroring the +/- button math). The `_maxFeet`
+/// ceiling is reapplied after the carry. Typed negatives are
+/// unreachable because the sub-field uses
+/// `FilteringTextInputFormatter.digitsOnly`. State for the two
+/// integers lives in `_HeightStepperState`;
 /// `onChanged(parseFeetInchesToCm(feet, inches))` fires on every
 /// commit.
 ///
@@ -277,6 +284,10 @@ class _HeightStepperState extends ConsumerState<HeightStepper> {
       return;
     }
     final parsed = int.tryParse(raw);
+    // The integer sub-fields use `FilteringTextInputFormatter.digitsOnly`,
+    // which strips `-` before the controller sees it — so `parsed < 0`
+    // is unreachable in practice. Keep the guard for source-level safety;
+    // the borrow path would mirror `_decrementInches` if it ever fired.
     if (parsed == null || parsed < 0) {
       revert();
       return;
@@ -290,9 +301,21 @@ class _HeightStepperState extends ConsumerState<HeightStepper> {
       if (nextFeet < _minFeet) nextFeet = _minFeet;
       if (nextFeet > _maxFeet) nextFeet = _maxFeet;
     } else {
-      // Inches clamp at 0..11 (anything 12+ snaps to 11 — we don't
-      // carry on commit; the +/- buttons own the carry seam).
-      nextInches = parsed > _maxInches ? _maxInches : parsed;
+      // FX-005: typed inches >= 12 carry into feet, mirroring
+      // `_incrementInches`. `12 → 1 ft 0 in`, `13 → 1 ft 1 in`,
+      // `25 → 2 ft 1 in`, etc. The decomposition is
+      // `n // 12 feet + n % 12 in` added to the current feet count.
+      // After carrying, re-apply the `_maxFeet` soft ceiling so a
+      // monster typed value can't blow past the 8 ft cap (`9 ft 0 in`
+      // collapses to `8 ft 11 in` — the same shape the +/- gate uses
+      // when the absolute ceiling is reached).
+      const inchesPerFoot = _maxInches + 1; // 12
+      nextFeet = _feet + (parsed ~/ inchesPerFoot);
+      nextInches = parsed % inchesPerFoot;
+      if (nextFeet > _maxFeet) {
+        nextFeet = _maxFeet;
+        nextInches = _maxInches;
+      }
     }
     if (nextFeet == _feet && nextInches == _inches) {
       ctrl.text = isFeet ? '$_feet' : '$_inches';
@@ -302,7 +325,11 @@ class _HeightStepperState extends ConsumerState<HeightStepper> {
       _feet = nextFeet;
       _inches = nextInches;
     });
-    ctrl.text = isFeet ? '$_feet' : '$_inches';
+    // Re-seed BOTH controllers — a carry from the inches field needs
+    // the feet field to repaint with the bumped value even though we
+    // committed on the inches field's blur.
+    _feetCtrl.text = '$_feet';
+    _inchesCtrl.text = '$_inches';
     widget.onChanged(parseFeetInchesToCm(_feet, _inches));
   }
 

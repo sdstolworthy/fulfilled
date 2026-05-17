@@ -29,6 +29,7 @@ import 'package:fulfilled/repositories/goal_repository.dart';
 import 'package:fulfilled/repositories/log_repository.dart';
 import 'package:fulfilled/routing/routes.dart';
 import 'package:fulfilled/theme/theme_data.dart';
+import 'package:fulfilled/widgets/snackbar_throttle.dart';
 import 'package:dio/dio.dart';
 import 'package:go_router/go_router.dart';
 
@@ -50,6 +51,7 @@ class _FakeLogRepository extends LogRepository {
     required super.goalRepository,
     required this.entriesForSource,
     this.copyResult,
+    this.throwOnCopy = false,
   });
 
   /// Returned by `entriesForDate(sourceDate)`. The preview provider
@@ -59,6 +61,10 @@ class _FakeLogRepository extends LogRepository {
   /// Returned by `copyDay`. When `null`, defaults to a 1:1 echo of
   /// `entriesForSource` (no partial-skip).
   final List<LogEntry>? copyResult;
+
+  /// When `true`, `copyDay` throws — drives the failure-path SnackBar
+  /// for FX-004's throttle regression.
+  final bool throwOnCopy;
 
   final List<_CopyCall> copyCalls = <_CopyCall>[];
 
@@ -84,6 +90,9 @@ class _FakeLogRepository extends LogRepository {
       targetDate: targetDate,
       meals: meals,
     ));
+    if (throwOnCopy) {
+      throw Exception('network unavailable');
+    }
     // Filter by `meals` so the partial-skip test gets a deterministic
     // requested-count regardless of seed.
     final filtered = meals == null
@@ -204,11 +213,16 @@ void main() {
     LogRepository.resetForTesting();
     FoodRepository.resetForTesting();
     GoalRepository.resetForTesting();
+    // FX-004 — the throttle's static map persists across tests in the
+    // same process; clear it so prior cases don't suppress the first
+    // SnackBar in a later one.
+    SnackbarThrottle.resetForTest();
   });
 
   _FakeLogRepository buildRepo({
     required List<LogEntry> entriesForSource,
     List<LogEntry>? copyResult,
+    bool throwOnCopy = false,
   }) {
     final api = _buildApi();
     return _FakeLogRepository(
@@ -217,6 +231,7 @@ void main() {
       goalRepository: GoalRepository(api),
       entriesForSource: entriesForSource,
       copyResult: copyResult,
+      throwOnCopy: throwOnCopy,
     );
   }
 
@@ -382,6 +397,68 @@ void main() {
         find.textContaining('1 skipped'),
         findsOneWidget,
       );
+    },
+  );
+
+  testWidgets(
+    'FX-004: rapid second save-tap on the failure path does not stack a '
+    'second "Could not copy" SnackBar within the 3 s throttle window',
+    (tester) async {
+      tester.view.physicalSize = const Size(800, 900);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final today = DateTime(2026, 5, 15);
+      final yesterday = DateTime(2026, 5, 14);
+      final repo = buildRepo(
+        entriesForSource: <LogEntry>[
+          _entry(id: 'le1', meal: Meal.breakfast, on: yesterday),
+        ],
+        throwOnCopy: true,
+      );
+
+      await tester.pumpWidget(_harness(
+        repo: repo,
+        targetDate: today,
+      ));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('open-copy-sheet')));
+      await tester.pumpAndSettle();
+
+      // First save attempt — `copyDay` throws, failure SnackBar lands
+      // via `SnackbarThrottle.show(..., key: 'copy_day_sheet')`. Use
+      // discrete pumps (not `pumpAndSettle`) — the `SnackBar` has a
+      // 4 s auto-dismiss timer that `pumpAndSettle` would block on.
+      await tester.tap(find.byKey(const Key('copy-day-save')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(
+        find.textContaining('Could not copy'),
+        findsOneWidget,
+        reason: 'first failure should render its SnackBar',
+      );
+
+      // Rapid second tap — the throttle's 3 s per-(context, key)
+      // cooldown should swallow the second SnackBar. Only one
+      // "Could not copy" text remains in the tree (not two stacked).
+      await tester.tap(find.byKey(const Key('copy-day-save')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.pump(const Duration(milliseconds: 500));
+
+      expect(
+        find.textContaining('Could not copy'),
+        findsOneWidget,
+        reason:
+            'the throttle should suppress the second SnackBar within '
+            'the 3 s cooldown — only one "Could not copy" text should '
+            'be in the tree',
+      );
+      // Both taps did hit the repo — only the SnackBar is throttled,
+      // not the underlying retry attempt itself.
+      expect(repo.copyCalls, hasLength(2));
     },
   );
 }

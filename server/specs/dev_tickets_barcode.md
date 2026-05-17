@@ -40,7 +40,7 @@ their `Owns files:` list, the dependency graph below sequences them.
 
 ## SC-001  `ScanScreen` skeleton + opener + routing wire + native config
 
-**Status**: pending
+**Status**: shipped (commit `f5bf7b4`)
 **Priority**: P0
 **Effort**: L
 **Depends on**: none
@@ -340,7 +340,7 @@ viewfinder), **T-23** (lifted widgets package-imported).
 
 ## SC-002  `ViewfinderOverlay` painter + iPad-landscape cap
 
-**Status**: pending
+**Status**: shipped (commit `7999c1c`)
 **Priority**: P1
 **Effort**: S
 **Depends on**: SC-001 (touches `scan_screen.dart`'s placeholder slot)
@@ -476,7 +476,7 @@ size, not on form factor).
 
 ## SC-003  Torch button + no-detect hint + `PermissionDenied` empty state
 
-**Status**: pending
+**Status**: shipped (commit `7999c1c`)
 **Priority**: P1
 **Effort**: M
 **Depends on**: SC-001 (touches `scan_screen.dart`'s placeholder slots
@@ -699,7 +699,7 @@ region).
 
 ## SC-004  *(deferred to v1.1)* Dedicated manual-entry modal sheet
 
-**Status**: pending-pm (deferred; see risk 1)
+**Status**: deferred (v1.1)
 **Priority**: P2
 **Effort**: S
 **Depends on**: SC-001, SC-003
@@ -751,7 +751,7 @@ follow-up PM ruling moves the bar.
 
 ## SC-005  `PrimaryButton.dense` size variant
 
-**Status**: pending
+**Status**: shipped (commit `f5bf7b4`)
 **Priority**: P1
 **Effort**: S
 **Depends on**: none

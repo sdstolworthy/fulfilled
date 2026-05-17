@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'outbox/log_outbox_notifier.dart';
+import 'secure_token_store.dart';
 
 /// The bearer token the `ApiClient` interceptor attaches to every request.
 ///
@@ -17,6 +18,12 @@ import 'outbox/log_outbox_notifier.dart';
 /// callers that mutate (today: only the profile sign-out row) reach for
 /// the `.notifier` accessor — `ref.read(authTokenProvider.notifier).signOut()`.
 ///
+/// LOG-003 wires persistence through [SecureTokenStore]. `build()` returns
+/// the dev-bypass seed synchronously (Riverpod constraint), then kicks
+/// off an async read of the platform secure store and replaces state
+/// with the persisted bearer if one exists. `signIn` writes through to
+/// the store; `signOut` clears it.
+///
 /// Override in tests with
 /// `ProviderScope(overrides: [authTokenProvider.overrideWith(() => _Fake())])`
 /// or, for read-only callers,
@@ -25,7 +32,31 @@ import 'outbox/log_outbox_notifier.dart';
 /// notifier instead (see `test/data/auth_token_test.dart`).
 class AuthTokenNotifier extends Notifier<String?> {
   @override
-  String? build() => _seedToken();
+  String? build() {
+    // Riverpod's `Notifier.build()` is synchronous. Seed with the
+    // dev-bypass / dart-define value so the initial render has a
+    // usable token, then asynchronously replace it from secure storage
+    // if a real bearer is persisted. The store read is fire-and-forget
+    // — any error leaves the dev seed in place.
+    _hydrateFromSecureStore();
+    return _seedToken();
+  }
+
+  /// One-shot async load from [SecureTokenStore]. If a bearer is found
+  /// it replaces the dev seed; if not, state stays at whatever the
+  /// dev-bypass branch returned. Errors are swallowed — the dev seed
+  /// (or null) is a safe fallback and a 401 will route the user to
+  /// `/login` regardless.
+  Future<void> _hydrateFromSecureStore() async {
+    try {
+      final stored = await ref.read(secureTokenStoreProvider).read();
+      if (stored != null && stored.isNotEmpty) {
+        state = stored;
+      }
+    } catch (_) {
+      // Intentionally swallowed — failure to hydrate is non-fatal.
+    }
+  }
 
   /// Seed the token from the compile-time dart-define. In release builds
   /// with no token wired we return `null` so the interceptor sends no
@@ -41,7 +72,12 @@ class AuthTokenNotifier extends Notifier<String?> {
 
   /// Set the token to [token]. The next API request picks the new value
   /// up via the Dio interceptor's `ref.read(authTokenProvider)`.
-  void signIn(String token) {
+  ///
+  /// Persists to [SecureTokenStore] **before** flipping in-memory state
+  /// so a failed write doesn't leave the app with a session that won't
+  /// survive an app restart.
+  Future<void> signIn(String token) async {
+    await ref.read(secureTokenStoreProvider).write(token);
     state = token;
   }
 
@@ -59,6 +95,9 @@ class AuthTokenNotifier extends Notifier<String?> {
   /// unit-testable without a widget tree.
   Future<void> signOut() async {
     state = null;
+    // Clear the persisted bearer so the next app launch doesn't
+    // resurrect the signed-out session via `_hydrateFromSecureStore`.
+    await ref.read(secureTokenStoreProvider).clear();
     // The outbox box is the only Hive box opened today. Read it through
     // the provider so a test that overrides `outboxBoxProvider` with a
     // fake box sees its `clear()` invoked.

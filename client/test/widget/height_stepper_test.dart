@@ -22,6 +22,7 @@ import 'package:fulfilled/widgets/height_stepper.dart';
 ///   (g) typing a value above maxCm clamps to the ceiling on commit.
 ///   (h) +/- still works after typing.
 ///   (i) ftIn mode: each sub-field accepts typing independently.
+///   (j) typing "13" in inches carries to 1 ft 1 in (FX-005).
 ///
 /// The cm chrome is now a styled `TextField` — visually identical when
 /// unfocused, but assertions on the number now target the editable
@@ -409,6 +410,55 @@ void main() {
       await tester.pump();
       expect(captured, equals(Decimal.fromInt(181)));
       expect(find.text('181'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    '(j) ftIn mode: typing 13 in inches carries to 1 ft 1 in (FX-005)',
+    (tester) async {
+      Decimal? captured;
+      // Seed: 5 ft 0 in. Typing 13 in inches → carry: feet += 1, in = 1
+      // → 6 ft 1 in. This exercises both the carry math and the
+      // re-paint of the feet sub-field on a pounds-side commit.
+      var current = parseFeetInchesToCm(5, 0);
+      await tester.pumpWidget(
+        _harness(
+          unitOverride: HeightUnit.ftIn,
+          child: StatefulBuilder(
+            builder: (context, setState) {
+              return Column(
+                children: <Widget>[
+                  HeightStepper(
+                    value: current,
+                    unitOverride: HeightUnit.ftIn,
+                    onChanged: (cm) {
+                      captured = cm;
+                      setState(() => current = cm);
+                    },
+                  ),
+                  const TextField(key: Key('blur-target')),
+                ],
+              );
+            },
+          ),
+        ),
+      );
+
+      final stepperFields = find.byType(TextField);
+      expect(stepperFields, findsNWidgets(3));
+
+      // Type "13" into the inches sub-field (second of the two stepper
+      // fields). Pre-fix this clamped to 11; post-fix it carries to
+      // 6 ft 1 in (5 feet + (13 // 12) = 6; 13 % 12 = 1 inch).
+      await tester.enterText(stepperFields.at(1), '13');
+      await tester.tap(find.byKey(const Key('blur-target')));
+      await tester.pump();
+
+      expect(captured, isNotNull);
+      expect(captured, equals(parseFeetInchesToCm(6, 1)));
+      // Feet sub-field reflects the carry; inches reseeds to 1.
+      expect(find.text('6'), findsOneWidget);
+      expect(find.text('1'), findsOneWidget);
     },
   );
 

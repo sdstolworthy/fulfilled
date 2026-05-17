@@ -40,7 +40,7 @@ their `Owns files:` list, the dependency graph below sequences them.
 
 ## LU-001  `LogPatch` + `LogRepository.update` + outbox optimistic-id reconciliation
 
-**Status**: pending
+**Status**: shipped (commit `81ff22e`)
 **Priority**: P0
 **Effort**: M
 **Depends on**: none
@@ -175,7 +175,7 @@ endpoint is in `specs/openapi.yaml` (`PATCH /log/{id}` →
 
 ## LU-002  `LogEntrySheet existing:` param + edit-mode plumbing
 
-**Status**: pending
+**Status**: shipped (commit `f935db8`)
 **Priority**: P0
 **Effort**: M
 **Depends on**: LU-001
@@ -296,7 +296,7 @@ Architect §2.2, §2.3, §2.5. PM §2 "Decision: where the edit lives",
 
 ## LU-003  `formatWeight` + `parseWeightToKg` + locale default seam
 
-**Status**: pending
+**Status**: shipped (commit `81ff22e`)
 **Priority**: P0
 **Effort**: M
 **Depends on**: none
@@ -437,7 +437,7 @@ units customer-expected — this is the v2-ticket fulfilment).
 
 ## LU-004  `User.weightUnit` + `UserPatch` plumbing + `ProfileRepository.update`
 
-**Status**: pending
+**Status**: shipped (commit `f935db8`)
 **Priority**: P0
 **Effort**: S
 **Depends on**: LU-003 (needs the `WeightUnit` enum)
@@ -522,7 +522,7 @@ same).
 
 ## LU-005  Day-view tap-to-edit wiring + pending-sync guard call site
 
-**Status**: pending
+**Status**: shipped (commit `3d71c51`)
 **Priority**: P0
 **Effort**: S
 **Depends on**: LU-001, LU-002
@@ -627,7 +627,7 @@ branch sits at the screen root, not inside `MealSection`).
 
 ## LU-006  `weightUnitProvider` + `_onboardingWeightUnitProvider`
 
-**Status**: pending
+**Status**: shipped (commit `3d71c51`)
 **Priority**: P0
 **Effort**: S
 **Depends on**: LU-003, LU-004
@@ -713,7 +713,7 @@ from `meProvider` so a single `meProvider` invalidation propagates).
 
 ## LU-007  `WeightStepper` widget
 
-**Status**: pending
+**Status**: shipped (commit `1ac6495`)
 **Priority**: P0
 **Effort**: M
 **Depends on**: LU-003, LU-006
@@ -828,7 +828,7 @@ widgets package-imported).
 
 ## LU-008  Onboarding step 2 — `WeightStepper` + unit chooser + draft write
 
-**Status**: pending
+**Status**: shipped (commit `3470aa5`)
 **Priority**: P1
 **Effort**: M
 **Depends on**: LU-006, LU-007
@@ -914,7 +914,7 @@ architecture §1 segmented-select rules).
 
 ## LU-009  Sweep all weight-rendering sites through `formatWeight`
 
-**Status**: pending
+**Status**: shipped (commit `3470aa5`)
 **Priority**: P0
 **Effort**: L
 **Depends on**: LU-003, LU-006, LU-007
@@ -1067,7 +1067,7 @@ sites), §3.14 (sparkline Y-axis). PM §3 "Where this lands"
 
 ## LU-010  Profile → Preferences → Units row interactivity + chooser widget
 
-**Status**: pending
+**Status**: shipped (commit `92c74bf`)
 **Priority**: P1
 **Effort**: M
 **Depends on**: LU-004, LU-006, LU-009 (it reads the active unit
@@ -1172,7 +1172,7 @@ long name).
 
 ## LU-011  Delete `@Deprecated formatWeightKg` + final lint check
 
-**Status**: pending
+**Status**: shipped (commit `3e832fa`)
 **Priority**: P2
 **Effort**: S
 **Depends on**: LU-009 (sweep landed and zero call sites remain)
@@ -1239,7 +1239,7 @@ deleted with all call sites migrated").
 
 ## LU-012  Documentation pass — architecture & PM addenda
 
-**Status**: pending
+**Status**: shipped (commit `3e832fa`)
 **Priority**: P2
 **Effort**: S
 **Depends on**: LU-009 (sweep) + LU-010 (chooser) + LU-005 (edit

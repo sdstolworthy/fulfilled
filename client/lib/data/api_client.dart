@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../providers/api_base_url_provider.dart';
 import 'auth_token.dart';
 
 /// The HTTP client every repository talks to. Screens **never** see Dio.
@@ -12,29 +13,42 @@ import 'auth_token.dart';
 /// will produce typed DTOs in `lib/data/dtos/`. Until then, repositories
 /// hand-roll the few DTOs they need against `specs/openapi.yaml`.
 ///
-/// Base URL is `--dart-define=API_BASE_URL=...`, defaulting to the local
-/// Rust dev server (`http://localhost:8080/api/v1`). The `/api/v1` suffix is
-/// part of the base URL so endpoint paths can match `openapi.yaml` verbatim
+/// Base URL is resolved at **runtime** by `apiBaseUrlProvider` (LOG-001).
+/// Three rules, in order:
+///   1. Debug `--dart-define=API_BASE_URL=...` override (kDebugMode only).
+///   2. Web → `Uri.base.origin + '/api/v1'`.
+///   3. Mobile → `auth_config` Hive box (LOG-003 wires it).
+///
+/// `apiClientProvider` `ref.watch`es `apiBaseUrlProvider` and rebuilds
+/// Dio whenever the value changes. The `/api/v1` suffix is part of the
+/// base URL so endpoint paths can match `openapi.yaml` verbatim
 /// (`/log`, `/foods/search`, not `/api/v1/log`).
 class ApiClient {
-  ApiClient(this._dio);
+  ApiClient(this._dio, {required this.baseUrl});
 
   final Dio _dio;
 
-  Dio get dio => _dio;
+  /// The base URL this client was constructed against. Kept on the
+  /// instance for diagnostics — Dio also exposes it via
+  /// `dio.options.baseUrl`.
+  final String baseUrl;
 
-  static const String defaultBaseUrl = 'http://localhost:8080/api/v1';
+  Dio get dio => _dio;
 }
 
-const String _baseUrlFromEnv = String.fromEnvironment(
-  'API_BASE_URL',
-  defaultValue: ApiClient.defaultBaseUrl,
-);
+/// Fail-loud sentinel for when `apiBaseUrlProvider` returns `null`
+/// (fresh mobile install pre-login). Dio constructs against it; the
+/// first request fails with a `DioException`. The redirect rule
+/// (LOG-007) keeps a null-base state pinned to the login route so
+/// callers don't hit this in practice.
+const String _noBaseUrlSentinel = 'about:invalid';
 
 final apiClientProvider = Provider<ApiClient>((ref) {
+  final baseUrl = ref.watch(apiBaseUrlProvider) ?? _noBaseUrlSentinel;
+
   final dio = Dio(
     BaseOptions(
-      baseUrl: _baseUrlFromEnv,
+      baseUrl: baseUrl,
       connectTimeout: const Duration(seconds: 10),
       receiveTimeout: const Duration(seconds: 20),
       sendTimeout: const Duration(seconds: 20),
@@ -57,5 +71,5 @@ final apiClientProvider = Provider<ApiClient>((ref) {
     ),
   );
 
-  return ApiClient(dio);
+  return ApiClient(dio, baseUrl: baseUrl);
 });

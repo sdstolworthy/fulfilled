@@ -53,7 +53,7 @@ their `Owns files:` list, the dependency graph below sequences them.
 
 ## QL-101  T-24 codification + post-mutation nav doc pass + `@invalidates` repository docs
 
-**Status**: pending
+**Status**: shipped (commit `9fdb695`)
 **Priority**: P0
 **Effort**: M
 **Depends on**: none
@@ -241,7 +241,7 @@ visible — unchanged but mentioned in the LogEntrySheet dartdoc).
 
 ## QL-102  `defaultUnitsForLocale` record + `localeDefaultsProvider` + `HeightUnit` enum
 
-**Status**: pending
+**Status**: shipped (commit `9fdb695`)
 **Priority**: P0
 **Effort**: M
 **Depends on**: none
@@ -478,7 +478,7 @@ per-axis providers preserve fine-grained rebuild), **T-21**
 
 ## QL-103  `length.dart` seam + `HeightStepper` widget + carry-edge tests
 
-**Status**: pending
+**Status**: shipped (commit `b0b4a91`)
 **Priority**: P0
 **Effort**: M
 **Depends on**: QL-102
@@ -708,7 +708,7 @@ imports only).
 
 ## QL-104  Height feature sweep — onboarding step 2, profile screen, `HeightStepperSheet`, `UnitsChooser`
 
-**Status**: pending
+**Status**: shipped (commit `2caa3bd`)
 **Priority**: P0
 **Effort**: L
 **Depends on**: QL-102, QL-103
@@ -987,7 +987,7 @@ ticket pops to source).
 
 ## QL-105  `LogEntrySheet` save → `context.go(pathForDay(_date))` + `pathForDay` helper
 
-**Status**: pending
+**Status**: shipped (commit `b0b4a91`)
 **Priority**: P0
 **Effort**: M
 **Depends on**: QL-101
@@ -1198,7 +1198,7 @@ items QL-002 + QL-003. T-24 Case 2 from QL-101 / architect §3.
 
 ## QL-106  "Today" pill + `CircularProgressIndicator` sweep + bookmark/Coming-soon row cuts
 
-**Status**: pending
+**Status**: shipped (commit `24b654b`)
 **Priority**: P1
 **Effort**: M
 **Depends on**: QL-105 (consumes `pathForDay`)
@@ -1399,7 +1399,7 @@ is the action, not a number).
 
 ## QL-107  Autofocus pass + DATE row in `LogEntrySheet`
 
-**Status**: pending
+**Status**: shipped (commit `24b654b`)
 **Priority**: P1
 **Effort**: M
 **Depends on**: QL-105 (the date-shift on edit must already route to
@@ -1543,7 +1543,7 @@ pending-sync interaction).
 
 ## QL-108  Empty-day pill + pending-sync row feedback + onboarding "Start over"
 
-**Status**: pending
+**Status**: shipped (commit `9bdf08d`)
 **Priority**: P2
 **Effort**: M
 **Depends on**: QL-102 (Start-over needs `OnboardingDraft.empty()`
@@ -1718,7 +1718,7 @@ row gets a Semantics label addition), **T-22** (pending-sync visible
 
 ## QL-109  Search empty-query flash + goals weight-sweep verify + dismiss-without-save regression tests + custom-food retry flow
 
-**Status**: pending
+**Status**: shipped (commit `9bdf08d`)
 **Priority**: P2
 **Effort**: L
 **Depends on**: QL-104 (the dismiss-without-save test set covers
@@ -1903,7 +1903,7 @@ food + the food's servings list, not the whole world), **T-21**
 
 ## QL-110  Backend — `users.height_unit` migration
 
-**Status**: pending (backend)
+**Status**: moved to backend ledger — see BE-004
 **Priority**: P0
 **Effort**: S (backend team)
 **Depends on**: none

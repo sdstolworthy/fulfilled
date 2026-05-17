@@ -25,6 +25,8 @@ import 'package:fulfilled/widgets/weight_stepper.dart';
 ///   (g) typing a value outside `min/max` clamps to bounds.
 ///   (h) +/- still works after typing.
 ///   (i) each sub-field of stone mode accepts typing independently.
+///   (j) typing "14" in pounds carries to stones (FX-005).
+///   (k) typing "27" in pounds carries to 1 st 13 lb (FX-005).
 ///
 /// The kg/lb chrome is now a styled `TextField` (LU-010 keyboard input
 /// fix) — visually identical when unfocused, but assertions on the
@@ -450,6 +452,97 @@ void main() {
       await tester.tap(find.byKey(const Key('blur-target')));
       await tester.pump();
       expect(captured, equals(parseStoneToKg(11, 3)));
+    },
+  );
+
+  testWidgets(
+    '(j) st mode: typing 14 in pounds carries to stones (FX-005)',
+    (tester) async {
+      Decimal? captured;
+      // Seed: 12 st 0 lb so we can observe a clean carry of 1 stone.
+      var current = parseStoneToKg(12, 0);
+      await tester.pumpWidget(
+        _harness(
+          unitOverride: WeightUnit.st,
+          child: StatefulBuilder(
+            builder: (context, setState) {
+              return Column(
+                children: <Widget>[
+                  WeightStepper(
+                    value: current,
+                    unitOverride: WeightUnit.st,
+                    onChanged: (kg) {
+                      captured = kg;
+                      setState(() => current = kg);
+                    },
+                  ),
+                  const TextField(key: Key('blur-target')),
+                ],
+              );
+            },
+          ),
+        ),
+      );
+
+      // Three TextFields total: stones, pounds, off-stepper blur target.
+      final stepperFields = find.byType(TextField);
+      expect(stepperFields, findsNWidgets(3));
+
+      // Type "14" into the pounds sub-field (second of the two stepper
+      // fields). Pre-fix this clamped to 13; post-fix it carries to
+      // 13 st 0 lb (12 stones + (14 // 14) = 13; 14 % 14 = 0 pounds).
+      await tester.enterText(stepperFields.at(1), '14');
+      await tester.tap(find.byKey(const Key('blur-target')));
+      await tester.pump();
+
+      expect(captured, isNotNull);
+      expect(captured, equals(parseStoneToKg(13, 0)));
+      // Stones field reflects the carry; pounds reseeds to 0.
+      expect(find.text('13'), findsOneWidget);
+      expect(find.text('0'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    '(k) st mode: typing 27 in pounds carries to 1 st 13 lb (FX-005)',
+    (tester) async {
+      Decimal? captured;
+      // Seed: 0 st 0 lb so the resulting stones count comes purely
+      // from the typed total.
+      var current = parseStoneToKg(0, 0);
+      await tester.pumpWidget(
+        _harness(
+          unitOverride: WeightUnit.st,
+          child: StatefulBuilder(
+            builder: (context, setState) {
+              return Column(
+                children: <Widget>[
+                  WeightStepper(
+                    value: current,
+                    unitOverride: WeightUnit.st,
+                    onChanged: (kg) {
+                      captured = kg;
+                      setState(() => current = kg);
+                    },
+                  ),
+                  const TextField(key: Key('blur-target')),
+                ],
+              );
+            },
+          ),
+        ),
+      );
+
+      final stepperFields = find.byType(TextField);
+      // Type "27" into pounds: 27 // 14 = 1 stone carried; 27 % 14 = 13 lb.
+      await tester.enterText(stepperFields.at(1), '27');
+      await tester.tap(find.byKey(const Key('blur-target')));
+      await tester.pump();
+
+      expect(captured, isNotNull);
+      expect(captured, equals(parseStoneToKg(1, 13)));
+      expect(find.text('1'), findsOneWidget);
+      expect(find.text('13'), findsOneWidget);
     },
   );
 
