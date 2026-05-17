@@ -53,6 +53,7 @@ pub struct AppState {
     pub servings: Arc<ServingService>,
     pub logs: Arc<LogService>,
     pub authenticator: DynAuthenticator,
+    pub auth: Option<Arc<AuthService>>,
 }
 
 impl AppState {
@@ -68,6 +69,7 @@ impl AppState {
         servings: Arc<dyn ServingRepository>,
         logs: Arc<dyn LogRepository>,
         authenticator: DynAuthenticator,
+        auth_service: Option<Arc<AuthService>>,
     ) -> Self {
         let user_service = Arc::new(UserService::new(users));
         let weight_service = Arc::new(WeightService::new(weights));
@@ -83,6 +85,7 @@ impl AppState {
             servings: serving_service,
             logs: log_service,
             authenticator,
+            auth: auth_service,
         }
     }
 }
@@ -101,7 +104,7 @@ pub async fn build_state(pool: PgPool, config: &AppConfig) -> Result<AppState> {
     let foods: Arc<dyn FoodRepository> = Arc::new(PgFoodRepository::new(pool.clone()));
     let servings: Arc<dyn ServingRepository> = Arc::new(PgServingRepository::new(pool.clone()));
     let logs: Arc<dyn LogRepository> = Arc::new(PgLogRepository::new(pool.clone()));
-    let authenticator = build_authenticator(&config.auth, &config.env_name, pool).await?;
+    let (authenticator, auth_service) = build_authenticator(&config.auth, &config.env_name, pool).await?;
     Ok(AppState::from_ports(
         users,
         weights,
@@ -110,6 +113,7 @@ pub async fn build_state(pool: PgPool, config: &AppConfig) -> Result<AppState> {
         servings,
         logs,
         authenticator,
+        auth_service,
     ))
 }
 
@@ -146,7 +150,7 @@ async fn build_authenticator(
     cfg: &AuthConfig,
     env_name: &str,
     pool: PgPool,
-) -> Result<DynAuthenticator> {
+) -> Result<(DynAuthenticator, Option<Arc<AuthService>>)> {
     match cfg {
         AuthConfig::DevBypass {
             token,
@@ -166,7 +170,7 @@ async fn build_authenticator(
             };
             let authn: Arc<dyn Authenticator> =
                 Arc::new(DevAuthenticator::new(token.clone(), identity));
-            Ok(authn)
+            Ok((authn, None))
         }
         AuthConfig::Jwks {
             issuer,
@@ -182,15 +186,16 @@ async fn build_authenticator(
             )
             .await?;
             let authn: Arc<dyn Authenticator> = Arc::new(auth);
-            Ok(authn)
+            Ok((authn, None))
         }
         AuthConfig::Local => {
             let users: Arc<dyn UserRepository> = Arc::new(PgUserRepository::new(pool.clone()));
             let local: Arc<dyn LocalAuthRepository> =
                 Arc::new(PgLocalAuthRepository::new(pool.clone()));
             let auth_service = Arc::new(AuthService::new(users, local));
-            let authn: Arc<dyn Authenticator> = Arc::new(LocalAuthenticator::new(auth_service));
-            Ok(authn)
+            let authn: Arc<dyn Authenticator> =
+                Arc::new(LocalAuthenticator::new(auth_service.clone()));
+            Ok((authn, Some(auth_service)))
         }
     }
 }
