@@ -55,11 +55,37 @@ class _KeyboardShortcutsState extends ConsumerState<KeyboardShortcuts> {
     super.dispose();
   }
 
-  /// True when an `EditableText` (a `TextField`'s inner widget) currently
-  /// owns primary focus. Used by the carve-out for `/`, `n`, and `g _`.
+  /// True when a text field currently owns primary focus. Used by the
+  /// raw `onKeyEvent` path's `g _` two-key sequence carve-out (the
+  /// `CharacterActivator`-backed `/` and `n` shortcuts now handle the
+  /// editable-skip case themselves, so this check is only load-bearing
+  /// for the raw-event path).
+  ///
+  /// The naive check (`primaryFocus.context.widget is EditableText`)
+  /// breaks when a `TextField` is constructed with an external
+  /// `FocusNode` (e.g. `searchFieldFocusNodeProvider` → search field):
+  /// the FocusNode's `.context` resolves to the `Focus` widget that
+  /// wraps `EditableText`, not the `EditableText` itself, so the
+  /// `is EditableText` check returns false even when the field is
+  /// actively being typed into. We walk the descendant tree from the
+  /// focus context looking for an `EditableText` so external-FocusNode
+  /// fields are detected too.
   bool get _editableFocused {
     final focused = FocusManager.instance.primaryFocus;
-    return focused?.context?.widget is EditableText;
+    final ctx = focused?.context;
+    if (ctx == null) return false;
+    if (ctx.widget is EditableText) return true;
+    bool found = false;
+    void visit(Element el) {
+      if (found) return;
+      if (el.widget is EditableText) {
+        found = true;
+        return;
+      }
+      el.visitChildren(visit);
+    }
+    ctx.visitChildElements(visit);
+    return found;
   }
 
   void _focusSearchOrPush(BuildContext context) {
@@ -155,12 +181,31 @@ class _KeyboardShortcutsState extends ConsumerState<KeyboardShortcuts> {
       },
       child: Shortcuts(
         shortcuts: const <ShortcutActivator, Intent>{
-          SingleActivator(LogicalKeyboardKey.slash): _FocusSearchIntent(),
+          // Character-based shortcuts use `CharacterActivator` rather
+          // than `SingleActivator(LogicalKeyboardKey.x)` because
+          // Flutter's `CharacterActivator` is documented to **skip**
+          // when an editable text field currently has focus — which
+          // is exactly what we want for plain letters / punctuation.
+          // The earlier `SingleActivator` form fired on every `n` or
+          // `/` keystroke regardless of focus, hijacking the keypress
+          // before the search field's TextField could see it. The
+          // `_editableFocused` check on the Action wasn't sufficient
+          // because (a) the search field uses an explicit external
+          // `FocusNode` whose `context.widget` is `Focus`, not
+          // `EditableText`, so the check returned false; and (b)
+          // even when it returned true, `Shortcuts` still consumed
+          // the event when the Action no-op'd.
+          CharacterActivator('/'): _FocusSearchIntent(),
+          CharacterActivator('n'): _NewEntryIntent(),
+          // ⌘K / Ctrl-K stays on `SingleActivator` — modifier
+          // combinations aren't consumed by text fields, and the
+          // shortcut is intentionally global anyway.
           SingleActivator(LogicalKeyboardKey.keyK, meta: true):
               _OpenSearchRouteIntent(),
           SingleActivator(LogicalKeyboardKey.keyK, control: true):
               _OpenSearchRouteIntent(),
-          SingleActivator(LogicalKeyboardKey.keyN): _NewEntryIntent(),
+          // `Esc` is fine as a SingleActivator — it isn't a text
+          // input character and `EditableText` doesn't consume it.
           SingleActivator(LogicalKeyboardKey.escape): _PopIntent(),
         },
         child: Actions(
