@@ -384,23 +384,13 @@ agents wiring the repos see them):**
 
 ## Ask 7 — Live-deploy bugs found while wiring repos *(P1)*
 
-Status: `triaged` — queued behind BE-008 (auth login). Architect + 12-task
-breakdown for Ask 2 is mid-flight on `be-auth-login`
-(`server/specs/be_auth_login_design.md`,
-`server/specs/be_auth_login_tasks.md`); engineer dispatch starting now.
-Ask 7 picks up an architect once BE-008 engineers are off the queue —
-target inside the same overnight window. Per-sub-ask preliminary read:
+Status: `done` — PR #4 merged as `157b8e3`; redeploy `rcguognl` live. All three sub-asks verified against `https://api.coolify.stolworthy.co`:
 
-- **7a** (500 on `/log/copy`): treated as a server bug; architect will
-  reproduce locally and root-cause. Likely a service-layer panic on
-  empty-day copy or a sqlx error mapping miss.
-- **7b** (405 on `GET /foods/{id}/servings`): closing as
-  "FE works without it" + adding a one-line note to `openapi.yaml`
-  explaining `Food.servings` is the read path. No new endpoint.
-- **7c** (real UUID returned for quick-add food): tentatively picking
-  **(i)** — add `Food.kind: 'normal' | 'quick_add'` (default `'normal'`)
-  exposed on the wire; backfill existing sentinel rows. Confirms FE's
-  own preference. Will re-confirm at architect-spec time.
+- **7a**: `POST /log/copy {"from_date":"2026-05-17","to_date":"2026-05-18"}` returns **201** with the populated `{"copied": [LogEntry, ...]}` envelope (was 500). Root cause: an inline SQL `--` comment in `loseit-db/src/log_repo.rs:463` joined into a single line by Rust `\` line-continuation, making Postgres treat the rest of `create_many`'s SQL as a comment (`syntax error at end of input`). One-line fix + substring regression test + a sweep of every `--` in `loseit-db/src/` (T01+T02) confirms no other instances; policy note added at `loseit-db/src/lib.rs`.
+- **7b**: closed as docs — added prose to the OpenAPI `POST /foods/{food_id}/servings` op and `FoodDetail.servings` explaining the canonical read path is `GET /foods/{id}` (T08).
+- **7c**: chose option (i) — `Food.kind: 'normal' | 'quick_add'` enum, required on `FoodDetail`. Migration `0008_food_kind.sql` adds the column with default `'normal'` and backfills existing per-user sentinel rows to `'quick_add'`. Verified live: `POST /log/quick_add` → captured `food_id` → `GET /foods/{food_id}` returns `"kind": "quick_add"`. The FE flips its `entry.foodId == quickAddFoodId` check to `food.kind == 'quick_add'` at its own pace — fully additive.
+
+Design + task breakdown: `server/specs/be_live_deploy_fixes_design.md`, `server/specs/be_live_deploy_fixes_tasks.md`. 8 commits (T01–T08), all green at each step. `FoodSearchHitResponse` intentionally omits `kind` (sentinel is stripped at search time — see design §4.4).
 
 The FE wired all 5 repos to the live API and curl'd every endpoint
 during the wire. Three reproducible bugs against
