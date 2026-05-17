@@ -217,14 +217,16 @@ void main() {
       );
       expect(find.text('(editing)'), findsOneWidget);
 
-      // Quantity stepper reads 1.5 (the seed quantity).
+      // Per Ask 10 the AMOUNT stepper shows the consumed amount in
+      // the entered unit (serving.amount × quantity, converted to
+      // entered_unit). Seed: quantity=1.5, serving={50, g} ⇒ 75 g.
       final field = tester.widget<TextField>(
         find.descendant(
           of: find.byKey(const Key('log_entry_quantity_field_host')),
           matching: find.byType(TextField),
         ),
       );
-      expect(field.controller!.text, '1.5');
+      expect(field.controller!.text, '75');
 
       // Serving label shows the seed serving ("50 g"), not the default.
       expect(find.text('50 g'), findsWidgets);
@@ -286,7 +288,10 @@ void main() {
       ));
       await tester.pump();
 
-      // Bump quantity 1.5 → 2.0 (the only changed field).
+      // Per Ask 10 the stepper now nudges the AMOUNT (in the entered
+      // unit) by a per-unit step — for grams the step is 1, so the
+      // single Increment tap moves 75 g → 76 g, which back-computes
+      // to a multiplier of 76 / 50 = 1.52.
       await tester.tap(find.bySemanticsLabel('Increment'));
       await tester.pump();
 
@@ -296,10 +301,8 @@ void main() {
 
       expect(repo.lastUpdateId, existing.id);
       final patch = repo.lastUpdatePatch!;
-      // 1.5 + 0.5 = 2. Compare via `Decimal.parse` so trailing-zero
-      // canonicalisation doesn't matter (`'2'` and `'2.0'` are equal).
       expect(patch.quantity, isNotNull);
-      expect(patch.quantity, Decimal.parse('2'));
+      expect(patch.quantity, Decimal.parse('1.52'));
       // Everything else is sparse — the user touched nothing else.
       expect(patch.servingId, isNull);
       expect(patch.consumedOn, isNull);

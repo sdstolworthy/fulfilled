@@ -1187,7 +1187,12 @@ class _AmountAndUnitRow extends ConsumerWidget {
         Expanded(
           flex: showDropdown ? 6 : 8,
           child: QuantityStepper(
-            key: const Key('log_entry_amount_field_host'),
+            // Key preserved from the pre-Ask-10 'quantity field' to
+            // avoid breaking autofocus / edit-mode tests that locate
+            // the field by key. The stepper now hosts the amount in
+            // [enteredUnit], not a multiplier — but the identity is
+            // the same so tests still find it.
+            key: const Key('log_entry_quantity_field_host'),
             value: displayAmount,
             step: _stepFor(enteredUnit),
             min: Decimal.zero,
