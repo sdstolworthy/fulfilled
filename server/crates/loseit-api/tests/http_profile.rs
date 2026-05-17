@@ -312,6 +312,36 @@ async fn get_me_returns_default_units_for_new_user() {
 }
 
 #[tokio::test]
+async fn freshly_provisioned_user_has_null_onboarding_profile_fields() {
+    // F3 detection signal: first-time users are identified by the four
+    // profile fields being null. This locks in that contract so a future
+    // migration that back-fills any of them on create can't silently break
+    // the FE's onboarding gate.
+    let (app, _users) = build_test_app_alice();
+    let body = get_me_request(&app).await;
+    assert!(
+        body.get("sex").unwrap().is_null(),
+        "sex must be null on first GET /me"
+    );
+    assert!(
+        body.get("birth_date").unwrap().is_null(),
+        "birth_date must be null on first GET /me"
+    );
+    assert!(
+        body.get("height_cm").unwrap().is_null(),
+        "height_cm must be null on first GET /me"
+    );
+    assert!(
+        body.get("activity_level").unwrap().is_null(),
+        "activity_level must be null on first GET /me"
+    );
+    // weight_unit/height_unit are intentionally defaulted, NOT null —
+    // assert that too so nobody "helpfully" makes them nullable.
+    assert_eq!(body.get("weight_unit").unwrap(), "kg");
+    assert_eq!(body.get("height_unit").unwrap(), "cm");
+}
+
+#[tokio::test]
 async fn update_me_persists_weight_unit_roundtrip() {
     let (app, _users) = build_test_app_alice();
 
