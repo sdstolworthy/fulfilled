@@ -531,6 +531,12 @@ paths:
       tags: [Servings]
       operationId: create_serving
       summary: Create a serving on a food
+      description: |
+        Servings are read via `GET /foods/{id}`, which returns the full
+        `FoodDetail` (including `servings`). This endpoint exists only for
+        **creating** a new serving on a food; there is no symmetric
+        `GET /foods/{id}/servings` listing — it would duplicate the
+        `FoodDetail.servings` read path.
       parameters:
         - in: path
           name: food_id
@@ -1144,6 +1150,10 @@ components:
           description: Free-form JSON of additional nutrients, if any.
         servings:
           type: array
+          description: |
+            Authoritative list of this food's servings. Clients reading
+            servings should fetch the parent food — there is no separate
+            `GET /foods/{id}/servings` endpoint.
           items: { $ref: "#/components/schemas/Serving" }
 
     FoodCreate:
