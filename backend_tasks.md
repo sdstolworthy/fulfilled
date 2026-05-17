@@ -462,7 +462,100 @@ non-trivial.
 
 ## Ask 8 — Authentik / OIDC integration + provider-discovery endpoint *(P0 — user directive 2026-05-17)*
 
-Status: `open`
+Status: `open` — architect-reviewed 2026-05-17, see refinements at the
+top of this ask.
+
+### Architect refinements (2026-05-17)
+
+**Read these first — they override the per-sub-ask language below
+where they conflict.** Sizing estimate: ~20-24h focused BE work, 3
+days. Don't gold-plate refresh-token rotation or multi-IdP-per-user
+account linking — both deferred to v1.1.
+
+1. **8a — Drop the in-repo blueprint.** Architect: "Authentik
+   instance schemas drift across versions; an Authentik blueprint
+   YAML in our repo creates a coupling we don't want, and our repo
+   would imply we operate the IdP." User writes the provider +
+   application in Authentik's UI (5 clicks). Backend only needs:
+   `issuer URL`, `client_id`, `client_secret`. Confirm RS256 (already
+   matches `JwksAuthenticator`'s `ALLOWED_ALGS` whitelist at
+   `auth/jwks.rs:42-48`).
+
+2. **8b — `AuthConfig` becomes a struct, not an enum.** Architect's
+   preferred shape:
+   ```rust
+   struct AuthConfig {
+     dev_bypass: Option<DevBypassConfig>,
+     local: Option<LocalConfig>,
+     oidc: Vec<OidcProviderConfig>,
+   }
+   ```
+   `load_auth()` validates "at least one method configured" + "no
+   `dev_bypass` in production." The "exactly one mode" invariant of
+   the old flat enum is what's being killed — that's the point.
+   - `state.auth: Option<Arc<AuthService>>` **stays single** — OIDC
+     mints opaque tokens via the same `AuthService` (one shared token
+     table = one revocation surface; the code-exchange path just
+     bypasses the password verify).
+   - Add `state.oidc: HashMap<String, Arc<OidcProvider>>` keyed by
+     provider id (`"authentik"`) for per-provider start/callback
+     handlers.
+
+3. **8c — PKCE mandatory, signed-cookie state, handoff-code ferry.**
+   - PKCE required even for confidential client (RFC 9700 / OAuth 2.1
+     BCP, Jan 2025).
+   - State management: HMAC-signed cookie carrying `{provider_id,
+     code_verifier, return_to, expires_at}` —
+     `HttpOnly; Secure; SameSite=Lax; Max-Age=600`. **Not** redis,
+     **not** in-memory. New env var `LOSEIT_AUTH_STATE_SECRET` (32
+     bytes, required when any OIDC provider is configured).
+   - **Token ferry**: do NOT put the opaque token in the redirect
+     URL (browser history leak). Instead: backend issues a one-time
+     **handoff code** in the redirect to FE
+     (`?code=<one-time-handoff>`); FE then `POST /api/v1/auth/oidc/exchange
+     {code}` → real opaque token. New table `oidc_handoff_codes`
+     with 60s TTL. Adds one route + one migration but cleans up the
+     security story.
+
+4. **8d — Drop `available: bool`.** Architect: "If a provider is in
+   config, it's reachable — or `build_authenticator` fails at
+   startup (existing invariant from `server.rs:186-192`). Health-of-
+   IdP is not the discovery endpoint's job." `icon` stays
+   `null | string` (absolute URL); FE falls back to a generic OIDC
+   glyph.
+
+5. **8e — OpenAPI: add `/auth/oidc/exchange`** (POST,
+   `security: []`) alongside the other new routes.
+
+### Backend deliverables (consolidated post-review)
+
+- `/api/v1/auth/providers` — public discovery endpoint
+- `/api/v1/auth/oidc/{provider}/start` — 302 to IdP (signs state
+  cookie, builds authorize URL with PKCE challenge)
+- `/api/v1/auth/oidc/{provider}/callback` — 302 to FE with handoff
+  code (verifies state cookie, exchanges code+verifier with IdP for
+  ID token, verifies via JWKS, ensures local `users` row exists with
+  `issuer='authentik'` + `external_id=<sub>`, mints handoff code)
+- `/api/v1/auth/oidc/exchange` — POST `{code}` → opaque token
+- Migration: `oidc_handoff_codes(code_hash, user_id, expires_at,
+  created_at)`
+- Env: `LOSEIT_AUTH_STATE_SECRET`, plus existing
+  `OIDC_ISSUER`/`OIDC_AUDIENCE`/`OIDC_JWKS_URL` per-provider.
+  Multi-provider config: `OIDC_PROVIDERS=authentik` env var listing
+  ids; each id reads `OIDC_<ID>_ISSUER` etc. (architect's call on
+  exact env-var shape).
+- OpenAPI delta.
+- `AuthConfig` struct refactor.
+
+### FE deliverables (queued — kicks off when 8d goes live)
+
+- `GET /auth/providers` consumer + DTO.
+- `OidcButton` widget (one per provider in the discovery doc).
+- Login screen renders the OIDC button list above the credentials
+  form when `oidc` is non-empty.
+- `/login/callback?code=<handoff>` route handler that calls
+  `POST /auth/oidc/exchange`, stores the returned opaque token via
+  `signIn(token)`, navigates to `/today`.
 
 **Frontend ask (user directive):** the deployed app should support OIDC
 sign-in via Authentik. Per the user: "Ask the backend to create an
