@@ -2646,6 +2646,13 @@ scope**:
 - **BE-004 — Goal achievement status**. For the deferred goal-
   history "achieved" badges (v1.1). Out of scope.
 
+🔗 See `backend_tickets_ledger.md`. The IDs in this section collide
+with the barcode pack's BE-002 / BE-003 and the QoL pack's BE-004
+lift, so the canonical ledger renumbers them: **BE-002 in this
+pack is `BE-005` in the canonical ledger; BE-003 → `BE-006`;
+BE-004 → `BE-007`.** Use the canonical IDs in any new work that
+references these.
+
 No wire-breaking changes are requested by this pack. The Display
 Units Principle holds. The outbox stays scoped to single-entry
 `POST /log` per Risk 6. The OpenAPI shape is unchanged. `POST

@@ -1997,6 +1997,11 @@ matching the LU pack's BE-001 assumption.
   `PATCH /me`. If the user has flipped that since BE-001, this
   ticket gates the QL-104 sweep.
 
+🔗 Moved to **BE-004** in `backend_tickets_ledger.md` — this is
+backend-team work, not a client ticket. The QoL client-pack
+ledger lists this row only as a navigation pointer; do not
+dispatch this ticket through the Flutter pool.
+
 ---
 
 ## Dependency graph

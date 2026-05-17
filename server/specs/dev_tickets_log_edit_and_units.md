@@ -1389,6 +1389,8 @@ expectation.
   before we know whether the client sweep can ship ahead of this
   ticket without an env flag. See the decisions section below.
 
+🔗 See `backend_tickets_ledger.md` BE-001 (canonical ID unchanged).
+
 ---
 
 ## Dependency graph

@@ -1080,6 +1080,9 @@ deferred), the user should see:
   EAN-13 normalization) ship independently when the user
   prioritises them; the client is no-op-ready for both.
 
+🔗 See `backend_tickets_ledger.md` — these became BE-002 / BE-003
+in the canonical ledger (same IDs, single source of truth).
+
 **Deploy:**
 
 - The GitHub Pages deploy at
