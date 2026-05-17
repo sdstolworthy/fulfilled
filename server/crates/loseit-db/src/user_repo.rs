@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, Utc};
-use loseit_core::domain::{ActivityLevel, ProfilePatch, Sex, User, UserIdentity};
+use loseit_core::domain::{ActivityLevel, HeightUnit, ProfilePatch, Sex, User, UserIdentity, WeightUnit};
 use loseit_core::repo::UserRepository;
 use loseit_core::CoreResult;
 use rust_decimal::Decimal;
@@ -30,6 +30,8 @@ struct UserRow {
     birth_date: Option<NaiveDate>,
     height_cm: Option<Decimal>,
     activity_level: Option<String>,
+    weight_unit: String,
+    height_unit: String,
     created_at: DateTime<Utc>,
     updated_at: DateTime<Utc>,
 }
@@ -48,6 +50,8 @@ impl From<UserRow> for User {
             birth_date: row.birth_date,
             height_cm: row.height_cm,
             activity_level: row.activity_level.as_deref().and_then(ActivityLevel::parse),
+            weight_unit: WeightUnit::parse(&row.weight_unit).unwrap_or(WeightUnit::Kg),
+            height_unit: HeightUnit::parse(&row.height_unit).unwrap_or(HeightUnit::Cm),
             created_at: row.created_at,
             updated_at: row.updated_at,
         }
@@ -55,7 +59,7 @@ impl From<UserRow> for User {
 }
 
 const SELECT_USER_COLUMNS: &str = "id, issuer, external_id, email, display_name, sex, \
-    birth_date, height_cm, activity_level, created_at, updated_at";
+    birth_date, height_cm, activity_level, weight_unit, height_unit, created_at, updated_at";
 
 #[async_trait]
 impl UserRepository for PgUserRepository {
@@ -110,7 +114,9 @@ impl UserRepository for PgUserRepository {
                 sex            = COALESCE($4, sex), \
                 birth_date     = COALESCE($5, birth_date), \
                 height_cm      = COALESCE($6, height_cm), \
-                activity_level = COALESCE($7, activity_level) \
+                activity_level = COALESCE($7, activity_level), \
+                weight_unit    = COALESCE($8, weight_unit), \
+                height_unit    = COALESCE($9, height_unit) \
              WHERE id = $1 \
              RETURNING {SELECT_USER_COLUMNS}"
         );
@@ -122,6 +128,8 @@ impl UserRepository for PgUserRepository {
             .bind(patch.birth_date)
             .bind(patch.height_cm)
             .bind(patch.activity_level.map(|a| a.as_str()))
+            .bind(patch.weight_unit.map(|u| u.as_str()))
+            .bind(patch.height_unit.map(|u| u.as_str()))
             .fetch_one(&self.pool)
             .await
             .map_err(map_sqlx)?;

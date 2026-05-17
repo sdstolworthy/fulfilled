@@ -81,6 +81,8 @@ impl ProfilePatchBody {
             birth_date: self.birth_date,
             height_cm: self.height_cm,
             activity_level,
+            weight_unit: None,
+            height_unit: None,
         })
     }
 }
