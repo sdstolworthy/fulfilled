@@ -531,6 +531,12 @@ paths:
       tags: [Servings]
       operationId: create_serving
       summary: Create a serving on a food
+      description: |
+        Servings are read via `GET /foods/{id}`, which returns the full
+        `FoodDetail` (including `servings`). This endpoint exists only for
+        **creating** a new serving on a food; there is no symmetric
+        `GET /foods/{id}/servings` listing — it would duplicate the
+        `FoodDetail.servings` read path.
       parameters:
         - in: path
           name: food_id
@@ -874,6 +880,15 @@ components:
       type: string
       enum: [off, user, usda]
 
+    FoodKind:
+      type: string
+      enum: [normal, quick_add]
+      description: |
+        Role of the food. `normal` is the default for user-created or
+        imported foods. `quick_add` is the per-user sentinel row
+        backing `POST /log/quick_add` entries; the FE uses this to
+        route Edit on quick-add log entries to the quick-add sheet.
+
     ServingSource:
       type: string
       enum: [off, user, system]
@@ -1100,6 +1115,7 @@ components:
       required:
         - id
         - source
+        - kind
         - name
         - categories_tags
         - nutrition
@@ -1108,6 +1124,7 @@ components:
       properties:
         id: { type: string, format: uuid }
         source: { $ref: "#/components/schemas/FoodSource" }
+        kind: { $ref: "#/components/schemas/FoodKind" }
         owner_user_id:
           type: [string, "null"]
           format: uuid
@@ -1133,6 +1150,10 @@ components:
           description: Free-form JSON of additional nutrients, if any.
         servings:
           type: array
+          description: |
+            Authoritative list of this food's servings. Clients reading
+            servings should fetch the parent food — there is no separate
+            `GET /foods/{id}/servings` endpoint.
           items: { $ref: "#/components/schemas/Serving" }
 
     FoodCreate:

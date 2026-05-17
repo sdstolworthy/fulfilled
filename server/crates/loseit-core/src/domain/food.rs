@@ -29,6 +29,29 @@ impl FoodSource {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FoodKind {
+    Normal,
+    QuickAdd,
+}
+
+impl FoodKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Normal   => "normal",
+            Self::QuickAdd => "quick_add",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "normal"    => Some(Self::Normal),
+            "quick_add" => Some(Self::QuickAdd),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NutriscoreGrade {
     A,
     B,
@@ -80,6 +103,7 @@ pub struct NutritionPer100g {
 pub struct Food {
     pub id: Uuid,
     pub source: FoodSource,
+    pub kind: FoodKind,
     pub owner_user_id: Option<Uuid>,
     pub barcode: Option<String>,
     /// USDA FoodData Central per-record key. Set only when `source = Usda`.

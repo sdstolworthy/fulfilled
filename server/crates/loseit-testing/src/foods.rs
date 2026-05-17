@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use chrono::Utc;
 use loseit_core::domain::{
-    Food, FoodDraft, FoodPatch, FoodSearchHit, FoodSource, NutritionPer100g, Serving,
+    Food, FoodDraft, FoodKind, FoodPatch, FoodSearchHit, FoodSource, NutritionPer100g, Serving,
     ServingPreview, ServingSource,
 };
 use loseit_core::repo::food::QUICK_ADD_SENTINEL_NAME;
@@ -167,6 +167,7 @@ impl FoodRepository for InMemoryFoodRepository {
         let food = Food {
             id: Uuid::new_v4(),
             source: FoodSource::User,
+            kind: FoodKind::Normal,
             owner_user_id: Some(owner),
             barcode: draft.barcode.clone(),
             fdc_id: None,
@@ -350,6 +351,7 @@ impl FoodRepository for InMemoryFoodRepository {
                 let food = Food {
                     id: Uuid::new_v4(),
                     source: FoodSource::User,
+                    kind: FoodKind::QuickAdd,
                     owner_user_id: Some(owner),
                     barcode: None,
                     fdc_id: None,
@@ -461,6 +463,7 @@ impl FoodRepository for InMemoryFoodRepository {
                         let food = Food {
                             id: Uuid::new_v4(),
                             source: FoodSource::Off,
+                            kind: FoodKind::Normal,
                             owner_user_id: None,
                             barcode: rec.draft.barcode.clone(),
                             fdc_id: None,

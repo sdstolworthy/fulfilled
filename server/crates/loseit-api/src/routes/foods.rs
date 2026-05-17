@@ -19,8 +19,8 @@ use axum::http::StatusCode;
 use axum::routing::{get, patch, post};
 use axum::{Json, Router};
 use loseit_core::domain::{
-    Food, FoodDraft, FoodPatch, FoodSearchHit, FoodSource, NutriscoreGrade, NutritionPer100g,
-    Serving, ServingDraft, ServingPatch, ServingPreview, ServingSource,
+    Food, FoodDraft, FoodKind, FoodPatch, FoodSearchHit, FoodSource, NutriscoreGrade,
+    NutritionPer100g, Serving, ServingDraft, ServingPatch, ServingPreview, ServingSource,
 };
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
@@ -120,6 +120,10 @@ fn food_source_str(src: FoodSource) -> &'static str {
     src.as_str()
 }
 
+fn food_kind_str(kind: FoodKind) -> &'static str {
+    kind.as_str()
+}
+
 fn nutriscore_str(g: NutriscoreGrade) -> &'static str {
     g.as_str()
 }
@@ -128,6 +132,7 @@ fn nutriscore_str(g: NutriscoreGrade) -> &'static str {
 struct FoodDetailResponse {
     id: Uuid,
     source: &'static str,
+    kind: &'static str,
     owner_user_id: Option<Uuid>,
     barcode: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -148,6 +153,7 @@ impl FoodDetailResponse {
         Self {
             id: food.id,
             source: food_source_str(food.source),
+            kind: food_kind_str(food.kind),
             owner_user_id: food.owner_user_id,
             barcode: food.barcode,
             fdc_id: food.fdc_id,
