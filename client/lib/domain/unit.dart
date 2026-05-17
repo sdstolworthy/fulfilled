@@ -22,94 +22,124 @@ enum UnitFamily {
 /// are intentionally unsupported.
 enum Unit {
   // --- mass --------------------------------------------------------
-  g,
-  kg,
-  oz,
-  lb,
+  g(
+    wire: 'g',
+    shortLabel: 'g',
+    longLabel: 'gram',
+    family: UnitFamily.mass,
+    ratio: '1',
+  ),
+  kg(
+    wire: 'kg',
+    shortLabel: 'kg',
+    longLabel: 'kilogram',
+    family: UnitFamily.mass,
+    ratio: '1000',
+  ),
+  oz(
+    wire: 'oz',
+    shortLabel: 'oz',
+    longLabel: 'ounce',
+    family: UnitFamily.mass,
+    ratio: '28.349523125',
+  ),
+  lb(
+    wire: 'lb',
+    shortLabel: 'lb',
+    longLabel: 'pound',
+    family: UnitFamily.mass,
+    ratio: '453.59237',
+  ),
+
   // --- volume ------------------------------------------------------
-  ml,
-  l,
-  cup,
-  flOz,
-  tbsp,
-  tsp,
+  ml(
+    wire: 'ml',
+    shortLabel: 'ml',
+    longLabel: 'millilitre',
+    family: UnitFamily.volume,
+    ratio: '1',
+  ),
+  l(
+    wire: 'l',
+    shortLabel: 'l',
+    longLabel: 'litre',
+    family: UnitFamily.volume,
+    ratio: '1000',
+  ),
+  cup(
+    wire: 'cup',
+    shortLabel: 'cup',
+    longLabel: 'cup',
+    family: UnitFamily.volume,
+    ratio: '236.5882365',
+  ),
+  flOz(
+    wire: 'fl_oz',
+    shortLabel: 'fl oz',
+    longLabel: 'fluid ounce',
+    family: UnitFamily.volume,
+    ratio: '29.5735295625',
+  ),
+  tbsp(
+    wire: 'tbsp',
+    shortLabel: 'tbsp',
+    longLabel: 'tablespoon',
+    family: UnitFamily.volume,
+    ratio: '14.78676478125',
+  ),
+  tsp(
+    wire: 'tsp',
+    shortLabel: 'tsp',
+    longLabel: 'teaspoon',
+    family: UnitFamily.volume,
+    ratio: '4.92892159375',
+  ),
+
   // --- count -------------------------------------------------------
-  serving,
-  piece;
+  serving(
+    wire: 'serving',
+    shortLabel: 'serving',
+    longLabel: 'serving',
+    family: UnitFamily.count,
+    ratio: '1',
+  ),
+  piece(
+    wire: 'piece',
+    shortLabel: 'piece',
+    longLabel: 'piece',
+    family: UnitFamily.count,
+    ratio: '1',
+  );
+
+  const Unit({
+    required this.wire,
+    required this.shortLabel,
+    required this.longLabel,
+    required this.family,
+    required String ratio,
+    // ignore: avoid_field_initializers_in_const_classes
+  }) : _ratioString = ratio;
 
   /// Wire string. Snake-cases the multi-word `flOz` enum to match the
   /// OpenAPI `fl_oz` token.
-  String get wire {
-    switch (this) {
-      case Unit.flOz:
-        return 'fl_oz';
-      default:
-        return name;
-    }
-  }
+  final String wire;
 
-  /// Short label rendered in pickers and on serving rows. Mostly the
-  /// wire string, but `flOz` reads better as "fl oz" with a space.
-  String get shortLabel {
-    switch (this) {
-      case Unit.flOz:
-        return 'fl oz';
-      default:
-        return wire;
-    }
-  }
+  /// Short label rendered in pickers and on serving rows.
+  final String shortLabel;
 
   /// Long-form label for `Semantics` and the unit dropdown's
   /// descriptive line. Singular form — callers handle pluralization at
   /// the format site if they care.
-  String get longLabel {
-    switch (this) {
-      case Unit.g:
-        return 'gram';
-      case Unit.kg:
-        return 'kilogram';
-      case Unit.oz:
-        return 'ounce';
-      case Unit.lb:
-        return 'pound';
-      case Unit.ml:
-        return 'millilitre';
-      case Unit.l:
-        return 'litre';
-      case Unit.cup:
-        return 'cup';
-      case Unit.flOz:
-        return 'fluid ounce';
-      case Unit.tbsp:
-        return 'tablespoon';
-      case Unit.tsp:
-        return 'teaspoon';
-      case Unit.serving:
-        return 'serving';
-      case Unit.piece:
-        return 'piece';
-    }
-  }
+  final String longLabel;
 
-  UnitFamily get family {
-    switch (this) {
-      case Unit.g:
-      case Unit.kg:
-      case Unit.oz:
-      case Unit.lb:
-        return UnitFamily.mass;
-      case Unit.ml:
-      case Unit.l:
-      case Unit.cup:
-      case Unit.flOz:
-      case Unit.tbsp:
-      case Unit.tsp:
-        return UnitFamily.volume;
-      case Unit.serving:
-      case Unit.piece:
-        return UnitFamily.count;
-    }
-  }
+  final UnitFamily family;
+
+  /// Storage for [ratioToCanonical]. Held as a string so the const
+  /// constructor stays const (`Decimal.parse` is not const). Parsed on
+  /// access — the call is cheap and called only when conversions
+  /// happen, not on every enum read.
+  // ignore: unused_field
+  final String _ratioString;
 
   /// How many canonical units of this unit's family one of this unit
   /// represents. Canonical:
@@ -120,33 +150,7 @@ enum Unit {
   ///   inside `count` is never offered)
   ///
   /// Ratios match the Rust-side constants in Ask 10 byte-for-byte.
-  Decimal get ratioToCanonical {
-    switch (this) {
-      case Unit.g:
-        return Decimal.one;
-      case Unit.kg:
-        return Decimal.fromInt(1000);
-      case Unit.oz:
-        return Decimal.parse('28.349523125');
-      case Unit.lb:
-        return Decimal.parse('453.59237');
-      case Unit.ml:
-        return Decimal.one;
-      case Unit.l:
-        return Decimal.fromInt(1000);
-      case Unit.cup:
-        return Decimal.parse('236.5882365');
-      case Unit.flOz:
-        return Decimal.parse('29.5735295625');
-      case Unit.tbsp:
-        return Decimal.parse('14.78676478125');
-      case Unit.tsp:
-        return Decimal.parse('4.92892159375');
-      case Unit.serving:
-      case Unit.piece:
-        return Decimal.one;
-    }
-  }
+  Decimal get ratioToCanonical => Decimal.parse(_ratioString);
 
   static Unit fromWire(String wire) {
     for (final v in Unit.values) {
