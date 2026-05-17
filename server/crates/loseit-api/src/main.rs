@@ -36,6 +36,15 @@ async fn main() -> Result<()> {
             .map(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
             .unwrap_or(false)
     {
+        // Production refuses to plant a guessable dev/dev credential
+        // regardless of LOSEIT_SEED_DEV_AUTH — operator must provision
+        // real users out-of-band.
+        if config.env_name == "production" {
+            anyhow::bail!(
+                "refusing to seed dev/dev credential with RUST_ENV=production; \
+                 unset LOSEIT_SEED_DEV_AUTH or change RUST_ENV"
+            );
+        }
         seed::seed_dev_local_auth(&pool)
             .await
             .context("seed dev local-auth")?;

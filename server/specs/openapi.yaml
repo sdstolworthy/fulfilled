@@ -113,7 +113,7 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/LoginResponse" }
         "401": { $ref: "#/components/responses/Unauthorized" }
-        "400": { $ref: "#/components/responses/BadRequest" }
+        "422": { $ref: "#/components/responses/BadRequest" }
 
   /me:
     get:
@@ -899,7 +899,7 @@ components:
 
     LoginResponse:
       type: object
-      required: [token]
+      required: [token, expires_at]
       properties:
         token:
           type: string
