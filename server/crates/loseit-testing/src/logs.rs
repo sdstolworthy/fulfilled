@@ -73,7 +73,9 @@ impl LogRepository for InMemoryLogRepository {
             id: Uuid::new_v4(),
             user_id,
             food_id: entry.food_id,
+            food_name: String::new(),        // placeholder; T03 wires real lookup
             serving_id: entry.serving_id,
+            serving_name: None,              // placeholder; T03 wires real lookup
             consumed_on: entry.consumed_on,
             meal: entry.meal,
             quantity: entry.quantity,
