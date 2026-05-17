@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../data/auth_config.dart';
+import '../features/login/login_controller.dart';
 
 /// Runtime API base URL seam (LOG-001).
 ///
@@ -106,5 +107,40 @@ final apiBaseUrlProvider = Provider<String?>((ref) {
   // on a fresh install (pre-login); the redirect rule (LOG-007) keeps
   // that state pinned to the login route.
   final box = ref.watch(authConfigBoxProvider);
-  return box.get(AuthConfigKey.baseUrl);
+  final fromBox = box.get(AuthConfigKey.baseUrl);
+  if (fromBox != null && fromBox.isNotEmpty) return fromBox;
+
+  // Rule 4: mobile, pre-submit fallback. The Hive `baseUrl` is only
+  // persisted on a successful credential submit (see
+  // `LoginController._runCredentialsSubmit`). Without rule 4 the OIDC
+  // discovery fetch (`/auth/providers`) has no host to hit until the
+  // user has already signed in — chicken-and-egg for the "Sign in
+  // with Authentik" button. So: peek at the form URL the user has
+  // typed; if it parses as an absolute http/https URL with a host,
+  // use it. Lightly normalize (append `/api/v1` when missing) so the
+  // user can type just the origin and still get the discovery hit.
+  final formUrl =
+      ref.watch(loginControllerProvider.select((s) => s.url));
+  return _tryDeriveBaseUrlFromFormInput(formUrl);
 });
+
+/// Best-effort normalization of the in-flight login-form URL. Returns
+/// null for anything that wouldn't make a usable Dio base (missing
+/// scheme, missing host, non-http schemes, parse failure). Lightly
+/// canonicalises by trimming trailing slash + appending `/api/v1`
+/// when absent.
+String? _tryDeriveBaseUrlFromFormInput(String raw) {
+  final trimmed = raw.trim();
+  if (trimmed.isEmpty) return null;
+  final uri = Uri.tryParse(trimmed);
+  if (uri == null) return null;
+  if (uri.scheme != 'http' && uri.scheme != 'https') return null;
+  if (uri.host.isEmpty) return null;
+  var url = trimmed.endsWith('/')
+      ? trimmed.substring(0, trimmed.length - 1)
+      : trimmed;
+  if (!url.endsWith('/api/v1')) {
+    url = '$url/api/v1';
+  }
+  return url;
+}
