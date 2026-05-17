@@ -1,199 +1,576 @@
+import 'dart:convert';
+
 import 'package:decimal/decimal.dart';
+import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fulfilled/data/api_client.dart';
 import 'package:fulfilled/domain/enums.dart';
-import 'package:fulfilled/domain/nutrition.dart';
 import 'package:fulfilled/domain/food.dart';
+import 'package:fulfilled/domain/food_patch.dart';
+import 'package:fulfilled/domain/nutrition.dart';
 import 'package:fulfilled/repositories/food_repository.dart';
 
-import '_harness.dart';
+import '../data/fake_dio_adapter.dart';
 
+/// Unit tests for `FoodRepository` against a [FakeDioAdapter]. The real
+/// `Dio` runs end-to-end (transformers, headers, error mapping) — only
+/// the byte-level fetch is replaced. Mirrors the pattern in
+/// `test/repositories/goal_repository_test.dart` and
+/// `test/data/auth_token_test.dart`.
 void main() {
-  late FoodRepository repo;
-
-  setUp(() {
-    resetRepositoriesForTest();
-    repo = FoodRepository(buildTestApiClient());
-  });
-
-  tearDown(teardownRepositoriesForTest);
-
-  test('recent() returns at least one seeded food', () async {
-    final recent = await repo.recent();
-    expect(recent, isNotEmpty);
-  });
-
-  test('search("yog") matches "Greek yogurt"', () async {
-    final hits = await repo.search('yog');
-    expect(hits, isNotEmpty);
-    expect(
-      hits.any((f) => f.name.toLowerCase().contains('greek yogurt')),
-      isTrue,
-      reason: 'expected Greek yogurt in search results for "yog"',
+  ApiClient buildClient(FakeDioAdapter adapter) {
+    final dio = Dio(
+      BaseOptions(
+        baseUrl: 'https://test.example/api/v1',
+        headers: <String, String>{
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+        },
+      ),
     );
-  });
+    dio.httpClientAdapter = adapter;
+    return ApiClient(dio, baseUrl: 'https://test.example/api/v1');
+  }
 
-  test('byBarcode(known) resolves to the seeded Greek yogurt', () async {
-    // From _fixtures.dart: Greek yogurt's barcode.
-    final food = await repo.byBarcode('8410076473203');
-    expect(food.name, equals('Greek yogurt, plain'));
-  });
-
-  test('byBarcode(unknown) throws FoodNotFoundError', () async {
-    expect(
-      () => repo.byBarcode('0000000000000'),
-      throwsA(isA<FoodNotFoundError>()),
+  /// Encode a flat JSON array (Dio's default transformer only handles
+  /// maps via `jsonResponse`; `recent` / `frequent` return arrays).
+  ResponseBody jsonArrayResponse(int status, List<Map<String, dynamic>> body) {
+    final bytes = utf8.encode(jsonEncode(body));
+    return ResponseBody.fromBytes(
+      bytes,
+      status,
+      headers: <String, List<String>>{
+        Headers.contentTypeHeader: <String>['application/json; charset=utf-8'],
+      },
     );
-  });
+  }
 
-  group('customFoods', () {
-    test('returns only source == user rows', () async {
-      final foods = await repo.customFoods();
-      expect(foods, isNotEmpty);
-      for (final f in foods) {
-        expect(f.source, equals(FoodSource.user),
-            reason: 'every row must be user-source');
-      }
-    });
+  Map<String, dynamic> hitWire({
+    String id = 'f_1',
+    String source = 'off',
+    String name = 'Greek yogurt, plain',
+    String? brand = 'Fage',
+    String? barcode = '8410076473203',
+    String? defaultServingId = 'sv_1',
+    String? defaultServingLabel = '1 container (170 g)',
+    String? defaultServingGrams = '170.00',
+    String? caloriesPerServing = '100',
+  }) =>
+      <String, dynamic>{
+        'id': id,
+        'source': source,
+        'name': name,
+        'brand': brand,
+        'barcode': barcode,
+        if (defaultServingId != null)
+          'default_serving': <String, dynamic>{
+            'id': defaultServingId,
+            'label': defaultServingLabel,
+            'grams': defaultServingGrams,
+          },
+        'calories_per_serving': caloriesPerServing,
+      };
 
-    test('count matches customCount()', () async {
-      final foods = await repo.customFoods();
-      final n = await repo.customCount();
-      expect(foods.length, equals(n));
-    });
+  Map<String, dynamic> detailWire({
+    String id = 'f_1',
+    String source = 'user',
+    String name = 'My custom food',
+    String? brands,
+    String? barcode,
+    Map<String, dynamic>? nutrition,
+    List<Map<String, dynamic>>? servings,
+  }) =>
+      <String, dynamic>{
+        'id': id,
+        'source': source,
+        'owner_user_id': null,
+        'barcode': barcode,
+        'name': name,
+        'brands': brands,
+        'categories_tags': <String>[],
+        'nutrition': nutrition ??
+            <String, dynamic>{
+              'energy_kcal': '200',
+              'protein_g': '10',
+              'carbs_g': '20',
+              'fat_g': '5',
+            },
+        'nutriscore': null,
+        'quality_score': 0,
+        'servings': servings ??
+            <Map<String, dynamic>>[
+              <String, dynamic>{
+                'id': 'sv_100g',
+                'label': '100 g',
+                'grams': '100.00',
+                'is_default': true,
+                'source': 'system',
+                'sort_order': 0,
+              },
+            ],
+      };
 
-    test('a freshly-created custom food appears in customFoods()', () async {
-      final before = await repo.customFoods();
-      final created = await repo.createCustom(
-        FoodCreate(
-          name: 'New custom',
-          nutrition: NutritionPer100g(energyKcal: Decimal.fromInt(200)),
-        ),
+  Map<String, dynamic> servingWire({
+    String id = 'sv_new',
+    String label = '1 cup',
+    String grams = '240.00',
+    bool isDefault = false,
+    String source = 'user',
+    int sortOrder = 1,
+  }) =>
+      <String, dynamic>{
+        'id': id,
+        'label': label,
+        'grams': grams,
+        'is_default': isDefault,
+        'source': source,
+        'sort_order': sortOrder,
+      };
+
+  group('search()', () {
+    test(
+        'GET /foods/search with q + limit + offset; decodes the '
+        'paginated envelope into a List<Food> projection', () async {
+      final adapter = FakeDioAdapter(
+        (_) => jsonResponse(200, <String, dynamic>{
+          'results': <Map<String, dynamic>>[
+            hitWire(id: 'f_yog', name: 'Greek yogurt'),
+            hitWire(id: 'f_chx', name: 'Chicken breast', brand: null),
+          ],
+          'total': 42,
+          'limit': 25,
+          'offset': 0,
+        }),
       );
-      final after = await repo.customFoods();
-      expect(after.length, equals(before.length + 1));
-      expect(after.any((f) => f.id == created.id), isTrue);
-    });
+      final repo = FoodRepository(buildClient(adapter));
 
-    test('limit + offset slice the result', () async {
-      final all = await repo.customFoods();
-      // Skip the head, take one — the resulting row's id must match the
-      // second item of the unlimited list.
-      final sliced = await repo.customFoods(limit: 1, offset: 1);
-      expect(sliced.length, equals(1));
-      expect(sliced.first.id, equals(all[1].id));
-    });
+      final hits = await repo.search('yog', limit: 25, offset: 0);
 
-    // FX-002: rows must come back newest-first by `createdAt` so a
-    // freshly-saved custom surfaces at the top of My foods.
-    test('returns rows sorted by createdAt descending', () async {
-      final foods = await repo.customFoods();
-      expect(foods.length, greaterThan(1));
-      for (var i = 1; i < foods.length; i++) {
-        expect(
-          foods[i - 1].createdAt.isAfter(foods[i].createdAt) ||
-              foods[i - 1].createdAt.isAtSameMomentAs(foods[i].createdAt),
-          isTrue,
-          reason: 'expected newest-first at index $i — '
-              '${foods[i - 1].id}@${foods[i - 1].createdAt} '
-              'should be >= ${foods[i].id}@${foods[i].createdAt}',
-        );
-      }
-    });
+      expect(adapter.requests, hasLength(1));
+      final req = adapter.requests.single;
+      expect(req.method, equalsIgnoringCase('GET'));
+      expect(req.path, equals('/foods/search'));
+      expect(req.queryParameters['q'], equals('yog'));
+      expect(req.queryParameters['limit'], equals(25));
+      expect(req.queryParameters['offset'], equals(0));
 
-    test('a freshly-created custom food lands at the head', () async {
-      final created = await repo.createCustom(
-        FoodCreate(
-          name: 'Brand new',
-          nutrition: NutritionPer100g(energyKcal: Decimal.fromInt(150)),
-        ),
-      );
-      final after = await repo.customFoods();
-      expect(after.first.id, equals(created.id),
-          reason: 'newly-created custom must sort to the head');
-    });
-  });
-
-  group('addServing', () {
-    // A freshly-created custom food is the cleanest fixture: it has
-    // exactly one serving (the auto-seeded synthetic 100 g) and a
-    // stable id we can hand back to addServing.
-    Future<Food> seedCustom() async {
-      return repo.createCustom(
-        FoodCreate(
-          name: 'Test food',
-          nutrition: NutritionPer100g(
-            energyKcal: Decimal.fromInt(200),
-            proteinG: Decimal.fromInt(10),
-            carbsG: Decimal.fromInt(20),
-            fatG: Decimal.fromInt(8),
-          ),
-        ),
-      );
-    }
-
-    test('returns a serving with a non-empty id', () async {
-      final food = await seedCustom();
-      final serving = await repo.addServing(
-        food.id,
-        ServingCreate(label: '1 cup', grams: Decimal.fromInt(240)),
-      );
-      expect(serving.id, isNotEmpty);
-      expect(serving.name, equals('1 cup'));
-      expect(serving.grams, equals(Decimal.fromInt(240)));
-      // Default for user-defined rows is non-default + source=user
-      // (the synthetic 100 g is the only is_default row).
-      expect(serving.isDefault, isFalse);
-      expect(serving.source, equals(ServingSource.user));
-    });
-
-    test('calling twice appends two servings', () async {
-      final food = await seedCustom();
-      final beforeLen = food.servings.length;
-
-      await repo.addServing(
-        food.id,
-        ServingCreate(label: '1 cup', grams: Decimal.fromInt(240)),
-      );
-      await repo.addServing(
-        food.id,
-        ServingCreate(label: '1 tbsp', grams: Decimal.fromInt(15)),
-      );
-
-      final after = await repo.get(food.id);
-      expect(after.servings.length, equals(beforeLen + 2));
-      // Insertion order preserved.
-      expect(after.servings[beforeLen].name, equals('1 cup'));
-      expect(after.servings[beforeLen + 1].name, equals('1 tbsp'));
-    });
-
-    test('throws FoodNotFoundError on unknown id', () async {
+      expect(hits, hasLength(2));
+      expect(hits.first.id, equals('f_yog'));
+      expect(hits.first.name, equals('Greek yogurt'));
+      // Wire `brand` (singular) on hits — not `brands`.
+      expect(hits.first.brand, equals('Fage'));
+      // `default_serving` shows up as a single-serving list with
+      // `isDefault: true` so `food.defaultServingId` resolves.
+      expect(hits.first.servings, hasLength(1));
+      expect(hits.first.defaultServingId, equals('sv_1'));
+      expect(hits.first.servings.first.grams, equals(Decimal.parse('170.00')));
+      // `calories_per_serving` should round-trip through
+      // `caloriesPerDefaultServing` (back-computed from per-100 g).
       expect(
-        () => repo.addServing(
-          'f_does_not_exist',
-          ServingCreate(label: '1 cup', grams: Decimal.fromInt(240)),
+        hits.first.caloriesPerDefaultServing,
+        equals(Decimal.parse('100')),
+      );
+    });
+
+    test('empty result page yields an empty list', () async {
+      final adapter = FakeDioAdapter(
+        (_) => jsonResponse(200, <String, dynamic>{
+          'results': <Map<String, dynamic>>[],
+          'total': 0,
+          'limit': 25,
+          'offset': 0,
+        }),
+      );
+      final repo = FoodRepository(buildClient(adapter));
+      expect(await repo.search('zzz'), isEmpty);
+    });
+  });
+
+  group('mine()', () {
+    test('GET /foods/mine decodes the paginated envelope', () async {
+      final adapter = FakeDioAdapter(
+        (_) => jsonResponse(200, <String, dynamic>{
+          'results': <Map<String, dynamic>>[
+            hitWire(id: 'f_my1', source: 'user', name: 'My food 1'),
+          ],
+          'total': 1,
+          'limit': 100,
+          'offset': 0,
+        }),
+      );
+      final repo = FoodRepository(buildClient(adapter));
+
+      final mine = await repo.mine();
+
+      expect(adapter.requests.single.path, equals('/foods/mine'));
+      expect(mine, hasLength(1));
+      expect(mine.first.source, equals(FoodSource.user));
+      expect(mine.first.isCustom, isTrue);
+    });
+  });
+
+  group('recent() / frequent()', () {
+    test('GET /foods/recent decodes the flat JSON array', () async {
+      final adapter = FakeDioAdapter(
+        (_) => jsonArrayResponse(200, <Map<String, dynamic>>[
+          hitWire(id: 'f_r1'),
+          hitWire(id: 'f_r2'),
+        ]),
+      );
+      final repo = FoodRepository(buildClient(adapter));
+
+      final recent = await repo.recent(limit: 5);
+
+      expect(adapter.requests.single.path, equals('/foods/recent'));
+      expect(adapter.requests.single.queryParameters['limit'], equals(5));
+      expect(recent.map((f) => f.id), equals(<String>['f_r1', 'f_r2']));
+    });
+
+    test('GET /foods/frequent decodes the flat JSON array', () async {
+      final adapter = FakeDioAdapter(
+        (_) => jsonArrayResponse(200, <Map<String, dynamic>>[
+          hitWire(id: 'f_f1'),
+        ]),
+      );
+      final repo = FoodRepository(buildClient(adapter));
+
+      final frequent = await repo.frequent(limit: 8);
+
+      expect(adapter.requests.single.path, equals('/foods/frequent'));
+      expect(frequent, hasLength(1));
+      expect(frequent.first.id, equals('f_f1'));
+    });
+  });
+
+  group('get()', () {
+    test('GET /foods/{id} decodes the full FoodDetail with nutrition '
+        'and servings', () async {
+      final adapter = FakeDioAdapter(
+        (_) => jsonResponse(200, detailWire(id: 'f_xyz', source: 'off')),
+      );
+      final repo = FoodRepository(buildClient(adapter));
+
+      final food = await repo.get('f_xyz');
+
+      expect(adapter.requests.single.path, equals('/foods/f_xyz'));
+      expect(food.id, equals('f_xyz'));
+      // T-17: decimals decoded via Decimal.parse(value.toString()).
+      expect(
+        food.nutritionPer100g.energyKcal,
+        equals(Decimal.parse('200')),
+      );
+      expect(food.servings, hasLength(1));
+      expect(food.servings.first.isDefault, isTrue);
+    });
+
+    test('404 maps to FoodNotFoundError', () async {
+      final adapter = FakeDioAdapter((_) => emptyResponse(404));
+      final repo = FoodRepository(buildClient(adapter));
+      await expectLater(
+        () => repo.get('f_missing'),
+        throwsA(isA<FoodNotFoundError>()),
+      );
+    });
+  });
+
+  group('byBarcode()', () {
+    test('GET /foods/barcode/{barcode}; decodes a FoodDetail on hit', () async {
+      final adapter = FakeDioAdapter(
+        (_) =>
+            jsonResponse(200, detailWire(id: 'f_yog', source: 'off')),
+      );
+      final repo = FoodRepository(buildClient(adapter));
+
+      final food = await repo.byBarcode('8410076473203');
+
+      expect(
+        adapter.requests.single.path,
+        equals('/foods/barcode/8410076473203'),
+      );
+      expect(food, isNotNull);
+      expect(food!.id, equals('f_yog'));
+    });
+
+    // The spec-mandated 404 → null mapping — a barcode that resolves to
+    // no food is the expected scan-miss outcome, not an error.
+    test('404 returns null (the expected "no food for that barcode" path)',
+        () async {
+      final adapter = FakeDioAdapter((_) => emptyResponse(404));
+      final repo = FoodRepository(buildClient(adapter));
+
+      final food = await repo.byBarcode('0000000000000');
+
+      expect(food, isNull);
+    });
+
+    test('non-404 errors propagate as DioException', () async {
+      final adapter = FakeDioAdapter((_) => emptyResponse(500));
+      final repo = FoodRepository(buildClient(adapter));
+
+      await expectLater(
+        () => repo.byBarcode('999'),
+        throwsA(isA<DioException>()),
+      );
+    });
+  });
+
+  group('createCustom()', () {
+    test('POST /foods with the FoodCreate body; decodes the response',
+        () async {
+      Map<String, dynamic>? captured;
+      final adapter = FakeDioAdapter((req) {
+        captured = req.data as Map<String, dynamic>;
+        return jsonResponse(201, detailWire(id: 'f_new', source: 'user'));
+      });
+      final repo = FoodRepository(buildClient(adapter));
+
+      final created = await repo.createCustom(FoodCreate(
+        name: 'Brand new food',
+        brand: 'Test brand',
+        nutrition: NutritionPer100g(
+          energyKcal: Decimal.parse('150'),
+          proteinG: Decimal.parse('10'),
         ),
+      ));
+
+      expect(adapter.requests.single.method, equalsIgnoringCase('POST'));
+      expect(adapter.requests.single.path, equals('/foods'));
+      expect(captured!['name'], equals('Brand new food'));
+      expect(captured!['brands'], equals('Test brand'));
+      expect((captured!['nutrition'] as Map)['energy_kcal'], equals('150'));
+
+      expect(created.id, equals('f_new'));
+      expect(created.source, equals(FoodSource.user));
+      expect(created.isCustom, isTrue);
+    });
+  });
+
+  group('updateCustom()', () {
+    test('PATCH /foods/{id} with the sparse patch body', () async {
+      Map<String, dynamic>? captured;
+      final adapter = FakeDioAdapter((req) {
+        captured = req.data as Map<String, dynamic>;
+        return jsonResponse(200, detailWire(id: 'f_edit', source: 'user'));
+      });
+      final repo = FoodRepository(buildClient(adapter));
+
+      final out = await repo.updateCustom(
+        'f_edit',
+        const FoodPatch(name: 'Renamed', clearBrand: true),
+      );
+
+      expect(adapter.requests.single.method, equalsIgnoringCase('PATCH'));
+      expect(adapter.requests.single.path, equals('/foods/f_edit'));
+      expect(captured!['name'], equals('Renamed'));
+      // clearBrand → emit `'brands': null` per FoodPatch.toJson.
+      expect(captured!.containsKey('brands'), isTrue);
+      expect(captured!['brands'], isNull);
+      expect(out.id, equals('f_edit'));
+    });
+
+    test('404 maps to FoodNotFoundError', () async {
+      final adapter = FakeDioAdapter((_) => emptyResponse(404));
+      final repo = FoodRepository(buildClient(adapter));
+      await expectLater(
+        () => repo.updateCustom('f_gone', const FoodPatch(name: 'X')),
+        throwsA(isA<FoodNotFoundError>()),
+      );
+    });
+  });
+
+  group('deleteCustom()', () {
+    test('DELETE /foods/{id}; 204 returns normally', () async {
+      final adapter = FakeDioAdapter((_) => emptyResponse(204));
+      final repo = FoodRepository(buildClient(adapter));
+
+      await repo.deleteCustom('f_kill');
+
+      expect(adapter.requests.single.method, equalsIgnoringCase('DELETE'));
+      expect(adapter.requests.single.path, equals('/foods/f_kill'));
+    });
+
+    test('404 maps to FoodNotFoundError', () async {
+      final adapter = FakeDioAdapter((_) => emptyResponse(404));
+      final repo = FoodRepository(buildClient(adapter));
+      await expectLater(
+        () => repo.deleteCustom('f_missing'),
         throwsA(isA<FoodNotFoundError>()),
       );
     });
 
-    test('new serving sortOrder is greater than any existing', () async {
-      final food = await seedCustom();
-      // Synthetic 100 g lives at sortOrder 0 — the new row should land
-      // at 1, then 2, so it sorts beneath the synthetic per T-10.
-      final maxPre = food.servings
-          .map((s) => s.sortOrder)
-          .fold<int>(-1, (a, b) => b > a ? b : a);
-      final first = await repo.addServing(
-        food.id,
-        ServingCreate(label: '1 cup', grams: Decimal.fromInt(240)),
+    test('409 (referenced by log entries) propagates as DioException',
+        () async {
+      final adapter = FakeDioAdapter((_) => emptyResponse(409));
+      final repo = FoodRepository(buildClient(adapter));
+      await expectLater(
+        () => repo.deleteCustom('f_with_logs'),
+        throwsA(isA<DioException>()),
       );
-      expect(first.sortOrder, greaterThan(maxPre));
+    });
+  });
 
-      final second = await repo.addServing(
-        food.id,
-        ServingCreate(label: '1 tbsp', grams: Decimal.fromInt(15)),
+  group('addServing()', () {
+    test('POST /foods/{food_id}/servings; decodes the Serving response',
+        () async {
+      Map<String, dynamic>? captured;
+      final adapter = FakeDioAdapter((req) {
+        captured = req.data as Map<String, dynamic>;
+        return jsonResponse(201, servingWire());
+      });
+      final repo = FoodRepository(buildClient(adapter));
+
+      final serving = await repo.addServing(
+        'f_owner',
+        ServingCreate(label: '1 cup', grams: Decimal.parse('240')),
       );
-      expect(second.sortOrder, greaterThan(first.sortOrder));
+
+      expect(
+        adapter.requests.single.path,
+        equals('/foods/f_owner/servings'),
+      );
+      expect(captured!['label'], equals('1 cup'));
+      expect(captured!['grams'], equals('240'));
+      expect(captured!['is_default'], equals(false));
+
+      expect(serving.id, equals('sv_new'));
+      expect(serving.grams, equals(Decimal.parse('240.00')));
+    });
+
+    test('404 maps to FoodNotFoundError', () async {
+      final adapter = FakeDioAdapter((_) => emptyResponse(404));
+      final repo = FoodRepository(buildClient(adapter));
+      await expectLater(
+        () => repo.addServing(
+          'f_gone',
+          ServingCreate(label: '1 cup', grams: Decimal.parse('240')),
+        ),
+        throwsA(isA<FoodNotFoundError>()),
+      );
+    });
+  });
+
+  group('updateServing()', () {
+    test('PATCH /servings/{id} with the sparse patch body', () async {
+      Map<String, dynamic>? captured;
+      final adapter = FakeDioAdapter((req) {
+        captured = req.data as Map<String, dynamic>;
+        return jsonResponse(200, servingWire(label: 'renamed'));
+      });
+      final repo = FoodRepository(buildClient(adapter));
+
+      final out = await repo.updateServing(
+        'sv_x',
+        ServingPatch(label: 'renamed', grams: Decimal.parse('250')),
+      );
+
+      expect(adapter.requests.single.path, equals('/servings/sv_x'));
+      expect(adapter.requests.single.method, equalsIgnoringCase('PATCH'));
+      expect(captured!['label'], equals('renamed'));
+      expect(captured!['grams'], equals('250'));
+      expect(out.name, equals('renamed'));
+    });
+
+    test('404 maps to FoodNotFoundError', () async {
+      final adapter = FakeDioAdapter((_) => emptyResponse(404));
+      final repo = FoodRepository(buildClient(adapter));
+      await expectLater(
+        () => repo.updateServing('sv_missing', const ServingPatch(label: 'x')),
+        throwsA(isA<FoodNotFoundError>()),
+      );
+    });
+  });
+
+  group('deleteServing()', () {
+    test('DELETE /servings/{id}; 204 returns normally', () async {
+      final adapter = FakeDioAdapter((_) => emptyResponse(204));
+      final repo = FoodRepository(buildClient(adapter));
+
+      await repo.deleteServing('sv_kill');
+
+      expect(adapter.requests.single.method, equalsIgnoringCase('DELETE'));
+      expect(adapter.requests.single.path, equals('/servings/sv_kill'));
+    });
+
+    test('409 (default serving) propagates as DioException', () async {
+      final adapter = FakeDioAdapter((_) => emptyResponse(409));
+      final repo = FoodRepository(buildClient(adapter));
+      await expectLater(
+        () => repo.deleteServing('sv_default'),
+        throwsA(isA<DioException>()),
+      );
+    });
+  });
+
+  group('setDefaultServing()', () {
+    test('POST /servings/{id}/default; returns the post-flip serving',
+        () async {
+      final adapter = FakeDioAdapter(
+        (_) => jsonResponse(200, servingWire(isDefault: true)),
+      );
+      final repo = FoodRepository(buildClient(adapter));
+
+      final out = await repo.setDefaultServing('sv_promote');
+
+      expect(
+        adapter.requests.single.path,
+        equals('/servings/sv_promote/default'),
+      );
+      expect(adapter.requests.single.method, equalsIgnoringCase('POST'));
+      expect(out.isDefault, isTrue);
+    });
+  });
+
+  group('customCount()', () {
+    test('GET /foods/mine?limit=0 reads total from the envelope', () async {
+      final adapter = FakeDioAdapter(
+        (_) => jsonResponse(200, <String, dynamic>{
+          'results': <Map<String, dynamic>>[],
+          'total': 17,
+          'limit': 0,
+          'offset': 0,
+        }),
+      );
+      final repo = FoodRepository(buildClient(adapter));
+
+      final n = await repo.customCount();
+
+      expect(adapter.requests.single.path, equals('/foods/mine'));
+      expect(adapter.requests.single.queryParameters['limit'], equals(0));
+      expect(n, equals(17));
+    });
+  });
+
+  group('customFoods()', () {
+    test('proxies /foods/mine and sorts the page newest-first by createdAt',
+        () async {
+      // Wire `FoodSearchHit` doesn't carry created_at — list-projected
+      // foods stamp `createdAt: now` (deterministic within a page).
+      // This test verifies the call site + the sort is at least stable.
+      final adapter = FakeDioAdapter(
+        (_) => jsonResponse(200, <String, dynamic>{
+          'results': <Map<String, dynamic>>[
+            hitWire(id: 'f_a', source: 'user', name: 'A'),
+            hitWire(id: 'f_b', source: 'user', name: 'B'),
+          ],
+          'total': 2,
+          'limit': 100,
+          'offset': 0,
+        }),
+      );
+      final repo = FoodRepository(buildClient(adapter));
+
+      final out = await repo.customFoods();
+
+      expect(adapter.requests.single.path, equals('/foods/mine'));
+      expect(out, hasLength(2));
+      // Newest-first sort is stable: equal timestamps preserve order.
+      for (var i = 1; i < out.length; i++) {
+        expect(
+          !out[i - 1].createdAt.isBefore(out[i].createdAt),
+          isTrue,
+          reason: 'expected createdAt to be non-increasing',
+        );
+      }
     });
   });
 }

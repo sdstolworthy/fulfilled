@@ -367,6 +367,94 @@ agents wiring the repos see them):**
 
 ---
 
+## Ask 7 — Live-deploy bugs found while wiring repos *(P1)*
+
+Status: `triaged` — queued behind BE-008 (auth login). Architect + 12-task
+breakdown for Ask 2 is mid-flight on `be-auth-login`
+(`server/specs/be_auth_login_design.md`,
+`server/specs/be_auth_login_tasks.md`); engineer dispatch starting now.
+Ask 7 picks up an architect once BE-008 engineers are off the queue —
+target inside the same overnight window. Per-sub-ask preliminary read:
+
+- **7a** (500 on `/log/copy`): treated as a server bug; architect will
+  reproduce locally and root-cause. Likely a service-layer panic on
+  empty-day copy or a sqlx error mapping miss.
+- **7b** (405 on `GET /foods/{id}/servings`): closing as
+  "FE works without it" + adding a one-line note to `openapi.yaml`
+  explaining `Food.servings` is the read path. No new endpoint.
+- **7c** (real UUID returned for quick-add food): tentatively picking
+  **(i)** — add `Food.kind: 'normal' | 'quick_add'` (default `'normal'`)
+  exposed on the wire; backfill existing sentinel rows. Confirms FE's
+  own preference. Will re-confirm at architect-spec time.
+
+The FE wired all 5 repos to the live API and curl'd every endpoint
+during the wire. Three reproducible bugs against
+`https://api.coolify.stolworthy.co`:
+
+### Ask 7a — `POST /api/v1/log/copy` returns 500
+
+Reproduces with and without `meal`, with real entries on the source
+day:
+```bash
+curl -X POST -H "Authorization: Bearer dev-token" \
+  -H "Content-Type: application/json" \
+  -d '{"from_date":"2026-05-17","to_date":"2026-05-18"}' \
+  https://api.coolify.stolworthy.co/api/v1/log/copy
+# → 500 {"code":"internal_error"}
+```
+Spec is clean. The FE wire is correct against the documented
+contract (FE sends `{from_date, to_date, meal?}` and decodes the
+`{copied: [LogEntry]}` envelope). Server bug.
+
+### Ask 7b — `GET /api/v1/foods/{food_id}/servings` returns 405
+
+Not mounted on the deploy:
+```bash
+curl -H "Authorization: Bearer dev-token" \
+  "https://api.coolify.stolworthy.co/api/v1/foods/<some-food-id>/servings"
+# → 405 Method Not Allowed (only POST mounted at that path)
+```
+The OpenAPI spec also doesn't define this read endpoint, so the FE
+dropped it — servings come for free on `GET /foods/{id}`. Either
+mount the GET, or add a note to the spec explaining its absence.
+**Low priority** — FE works without it.
+
+### Ask 7c — `POST /log/quick_add` returns a real food UUID, not the FE's `quickAddFoodId` sentinel
+
+```bash
+curl -X POST -H "Authorization: Bearer dev-token" \
+  -H "Content-Type: application/json" \
+  -d '{"calories_kcal":"100","meal":"snack","consumed_on":"2026-05-17"}' \
+  https://api.coolify.stolworthy.co/api/v1/log/quick_add
+# → 200 {"food_id":"62e720fd-...","serving_id":"...",...}
+```
+The FE has a hard-coded `quickAddFoodId` constant (e.g.
+`'food_quick_add'`) it uses to identify quick-add entries client-side
+— specifically to route the "Edit" action on a quick-add row to the
+quick-add editor sheet instead of the canonical food-entry sheet.
+With the server returning a real UUID per quick-add row, the FE's
+`entry.foodId == quickAddFoodId` check (used in
+`client/lib/features/today/today_internals.dart` and
+`client/lib/features/today/widgets/meal_section.dart`) never fires
+for live entries.
+
+Backend, please pick one of:
+- **(i)** Mark the auto-provisioned sentinel food with a flag (e.g.
+  `Food.source == 'quick_add'` or a new `Food.kind = 'quick_add'`
+  field) so the FE can detect quick-add entries by introspecting the
+  food row instead of by ID equality. This is the cleaner long-term
+  shape — FE picks up the flag and the existing ID-equality check
+  becomes a flag-check.
+- **(ii)** Return a stable, well-known UUID (e.g. all-zeros
+  `00000000-0000-0000-0000-000000000000`) for the per-user quick-add
+  sentinel food. FE updates the `quickAddFoodId` constant to match.
+
+(i) is preferred — it's the shape that survives multi-tenant
+deployments without UUID coordination. (ii) is the patch if (i) is
+non-trivial.
+
+---
+
 ## Done / Acknowledged
 
 *(Backend team: move tasks here once shipped or rejected. Include a

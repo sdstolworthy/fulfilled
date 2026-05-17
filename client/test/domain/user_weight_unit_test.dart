@@ -5,13 +5,16 @@
 // `User.fromJson` is tolerant of a missing `weight_unit` key during the
 // pre-backend window — see architect §3.1, §3.3, §4.2.
 
+import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fulfilled/data/api_client.dart';
 import 'package:fulfilled/domain/enums.dart';
 import 'package:fulfilled/domain/user.dart';
 import 'package:fulfilled/repositories/food_repository.dart';
 import 'package:fulfilled/repositories/profile_repository.dart';
 import 'package:fulfilled/repositories/weight_repository.dart';
 
+import '../data/fake_dio_adapter.dart';
 import '../repositories/_harness.dart';
 
 Map<String, dynamic> _baseJson({String? weightUnit}) {
@@ -185,12 +188,48 @@ void main() {
     });
   });
 
+  // `ProfileRepository.update` is now wired to `PATCH /me`. These
+  // tests use a `FakeDioAdapter` to capture the request body and
+  // return a canned `User` response — what we're asserting is the
+  // wire-shape pass-through, not in-memory state.
   group('ProfileRepository.update — weightUnit pass-through', () {
     late ProfileRepository repo;
+    late FakeDioAdapter adapter;
+
+    Map<String, dynamic> meWith({String? weightUnit}) => <String, dynamic>{
+          'id': 'u_test',
+          'display_name': 'Test User',
+          'email': 'test@example.com',
+          'created_at': '2026-01-01T00:00:00.000Z',
+          'updated_at': '2026-01-02T00:00:00.000Z',
+          if (weightUnit != null) 'weight_unit': weightUnit,
+        };
 
     setUp(() {
       resetRepositoriesForTest();
-      final api = buildTestApiClient();
+      // Default: every GET/PATCH /me echoes a minimal user; weights
+      // list returns an empty envelope. Tests can rebuild the adapter
+      // with a more specific handler when needed.
+      adapter = FakeDioAdapter((options) {
+        if (options.path == '/weights') {
+          return jsonResponse(200, <String, dynamic>{
+            'results': const <dynamic>[],
+            'total': 0,
+            'limit': 100,
+            'offset': 0,
+          });
+        }
+        // Echo whatever weight_unit the PATCH body carried back; GET
+        // /me with no body defaults to omitting the key (pre-backend
+        // window).
+        final body = options.data is Map<String, dynamic>
+            ? options.data as Map<String, dynamic>
+            : const <String, dynamic>{};
+        return jsonResponse(200, meWith(weightUnit: body['weight_unit'] as String?));
+      });
+      final dio = Dio(BaseOptions(baseUrl: 'https://test.example/api/v1'))
+        ..httpClientAdapter = adapter;
+      final api = ApiClient(dio, baseUrl: 'https://test.example/api/v1');
       repo = ProfileRepository(
         api: api,
         weightRepository: WeightRepository(api),
@@ -200,37 +239,45 @@ void main() {
 
     tearDown(teardownRepositoriesForTest);
 
-    test('seed user defaults to WeightUnit.kg', () async {
+    test('GET /me with no weight_unit defaults to WeightUnit.kg',
+        () async {
       final user = await repo.me();
       expect(user.weightUnit, WeightUnit.kg);
+      // First request is GET /me, second is GET /weights (the derive
+      // path for currentWeightKg).
+      expect(adapter.requests.first.method, equalsIgnoringCase('GET'));
+      expect(adapter.requests.first.path, equals('/me'));
     });
 
-    test('update(weightUnit: lb) → next me() returns lb', () async {
-      await repo.update(const UserPatch(weightUnit: WeightUnit.lb));
-      final user = await repo.me();
-      expect(user.weightUnit, WeightUnit.lb);
-    });
-
-    test('update(weightUnit: st) → next me() returns st', () async {
-      await repo.update(const UserPatch(weightUnit: WeightUnit.st));
-      final user = await repo.me();
-      expect(user.weightUnit, WeightUnit.st);
-    });
-
-    test('update returns the post-update User with the new unit', () async {
+    test('update(weightUnit: lb) PATCHes /me with weight_unit=lb',
+        () async {
       final returned =
           await repo.update(const UserPatch(weightUnit: WeightUnit.lb));
       expect(returned.weightUnit, WeightUnit.lb);
+
+      final patch = adapter.requests
+          .firstWhere((r) => r.method.toUpperCase() == 'PATCH');
+      expect(patch.path, equals('/me'));
+      expect((patch.data as Map)['weight_unit'], equals('lb'));
     });
 
-    test('update(weightUnit: null) does not change the stored unit',
+    test('update(weightUnit: st) PATCHes /me with weight_unit=st',
         () async {
-      await repo.update(const UserPatch(weightUnit: WeightUnit.lb));
-      // A patch with no weightUnit must leave the previous unit alone.
+      final returned =
+          await repo.update(const UserPatch(weightUnit: WeightUnit.st));
+      expect(returned.weightUnit, WeightUnit.st);
+      final patch = adapter.requests
+          .firstWhere((r) => r.method.toUpperCase() == 'PATCH');
+      expect((patch.data as Map)['weight_unit'], equals('st'));
+    });
+
+    test('update with no weightUnit omits the key from the patch body',
+        () async {
       await repo.update(const UserPatch(displayName: 'Renamed'));
-      final user = await repo.me();
-      expect(user.weightUnit, WeightUnit.lb);
-      expect(user.displayName, 'Renamed');
+      final patch = adapter.requests
+          .firstWhere((r) => r.method.toUpperCase() == 'PATCH');
+      expect((patch.data as Map).containsKey('weight_unit'), isFalse);
+      expect((patch.data as Map)['display_name'], equals('Renamed'));
     });
   });
 }

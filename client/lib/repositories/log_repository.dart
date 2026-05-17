@@ -1,12 +1,12 @@
+import 'package:dio/dio.dart';
+
 import '../data/api_client.dart';
 import '../data/outbox/log_outbox_notifier.dart';
 import '../domain/day_summary.dart';
-import '../domain/goal.dart';
 import '../domain/log_entry.dart';
 import '../domain/meal.dart';
+import '_fixtures.dart' show quickAddFoodId;
 import 'food_repository.dart';
-import '_fixtures.dart';
-import '_mock_latency.dart';
 import 'goal_repository.dart';
 
 /// Read + write surface for the food log. Mirrors `/log` and
@@ -14,11 +14,18 @@ import 'goal_repository.dart';
 ///
 /// **T-09 anchor.** [daySummary] is the canonical "totals for a date"
 /// source — the ring, the ring-summary card, the right-rail summary, and
-/// the log-entry preview block all read from the same number. The mock
-/// repository computes those totals from the same in-memory entries
-/// list [entriesForDate] returns; the live client will use the
-/// server's `GET /days/{date}/summary` rollup. Either way, screens go
-/// through one provider.
+/// the log-entry preview block all read from the same number. The
+/// server's `GET /days/{date}/summary` rollup is the wire shape; the
+/// returned `DaySummary` is parsed verbatim and screens go through one
+/// provider.
+///
+/// **Outbox wire model.** The repository owns the wire calls. The mobile
+/// outbox (T-22) is wired upstream (the log-entry sheet on compact
+/// `enqueue`s the `LogCreate` JSON, and the outbox's `LogPostFn`
+/// re-enters [create] when it drains). On success the outbox deletes its
+/// queued entry; on failure (the HTTP call below throws) the outbox
+/// keeps the entry for retry. Edits, deletes and copy-day never queue
+/// (architect §2.5 / PM ruling) — those paths call the wire directly.
 class LogRepository {
   LogRepository({
     required ApiClient api,
@@ -30,9 +37,12 @@ class LogRepository {
         _goalRepo = goalRepository,
         _outbox = outbox;
 
-  // ignore: unused_field — kept for parity with the eventual real client.
   final ApiClient _api;
   final FoodRepository _foodRepo;
+  // ignore: unused_field — kept for parity with the eventual real client.
+  // `GET /days/{date}/summary` already embeds the active goal so we don't
+  // need to fetch it here; the field is retained for compatibility with
+  // existing test harness constructors and any future per-date overrides.
   final GoalRepository _goalRepo;
 
   /// Compact-only handle on the offline outbox. Null on medium/expanded
@@ -42,72 +52,68 @@ class LogRepository {
   /// sheet owns that — so this is purely a read-side projection.
   final LogOutboxNotifier? _outbox;
 
-  /// In-memory entries. Static so the day view and the create-log call
-  /// share the same list across repository instances. Deletable when
-  /// the real API lands.
-  static List<LogEntry>? _entries;
-
-  static int _seq = 0;
-
-  List<LogEntry> get _state {
-    final cached = _entries;
-    if (cached != null) return cached;
-    // Build seed entries against the food repository's seed catalog.
-    // Lazy on first access so tests that swap the food seed before
-    // boot don't get a stale snapshot.
-    final seed = buildSeedLogEntries(buildSeedFoods());
-    _entries = <LogEntry>[...seed];
-    return _entries!;
-  }
-
   /// Entries on a given local date (the date the user is viewing — T-16).
   /// Ordering: newest `createdAt` first (within a date the day-view
   /// scrolls top-down chronologically; the meal section groups them and
   /// the FoodRow doesn't expose the timestamp).
+  ///
+  /// Wire shape: `GET /log?from=YYYY-MM-DD&to=YYYY-MM-DD`. The response
+  /// is the `PaginatedLogEntries` envelope (`{results, total, limit,
+  /// offset}`); we read `results` and ignore pagination for a single-day
+  /// fetch (server returns up to 100 entries by default — well above any
+  /// realistic single-day count).
   Future<List<LogEntry>> entriesForDate(DateTime date) async {
-    await mockLatency();
-    final d = DateTime(date.year, date.month, date.day);
-    return _state
-        .where((e) =>
-            e.consumedOn.year == d.year &&
-            e.consumedOn.month == d.month &&
-            e.consumedOn.day == d.day)
-        .toList()
-      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
-  }
-
-  /// Rollup for a single calendar date. Computes totals + per-meal
-  /// subtotals from [entriesForDate] in the mock; the real client will
-  /// hit `/days/{date}/summary` (which is the server doing the same
-  /// math). The day's active goal — pulled from [GoalRepository] —
-  /// supplies the `*Target` fields so the ring and macro bars don't
-  /// need a second read.
-  Future<DaySummary> daySummary(DateTime date) async {
-    final entries = await entriesForDate(date);
-    final activeGoal = await _activeGoalForDateSafely(date);
-    return buildDaySummary(
-      date: DateTime(date.year, date.month, date.day),
-      entriesOnDate: entries,
-      activeGoal: activeGoal,
+    final iso = _isoDate(date);
+    final res = await _api.dio.get<Map<String, dynamic>>(
+      '/log',
+      queryParameters: <String, dynamic>{
+        'from': iso,
+        'to': iso,
+      },
     );
+    final body = res.data ?? const <String, dynamic>{};
+    final results = (body['results'] as List<dynamic>? ?? const <dynamic>[])
+        .cast<Map<String, dynamic>>();
+    final entries =
+        results.map(_decodeEntryWithDenorm).toList(growable: false);
+    entries.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    return entries;
   }
 
-  /// Pull the day's active goal but swallow "no active goal" so the
-  /// day-summary call doesn't fail on the never-had-a-goal edge case.
-  /// Screens render a "Set a goal" affordance when `kcalTarget == null`.
-  Future<Goal?> _activeGoalForDateSafely(DateTime date) async {
-    try {
-      return await _goalRepo.active(on: date);
-    } on GoalNotFoundError {
-      return null;
-    }
+  /// Rollup for a single calendar date. The wire endpoint already does
+  /// the per-meal subtotal math + lifts the active goal's targets onto
+  /// the response, so this is a single HTTP read (T-09).
+  ///
+  /// Wire shape: `GET /days/{YYYY-MM-DD}/summary` — note the path is a
+  /// bare date, **not** an ISO-8601 datetime. The response includes a
+  /// `total` block, a `by_meal` array (one subtotal per meal in canonical
+  /// order, even for empty meals), and an `active_goal` block (or `null`
+  /// when the day has no goal). `DaySummary.fromJson` parses all of it.
+  Future<DaySummary> daySummary(DateTime date) async {
+    final iso = _isoDate(date);
+    final res = await _api.dio.get<Map<String, dynamic>>(
+      '/days/$iso/summary',
+    );
+    final body = res.data ?? const <String, dynamic>{};
+    return DaySummary.fromJson(body);
   }
 
-  /// Append a log entry. The mock computes the frozen nutrition snapshot
-  /// from the food + serving + quantity exactly the way the server
-  /// does (architect spec §9 screen 04). On success the food's
-  /// recent/frequent counters tick, so the right-rail Quick add card
-  /// reflects the new ranking on the next read.
+  /// Append a log entry. Routes to `POST /log` for canonical entries and
+  /// to `POST /log/quick_add` for the kcal-only quick-add path
+  /// (architect §9 screen 04). The server computes the frozen nutrition
+  /// snapshot from the food + serving + quantity; the client decodes the
+  /// returned entry, denormalises `food_name` / `serving_name` from the
+  /// local food cache, and bumps recents/frequents for the
+  /// non-quick-add path so the right-rail Quick add card reflects the
+  /// new ranking on the next read.
+  ///
+  /// **Outbox.** On compact the log-entry sheet enqueues the `LogCreate`
+  /// JSON; the outbox's drain re-enters this method via its `LogPostFn`.
+  /// Any thrown `DioException` propagates back to the outbox, which
+  /// increments the attempt counter and either schedules a retry or
+  /// flips the entry to a terminal "failed" state. On medium/expanded
+  /// the call-site invokes this directly (no outbox), surfacing failures
+  /// inline (architecture §5).
   ///
   /// `@invalidates`
   /// - `daySummaryProvider(consumedOn)` — the ring + summary card.
@@ -122,52 +128,59 @@ class LogRepository {
   /// new dependent provider is added by editing this list and the call
   /// sites in the same PR.
   Future<LogEntry> create(LogCreate data) async {
-    await mockLatency();
-    final food = _foodRepo.lookup(data.foodId);
-    if (food == null) throw FoodNotFoundError(data.foodId);
-    final serving = food.servings.firstWhere(
-      (s) => s.id == data.servingId,
-      orElse: () => throw FoodNotFoundError(data.servingId),
+    final isQuickAdd = data.foodId == quickAddFoodId;
+
+    final Map<String, dynamic> body;
+    final String path;
+    if (isQuickAdd) {
+      // `LogCreate.quantity` is the kcal value for the quick-add sheet
+      // (the synthetic `food_quick_add` food maps quantity 1:1 to kcal).
+      // The wire schema is `{calories_kcal, meal, consumed_on, note?}`.
+      path = '/log/quick_add';
+      body = <String, dynamic>{
+        'calories_kcal': data.quantity.toString(),
+        'meal': data.meal.wire,
+        'consumed_on': _isoDate(data.consumedOn),
+        if (data.note != null) 'note': data.note,
+      };
+    } else {
+      path = '/log';
+      body = data.toJson();
+    }
+
+    final res = await _api.dio.post<Map<String, dynamic>>(
+      path,
+      data: body,
     );
-    final now = DateTime.now();
-    final id = 'le_new_${_seq++}_${now.microsecondsSinceEpoch}';
-    // Quick-add path: when `LogCreate.nutritionOverride` is supplied,
-    // substitute it for the food's per-100 g panel before computing the
-    // snapshot. The Quick-add sheet uses this to thread user-supplied
-    // macros through the normal log math without inventing a new
-    // endpoint. Normal log flows leave the override null and the math
-    // is byte-for-byte unchanged.
-    final foodForSnapshot = data.nutritionOverride == null
-        ? food
-        : food.copyWith(nutritionPer100g: data.nutritionOverride);
-    final entry = computeLogEntry(
-      id: id,
-      food: foodForSnapshot,
-      serving: serving,
-      consumedOn:
-          DateTime(data.consumedOn.year, data.consumedOn.month, data.consumedOn.day),
-      meal: data.meal,
-      quantity: data.quantity,
-      createdAt: now,
-      note: data.note,
+    final decoded = _decodeEntryWithDenorm(
+      res.data ?? const <String, dynamic>{},
     );
-    _state.add(entry);
-    _foodRepo.noteFoodLogged(food.id);
-    return entry;
+
+    // Skip recents/frequents bumps for quick-add: the server's quick-add
+    // sentinel food is hidden from My foods anyway (per openapi
+    // description); bumping its rank would leak it back into the
+    // recent/frequent projections. The non-quick-add path bumps using
+    // the locally-known foodId so the cached FoodRepository projections
+    // update in lock-step with what we just wrote.
+    if (!isQuickAdd) {
+      _foodRepo.noteFoodLogged(data.foodId);
+    }
+    return decoded;
   }
 
-  /// Patch a log entry. Mirrors `PATCH /log/{id}` from the OpenAPI doc
-  /// (`update_log_entry`). The mock recomputes the frozen nutrition
-  /// snapshot from the (possibly new) serving + quantity against the
-  /// food's `nutritionPer100g`, the same way [create] does — the
-  /// server runs identical math, so the day-view sees identical numbers
-  /// regardless of mock-vs-live wiring (T-17, T-09).
+  /// Patch a log entry. Wire shape: `PATCH /log/{id}` with a sparse JSON
+  /// body that only includes the changed fields (T-17). The server
+  /// recomputes the frozen nutrition snapshot from the (possibly new)
+  /// serving + quantity against the food's `nutritionPer100g`; we decode
+  /// its response verbatim and denormalise food/serving names from the
+  /// local catalog so the day-view's `FoodRow` can render without a
+  /// second fetch.
   ///
-  /// `food_id` is immutable in edit mode (PM ruling). The patch class
-  /// already refuses to serialise one; if a future caller somehow sneaks
-  /// one in via a subclass, the repository asserts loudly.
+  /// `food_id` is immutable in edit mode (PM ruling). [LogPatch] already
+  /// refuses to model one; the JSON guard below catches anyone
+  /// constructing the map directly through a subclass.
   ///
-  /// Throws [LogEntryNotFoundError] when [entryId] is unknown.
+  /// Throws [LogEntryNotFoundError] when the server returns 404.
   ///
   /// `@invalidates`
   /// - `daySummaryProvider(newConsumedOn)` — the ring + summary card.
@@ -182,67 +195,31 @@ class LogRepository {
   ///   could shift the week-day count (UX-110 / F10).
   ///
   /// Call sites are responsible for invalidating per T-18 (minimal +
-  /// explicit); this list is the **contract** the call site reads. A
-  /// new dependent provider is added by editing this list and the call
-  /// sites in the same PR.
+  /// explicit); this list is the **contract** the call site reads.
   Future<LogEntry> update(String entryId, LogPatch patch) async {
     // Defence-in-depth against a caller smuggling in a food swap. The
     // PM ruling is unambiguous: edit mode never re-keys an entry to a
     // different food. `LogPatch` enforces this at the wire level by
     // not modelling a `foodId` field, so the JSON guard below catches
     // anyone constructing the map directly.
-    if (patch.toJson().containsKey('food_id')) {
+    final body = patch.toJson();
+    if (body.containsKey('food_id')) {
       throw StateError(
         'LogPatch must not contain food_id — food is immutable on edit.',
       );
     }
-    await mockLatency();
-    // TODO(LU-001-wire): replace mock with ApiClient.patch
-    // ('/log/$entryId', patch.toJson())
-    final idx = _state.indexWhere((e) => e.id == entryId);
-    if (idx < 0) throw LogEntryNotFoundError(entryId);
-    final current = _state[idx];
-    final food = _foodRepo.lookup(current.foodId);
-    if (food == null) throw FoodNotFoundError(current.foodId);
-
-    final nextServingId = patch.servingId ?? current.servingId;
-    final serving = food.servings.firstWhere(
-      (s) => s.id == nextServingId,
-      orElse: () => throw FoodNotFoundError(nextServingId ?? '<no-serving>'),
-    );
-
-    final nextConsumedOn = patch.consumedOn ?? current.consumedOn;
-    final nextMeal = patch.meal ?? current.meal;
-    final nextQuantity = patch.quantity ?? current.quantity;
-
-    // Note semantics mirror the wire: an explicit non-null wins, an
-    // explicit `clearNote` clears, otherwise carry the prior value.
-    final String? nextNote;
-    if (patch.note != null) {
-      nextNote = patch.note;
-    } else if (patch.clearNote) {
-      nextNote = null;
-    } else {
-      nextNote = current.note;
+    try {
+      final res = await _api.dio.patch<Map<String, dynamic>>(
+        '/log/$entryId',
+        data: body,
+      );
+      return _decodeEntryWithDenorm(res.data ?? const <String, dynamic>{});
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 404) {
+        throw LogEntryNotFoundError(entryId);
+      }
+      rethrow;
     }
-
-    final now = DateTime.now();
-    final recomputed = computeLogEntry(
-      id: current.id,
-      food: food,
-      serving: serving,
-      consumedOn: DateTime(
-        nextConsumedOn.year,
-        nextConsumedOn.month,
-        nextConsumedOn.day,
-      ),
-      meal: nextMeal,
-      quantity: nextQuantity,
-      createdAt: current.createdAt,
-      note: nextNote,
-    ).copyWith(updatedAt: now);
-    _state[idx] = recomputed;
-    return recomputed;
   }
 
   /// True iff [entryId] has an outbox record in `pending` or `failed`
@@ -261,7 +238,9 @@ class LogRepository {
             e.status == OutboxEntryStatus.failed));
   }
 
-  /// Delete a log entry. The OpenAPI returns 204 — we return void.
+  /// Delete a log entry. Wire shape: `DELETE /log/{id}` returns 204.
+  ///
+  /// Throws [LogEntryNotFoundError] when the server returns 404.
   ///
   /// `@invalidates`
   /// - `daySummaryProvider(consumedOn)` — the ring + summary card for
@@ -272,57 +251,51 @@ class LogRepository {
   /// - `frequentFoodsProvider` — same.
   /// - `weeklyLogDaysProvider` — deleting the only entry on a date drops
   ///   that day from the week-count (UX-110 / F10).
-  ///
-  /// Call sites are responsible for invalidating per T-18 (minimal +
-  /// explicit); this list is the **contract** the call site reads. A
-  /// new dependent provider is added by editing this list and the call
-  /// sites in the same PR.
   Future<void> delete(String entryId) async {
-    await mockLatency();
-    _state.removeWhere((e) => e.id == entryId);
+    try {
+      await _api.dio.delete<void>('/log/$entryId');
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 404) {
+        throw LogEntryNotFoundError(entryId);
+      }
+      rethrow;
+    }
   }
 
-  /// Adopt a pre-built entry (used by the outbox path: optimistic insert
-  /// before the server returns). Not part of the OpenAPI surface — it
-  /// only exists for the mobile outbox to inject the optimistic row
-  /// without re-computing the snapshot.
+  /// Adopt a pre-built entry. Pre-wire this back-channeled into the
+  /// in-memory mock so optimistic rows showed up on the next
+  /// `entriesForDate` read; on the live wire the optimistic display is
+  /// owned by the outbox layer (T-22 — the day-view merges
+  /// pending/failed outbox rows with the server response). Kept on the
+  /// class as a no-op-except-for-the-recents-bump so call-sites that
+  /// invoked it pre-wire don't change shape.
   ///
   /// `@invalidates`
-  /// - `daySummaryProvider(entry.consumedOn)` — the ring + summary
-  ///   card for the entry's date.
-  /// - `logEntriesProvider(entry.consumedOn)` — the meal section list.
   /// - `recentFoodsProvider` — `noteFoodLogged` runs, so the food
   ///   jumps to the head of recent.
   /// - `frequentFoodsProvider` — same; the frequency count ticks.
-  /// - `weeklyLogDaysProvider` — the optimistic entry's date may flip
-  ///   from zero-entries to one+, bumping the week count (UX-110 / F10).
-  ///
-  /// Call sites are responsible for invalidating per T-18 (minimal +
-  /// explicit); this list is the **contract** the call site reads. A
-  /// new dependent provider is added by editing this list and the call
-  /// sites in the same PR.
   void adoptOptimistic(LogEntry entry) {
-    _state.add(entry);
     _foodRepo.noteFoodLogged(entry.foodId);
   }
 
   /// Copy every entry from [sourceDate] to [targetDate], optionally
-  /// filtered by [meals]. Mirrors `POST /log/copy` from the OpenAPI doc
-  /// (`copy_log_day`, `specs/openapi.yaml` lines 668–698).
+  /// filtered by [meals]. Wire shape: `POST /log/copy` with body
+  /// `{from_date, to_date, meal?}` (`copy_log_day`, `specs/openapi.yaml`
+  /// lines 668–698). The response is wrapped as `{copied: [...]}`.
   ///
   /// **Server contract.** Snapshots are recomputed from the *current*
   /// food state — the client never sends nutrition snapshots for copied
   /// entries, and a custom food edited between [sourceDate] and
   /// [targetDate] is reflected in the copy verbatim. Entries whose food
   /// is no longer visible or whose serving was deleted are silently
-  /// skipped; the returned list contains only the successfully copied
-  /// entries. The UI surfaces partial-skip via
+  /// skipped by the server; the `copied` list contains only the
+  /// successfully copied entries. The UI surfaces partial-skip via
   /// `created.length < requested.length`.
   ///
   /// [meals] is `null` → copy every meal (whole-day copy). A non-null
-  /// list filters source entries to those whose `meal` is contained.
-  /// The wire accepts a single `meal` field (the union of the list);
-  /// the mock implementation iterates per-meal and concatenates.
+  /// list filters the source entries: the wire accepts a single `meal`
+  /// field, so we issue one `POST /log/copy` per meal in the list and
+  /// concatenate the results (matching the pre-wire mock's semantics).
   ///
   /// The repository **does not** route through `_outbox` for `copyDay`.
   /// Per PM doc §2 F1 AC: copy is online-only; the outbox is scoped to
@@ -338,105 +311,129 @@ class LogRepository {
   /// - `weeklyLogDaysProvider` — the target day may flip from
   ///   zero-entries to one+, affecting the 0–7 week count (UX-110 /
   ///   F10).
-  ///
-  /// Notably **not** invalidated: `daySummaryProvider(sourceDate)` /
-  /// `logEntriesProvider(sourceDate)` — the source day is read-only.
-  /// The wire never mutates `from_date`.
-  ///
-  /// Call sites are responsible for invalidating per T-18 (minimal +
-  /// explicit); this list is the **contract** the call site reads. A
-  /// new dependent provider is added by editing this list and the call
-  /// sites in the same PR.
   Future<List<LogEntry>> copyDay({
     required DateTime sourceDate,
     required DateTime targetDate,
     List<Meal>? meals,
   }) async {
-    await mockLatency();
-    // Normalise to Y/M/D so caller-supplied DateTimes with non-zero
-    // hour/minute fields still match the day-keyed `consumedOn`.
-    final src =
-        DateTime(sourceDate.year, sourceDate.month, sourceDate.day);
-    final tgt =
-        DateTime(targetDate.year, targetDate.month, targetDate.day);
-    // 1. Filter `_state` by consumedOn == sourceDate (Y/M/D) AND
-    //    meals == null || meals.contains(entry.meal).
-    final filtered = _state.where((e) {
-      final on = e.consumedOn;
-      final sameDay = on.year == src.year &&
-          on.month == src.month &&
-          on.day == src.day;
-      if (!sameDay) return false;
-      if (meals != null && !meals.contains(e.meal)) return false;
-      return true;
-    }).toList();
+    final fromIso = _isoDate(sourceDate);
+    final toIso = _isoDate(targetDate);
 
-    final now = DateTime.now();
-    final created = <LogEntry>[];
-    for (final source in filtered) {
-      // 2. Look up the food. Missing → silently skip (wire contract).
-      final food = _foodRepo.lookup(source.foodId);
-      if (food == null) continue;
-      // 3. Look up the serving. Missing → silently skip.
-      final servingId = source.servingId;
-      if (servingId == null) continue;
-      final servingMatch = food.servings.where((s) => s.id == servingId);
-      if (servingMatch.isEmpty) continue;
-      final serving = servingMatch.first;
-      // 4. Recompute the snapshot against the *current* food state
-      //    (not the source entry's frozen snapshot). Same math path as
-      //    `create` — `computeLogEntry` mirrors the server.
-      final id = 'le_new_${_seq++}_${now.microsecondsSinceEpoch}';
-      final entry = computeLogEntry(
-        id: id,
-        food: food,
-        serving: serving,
-        consumedOn: tgt,
-        meal: source.meal,
-        quantity: source.quantity,
-        createdAt: now,
-        note: source.note,
-      );
-      // 5. Append + bump recents/frequents.
-      _state.add(entry);
-      _foodRepo.noteFoodLogged(food.id);
-      created.add(entry);
+    // Single-call shape covers the common case (whole-day copy, or
+    // single-meal filter). A multi-meal list fans out into N calls so
+    // the per-meal subtotal lands on the target day in input order.
+    final mealList = meals;
+    final List<Map<String, dynamic>> bodies;
+    if (mealList == null) {
+      bodies = <Map<String, dynamic>>[
+        <String, dynamic>{
+          'from_date': fromIso,
+          'to_date': toIso,
+        },
+      ];
+    } else if (mealList.length == 1) {
+      bodies = <Map<String, dynamic>>[
+        <String, dynamic>{
+          'from_date': fromIso,
+          'to_date': toIso,
+          'meal': mealList.single.wire,
+        },
+      ];
+    } else {
+      bodies = <Map<String, dynamic>>[
+        for (final m in mealList)
+          <String, dynamic>{
+            'from_date': fromIso,
+            'to_date': toIso,
+            'meal': m.wire,
+          },
+      ];
     }
-    // 6. Return the survivors. Partial-skip is implicit in
-    //    `created.length < filtered.length`; the UI computes the
-    //    requested count from the source meal-filter and compares.
+
+    final created = <LogEntry>[];
+    for (final body in bodies) {
+      final res = await _api.dio.post<Map<String, dynamic>>(
+        '/log/copy',
+        data: body,
+      );
+      final copied = ((res.data ?? const <String, dynamic>{})['copied']
+              as List<dynamic>? ??
+          const <dynamic>[])
+          .cast<Map<String, dynamic>>();
+      for (final raw in copied) {
+        final entry = _decodeEntryWithDenorm(raw);
+        created.add(entry);
+        _foodRepo.noteFoodLogged(entry.foodId);
+      }
+    }
     return created;
   }
 
   /// Count distinct dates in the current local week (Mon–Sun) that
-  /// have at least one log entry. Returns 0..7.
+  /// have at least one log entry. Returns 0..7. Backs
+  /// `weeklyLogDaysProvider` (UX-110 / F10 — architect §7.2).
   ///
-  /// Backs `weeklyLogDaysProvider` (UX-110 / F10 — architect §7.2). The
-  /// mock walks the in-memory `_state`; the live client (post-BE-002)
-  /// will swap to `GET /me/weekly-logging` and the provider's behaviour
-  /// is unchanged.
+  /// Implementation: hits `GET /log?from=<Mon>&to=<Sun>&limit=500` and
+  /// counts distinct `consumed_on` values in the response. The clamp at
+  /// 500 covers any realistic week (`/log`'s server-side max). A
+  /// dedicated `GET /me/weekly-logging` endpoint is the future home
+  /// (BE-002 in the architect doc); when it ships, this method swaps the
+  /// fetch and the provider's behaviour is unchanged.
   ///
   /// The week is Monday–Sunday in the caller's local time zone (PM
   /// ruling, architect §12.2 resolution). [now] defaults to
   /// `DateTime.now()`; tests inject a fixed clock so the week boundary
   /// is deterministic.
   Future<int> weeklyLogDayCount({DateTime? now}) async {
-    await mockLatency();
     final clockNow = now ?? DateTime.now();
     final weekStart = _mondayOfWeek(clockNow);
-    final weekEnd = weekStart.add(const Duration(days: 7));
-    final daysLogged = <int>{};
-    for (final e in _state) {
-      final on = DateTime(
-        e.consumedOn.year,
-        e.consumedOn.month,
-        e.consumedOn.day,
-      );
-      if (on.isBefore(weekStart)) continue;
-      if (!on.isBefore(weekEnd)) continue;
-      daysLogged.add(_dayKey(on));
+    final weekEndInclusive = weekStart.add(const Duration(days: 6));
+
+    final res = await _api.dio.get<Map<String, dynamic>>(
+      '/log',
+      queryParameters: <String, dynamic>{
+        'from': _isoDate(weekStart),
+        'to': _isoDate(weekEndInclusive),
+        'limit': 500,
+      },
+    );
+    final results = ((res.data ?? const <String, dynamic>{})['results']
+            as List<dynamic>? ??
+        const <dynamic>[])
+        .cast<Map<String, dynamic>>();
+    final days = <String>{};
+    for (final raw in results) {
+      final day = raw['consumed_on'] as String?;
+      if (day != null) days.add(day);
     }
-    return daysLogged.length;
+    return days.length;
+  }
+
+  /// Decode a wire `LogEntry` and denormalise `foodName` / `servingName`
+  /// from the local food catalog. The OpenAPI shape does not include
+  /// these (the wire keeps the snapshot flat), but the day-view's
+  /// `FoodRow` reads them directly; resolving from the cache here means
+  /// rows render without a second fetch per entry.
+  LogEntry _decodeEntryWithDenorm(Map<String, dynamic> json) {
+    final base = LogEntry.fromJson(json);
+    if (base.foodName.isNotEmpty &&
+        (base.servingName != null && base.servingName!.isNotEmpty)) {
+      return base;
+    }
+    final cached = _foodRepo.lookup(base.foodId);
+    if (cached == null) return base;
+    final cachedServing = base.servingId == null
+        ? null
+        : cached.servings.firstWhere(
+            (s) => s.id == base.servingId,
+            orElse: () => cached.servings.first,
+          );
+    return base.copyWith(
+      foodName: base.foodName.isEmpty ? cached.name : base.foodName,
+      servingName: (base.servingName == null || base.servingName!.isEmpty)
+          ? cachedServing?.name
+          : base.servingName,
+    );
   }
 
   /// Local midnight on the Monday of the week containing [now]. Dart's
@@ -450,15 +447,20 @@ class LogRepository {
     return DateTime(now.year, now.month, now.day - daysSinceMonday);
   }
 
-  /// Unique integer key per local calendar date. Distinguishes any two
-  /// dates within the seven-day window; the exact formula doesn't
-  /// matter so long as it's collision-free over a week.
-  int _dayKey(DateTime d) => d.year * 1000 + d.month * 32 + d.day;
-
-  // Test seam — let tests reset the in-memory list to a clean seed
-  // without rebuilding the whole repository.
-  static void resetForTesting() {
-    _entries = <LogEntry>[...buildSeedLogEntries(buildSeedFoods())];
-    _seq = 0;
-  }
+  /// Reset hook kept for source-compatibility with the harness. Pre-wire
+  /// this cleared the in-memory `_state` list; the wired repository has
+  /// no static state to reset, but tests that ran in mock mode still call
+  /// it from `setUp`. Now a no-op.
+  static void resetForTesting() {}
 }
+
+/// `YYYY-MM-DD` formatter that doesn't pull in `intl` for one call.
+/// Matches the OpenAPI `date` format used on `/log` query parameters,
+/// `/days/{date}/summary` paths, and `LogCreate`/`LogPatch` bodies.
+String _isoDate(DateTime d) {
+  final y = d.year.toString().padLeft(4, '0');
+  final m = d.month.toString().padLeft(2, '0');
+  final day = d.day.toString().padLeft(2, '0');
+  return '$y-$m-$day';
+}
+

@@ -121,7 +121,7 @@ void main() {
         optimisticId: optimisticId,
       );
 
-      final api = ApiClient(Dio());
+      final api = ApiClient(Dio(), baseUrl: 'about:invalid');
       final repo = LogRepository(
         api: api,
         foodRepository: FoodRepository(api),
@@ -135,7 +135,7 @@ void main() {
     });
 
     test('returns false on a null outbox (medium/expanded wiring)', () {
-      final api = ApiClient(Dio());
+      final api = ApiClient(Dio(), baseUrl: 'about:invalid');
       final repo = LogRepository(
         api: api,
         foodRepository: FoodRepository(api),
@@ -171,7 +171,7 @@ void main() {
       // classified as `failed`.
       expect(notifier.state.failedCount, 1);
 
-      final api = ApiClient(Dio());
+      final api = ApiClient(Dio(), baseUrl: 'about:invalid');
       final repo = LogRepository(
         api: api,
         foodRepository: FoodRepository(api),
