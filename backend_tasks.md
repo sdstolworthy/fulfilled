@@ -11,21 +11,46 @@ tracked in `deploy_tasks.md` instead. The standing
 `server/specs/backend_tickets_ledger.md` (BE-001..BE-009) is the
 long-form ledger and is not edited from this loop.
 
-**Deploy context (2026-05-16).** First production-style deploy at
-`https://app.coolify.stolworthy.co/`. The Flutter web bundle resolves
-`apiBaseUrl` from `Uri.base.origin + '/api/v1'`
-(`client/lib/providers/api_base_url_provider.dart`), so a browser
-hitting the web FQDN issues every API call to that same FQDN under
-`/api/v1/*`. **Currently unreachable** (TLS handshake failure on HTTPS,
-Cloudflare 503 on HTTP) — until the deploy proxy is reachable, items
-below cannot be validated end-to-end. See `deploy_tasks.md` for the
-infra side.
+**Deploy context (2026-05-17 update).** First production-style deploy
+serving at `https://app.coolify.stolworthy.co/` (web, Flutter) +
+`https://api.coolify.stolworthy.co/api/v1/*` (Rust API). Both verified
+returning 200 from the public internet (PT/SG/US-East/AT/HK/PL/SE
+probe nodes). Note the **FQDN split** — the deploy went to *distinct*
+api/app subdomains rather than a single-FQDN proxy, so the FE's
+`Uri.base.origin + '/api/v1'` derivation now resolves to
+`https://app.coolify.stolworthy.co/api/v1` which **won't** be served
+(the api lives at the `api.` subdomain). FE will likely need an
+`API_BASE_URL` override or hostname swap in
+`api_base_url_provider.dart`. Flagging for follow-up; not a backend
+change, but mentioned here so the FE team knows when they wire up
+real-API calls tonight.
 
 ---
 
 ## Ask 1 — Decide auth posture for the deploy: dev-bypass vs OIDC vs local-creds *(P0 — gates Ask 2)*
 
-Status: `open`
+Status: `done` — picked **(a) dev-bypass for closed beta**
+
+**Backend reply (2026-05-17, automation pick in user's absence):** keeping
+`DEV_AUTH_BYPASS=true` on the deploy for the closed beta. Rationale:
+
+- Closed-beta scope; the deploy is gated by knowing the token, not by
+  open signup.
+- A local-creds route (option b) needs a real schema design + password
+  verifier and is worth daylight collaboration on choices (argon2 vs
+  bcrypt, lockout policy, password reset path). I'm not picking that
+  unilaterally overnight.
+- OIDC (option c) requires picking a provider the deploy already
+  doesn't have — also a daylight call.
+
+**What the FE should do tonight:** the `signInWithCredentials` flow
+should ship the dev token as the bearer. The token is set in Coolify's
+env var `DEV_AUTH_TOKEN`. The current value on the deploy is
+`dev-token` (literal). If FE prefers a different value, change the env
+var in Coolify and the FE form can paste anything matching.
+
+Re-open this ask during business hours to pick (b) or (c) — that's the
+real product call.
 
 The deploy's compose file defaults `DEV_AUTH_BYPASS=true`
 (`compose.coolify.yaml:41`). With that set, the server skips JWKS and
@@ -60,7 +85,12 @@ re-files Ask 2 with the right shape based on the answer.
 
 ## Ask 2 — `POST /api/v1/auth/login` shipped (BE-008) *(P0 — depends on Ask 1)*
 
-Status: `blocked-on-ask-1`
+Status: `no-op-for-now` — Ask 1 picked (a) dev-bypass
+
+**Backend reply:** no route to ship while we're on dev-bypass. The FE's
+`signInWithCredentials` should bypass the request and present the
+dev-bypass token directly. Re-file this ask if Ask 1 is revisited and
+lands on (b).
 
 If Ask 1 lands on **(b)** local-creds, this is the BE-008 ticket in
 `server/specs/backend_tickets_ledger.md` — ship the route. Wire shape:
@@ -80,7 +110,15 @@ is picked.
 
 ## Ask 3 — Permissive CORS stays through v1 *(P2 — confirmation only)*
 
-Status: `open` (no code change expected)
+Status: `done` — confirmed
+
+**Backend reply:** permissive stays through v1. `CorsLayer::permissive()`
+at `server/crates/loseit-api/src/server.rs:133` is the contract — echoes
+the request `Origin` and allows `Authorization`. No code change. With
+the FQDN split actually shipped (distinct `api.` and `app.` subdomains),
+this *does* matter for the web client — the browser will issue
+cross-origin requests app → api. The current permissive layer handles
+it; we'll tighten to an allowlist once the deploy hostnames stabilize.
 
 The server's `CorsLayer::permissive()` in
 `server/crates/loseit-api/src/server.rs:133` already echoes the request
@@ -97,7 +135,21 @@ Done. No code change.
 
 ## Ask 4 — `User` schema: declare `weight_unit` / `height_unit` *(P2 — multi-day work)*
 
-Status: `open`
+Status: `in-progress` — architect designing (overnight)
+
+**Backend reply (2026-05-17):** taking this on through the standard
+pipeline. BE-001 (`weight_unit`) and BE-004 (`height_unit`) are the
+exact same shape modulo column name + enum values, so I'm routing them
+as a single combined design effort to avoid two migrations. Architect
+agent is producing the design now (migration + handler patches +
+OpenAPI delta + an answer to the open question on how `PATCH /me`
+handles unknown JSON keys); TPM will carve it into per-engineer tasks
+overnight; engineers will land it on a `be-user-units` feature branch
+without merging to `main` until you've reviewed in the morning.
+
+Will edit this status to `done` and move to the bottom once the branch
+is up + tested. If anything looks wrong, the commits will be on the
+branch on both `origin` and `gitea`.
 
 The client tolerates missing keys on `GET /me` and defaults
 `weight_unit=kg`, `height_unit=cm`. Today the OpenAPI `User` schema
