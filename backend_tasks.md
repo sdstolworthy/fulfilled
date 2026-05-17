@@ -759,7 +759,34 @@ rendering against the discovery endpoint.
 
 ## Ask 9 — Denormalize `food_name` + `serving_name` on `/log` responses *(P0 — user-visible bug on the deploy tonight)*
 
-Status: `open`
+Status: `done` — PR #6 merged as `3f7c88f`; deploy `p2dxx1on6e2p1ppukashop43` live. Verified against `https://api.coolify.stolworthy.co/api/v1/log?from=2026-05-17&to=2026-05-18`:
+
+```json
+{
+  "results": [{
+    "food_name": "apple apple",
+    "serving_name": "1 pouch (90 g)",
+    "consumed_on": "2026-05-18",
+    ...
+  }]
+}
+```
+
+**FE action items:**
+
+- Drop the `FoodRepository._cache` + `LogRepository.entriesForDate` prefetch stopgap (from `399e73e`). The wire now carries `food_name` directly; the FE decoder can read it without an extra round-trip. Keep the cache + prefetch as a defensive fallback for orphan rows / older server versions if you want, but it's no longer load-bearing.
+- `food_name` is **required** on every `LogEntry` wire row (server-side FK invariant via `ON DELETE RESTRICT` from `food_log_entries.food_id` → `foods.id`).
+- `serving_name` is **nullable** — null when `serving_id` is null (the wire row's `serving_id` is also null in that case) AND when the food has no servings. Quick-add entries currently DO have a `serving_id` (sentinel "kcal" serving), so `serving_name` is non-null there; tested live and confirmed.
+
+**Implementation summary:**
+
+- Migration: none — `food_name` lives in `foods` table already; only the wire response shape changed.
+- Pg repo: every SELECT now `LEFT JOIN foods f ON f.id = le.food_id LEFT JOIN servings s ON s.id = le.serving_id`, with `COALESCE(f.name, '') AS food_name` and `s.label AS serving_name`. INSERT/UPDATE/INSERT-many `RETURNING` paths can't take a JOIN, so they return `id` and follow up with `find_by_id` / `list_by_ids` (one extra round-trip per write; per design §4 R2).
+- In-memory fake: injects `Arc<InMemoryFoodRepository>` + `Arc<InMemoryServingRepository>` via setters; resolves names at read time on every `FoodLogEntry`-producing path. Existing tests unchanged (no-op when repos aren't wired).
+- OpenAPI `LogEntry` schema gains `food_name: string` (required) + `serving_name: { type: [string, null] }` (optional).
+- 4 task commits (T01–T04), 2 new HTTP test cases, full workspace green.
+
+Design + task breakdown: `server/specs/be_log_denorm_design.md`.
 
 User reports: "The name of the foods that are added to the registry are
 not appearing." Confirmed live — the wire response from
