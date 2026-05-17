@@ -27,12 +27,18 @@ class LogRepository {
     required FoodRepository foodRepository,
     required GoalRepository goalRepository,
     LogOutboxNotifier? outbox,
+    bool useFixtures = kUseFixtures,
   })  : _api = api,
         _foodRepo = foodRepository,
         _goalRepo = goalRepository,
-        _outbox = outbox {
-    if (kUseFixtures) _seedFixtureStore();
+        _outbox = outbox,
+        _useFixtures = useFixtures {
+    if (_useFixtures) _seedFixtureStore();
   }
+
+  /// Per-instance fixture-mode flag. Tests pass `useFixtures: false`
+  /// to exercise the live-API decoders against a mocked Dio adapter.
+  final bool _useFixtures;
 
   final ApiClient _api;
   final FoodRepository _foodRepo;
@@ -52,7 +58,7 @@ class LogRepository {
   }
 
   Future<List<LogEntry>> entriesForDate(DateTime date) async {
-    if (kUseFixtures) {
+    if (_useFixtures) {
       final out = _store
           .where((e) =>
               e.consumedOn.year == date.year &&
@@ -77,7 +83,7 @@ class LogRepository {
   }
 
   Future<DaySummary> daySummary(DateTime date) async {
-    if (kUseFixtures) {
+    if (_useFixtures) {
       final entries = await entriesForDate(date);
       // Goal is left null here — the day-view falls back to the
       // active goal's targets via its own provider chain.
@@ -96,7 +102,7 @@ class LogRepository {
   }
 
   Future<LogEntry> create(LogCreate data) async {
-    if (kUseFixtures) {
+    if (_useFixtures) {
       final isQuickAdd = data.foodId == fx.quickAddFoodId;
       final food = await _foodRepo.get(data.foodId);
       Serving serving;
@@ -154,7 +160,7 @@ class LogRepository {
   }
 
   Future<LogEntry> update(String entryId, LogPatch patch) async {
-    if (kUseFixtures) {
+    if (_useFixtures) {
       final i = _store.indexWhere((e) => e.id == entryId);
       if (i < 0) throw LogEntryNotFoundError(entryId);
       final original = _store[i];
@@ -219,7 +225,7 @@ class LogRepository {
   }
 
   Future<void> delete(String entryId) async {
-    if (kUseFixtures) {
+    if (_useFixtures) {
       final i = _store.indexWhere((e) => e.id == entryId);
       if (i < 0) throw LogEntryNotFoundError(entryId);
       _store.removeAt(i);
@@ -236,7 +242,7 @@ class LogRepository {
   }
 
   void adoptOptimistic(LogEntry entry) {
-    if (kUseFixtures) {
+    if (_useFixtures) {
       _store.add(entry);
     }
     _foodRepo.noteFoodLogged(entry.foodId);
@@ -247,7 +253,7 @@ class LogRepository {
     required DateTime targetDate,
     List<Meal>? meals,
   }) async {
-    if (kUseFixtures) {
+    if (_useFixtures) {
       final src = await entriesForDate(sourceDate);
       final filtered = meals == null
           ? src
@@ -333,7 +339,7 @@ class LogRepository {
     final clockNow = now ?? DateTime.now();
     final weekStart = _mondayOfWeek(clockNow);
     final weekEndInclusive = weekStart.add(const Duration(days: 6));
-    if (kUseFixtures) {
+    if (_useFixtures) {
       final days = <String>{};
       for (final e in _store) {
         if (e.consumedOn.isBefore(weekStart)) continue;
@@ -398,7 +404,7 @@ class LogRepository {
   /// Per-instance reset for fixture-mode tests.
   void resetInstanceForTesting() {
     _store.clear();
-    if (kUseFixtures) _seedFixtureStore();
+    if (_useFixtures) _seedFixtureStore();
   }
 
   /// No-op static reset retained for source compat with the pre-Ask-10

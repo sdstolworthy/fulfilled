@@ -28,11 +28,17 @@ const bool kUseFixtures = true;
 /// (modulo type updates) so we can flip the flag the moment the BE
 /// emits the new shape. Pagination, decoders, error mapping all stay.
 class FoodRepository {
-  FoodRepository(this._api) {
-    if (kUseFixtures) _seedFixtureStore();
+  FoodRepository(this._api, {bool useFixtures = kUseFixtures})
+      : _useFixtures = useFixtures {
+    if (_useFixtures) _seedFixtureStore();
   }
 
   final ApiClient _api;
+
+  /// Per-instance fixture-mode flag. Defaults to the top-level
+  /// [kUseFixtures] const; tests pass `useFixtures: false` to exercise
+  /// the live-API decoders against a mocked Dio adapter.
+  final bool _useFixtures;
 
   /// In-memory store used when [kUseFixtures] is true. Mutated by
   /// writes; read by every list/get call. Reset between widget tests
@@ -63,7 +69,7 @@ class FoodRepository {
     int limit = 25,
     int offset = 0,
   }) async {
-    if (kUseFixtures) {
+    if (_useFixtures) {
       final q = query.trim().toLowerCase();
       final hits = _store
           .where((f) =>
@@ -87,7 +93,7 @@ class FoodRepository {
   }
 
   Future<List<Food>> mine({int limit = 100, int offset = 0}) async {
-    if (kUseFixtures) {
+    if (_useFixtures) {
       final hits = _store
           .where((f) => f.source == FoodSource.user && f.id != fx.quickAddFoodId)
           .toList()
@@ -105,7 +111,7 @@ class FoodRepository {
   }
 
   Future<List<Food>> recent({int limit = 8}) async {
-    if (kUseFixtures) {
+    if (_useFixtures) {
       final hits = _store
           .where((f) => f.id != fx.quickAddFoodId)
           .toList()
@@ -120,7 +126,7 @@ class FoodRepository {
   }
 
   Future<List<Food>> frequent({int limit = 8}) async {
-    if (kUseFixtures) {
+    if (_useFixtures) {
       // Same projection as recent for fixture mode — the FE only cares
       // that the list renders; rank-order is irrelevant against seeds.
       return recent(limit: limit);
@@ -133,7 +139,7 @@ class FoodRepository {
   }
 
   Future<Food> get(String id) async {
-    if (kUseFixtures) {
+    if (_useFixtures) {
       final hit = _store.where((f) => f.id == id).toList();
       if (hit.isEmpty) throw FoodNotFoundError(id);
       _remember(hit.first);
@@ -151,7 +157,7 @@ class FoodRepository {
   }
 
   Future<void> prefetchByIds(Iterable<String> ids) async {
-    if (kUseFixtures) {
+    if (_useFixtures) {
       for (final id in ids) {
         final hit = _store.where((f) => f.id == id);
         if (hit.isNotEmpty) _remember(hit.first);
@@ -175,7 +181,7 @@ class FoodRepository {
   }
 
   Future<Food?> byBarcode(String barcode) async {
-    if (kUseFixtures) {
+    if (_useFixtures) {
       final hit = _store.where((f) => f.barcode == barcode).toList();
       if (hit.isEmpty) return null;
       _remember(hit.first);
@@ -195,7 +201,7 @@ class FoodRepository {
   // -------- Writes — Food --------
 
   Future<Food> createCustom(FoodCreate data) async {
-    if (kUseFixtures) {
+    if (_useFixtures) {
       final servings = <Serving>[];
       for (var i = 0; i < data.servings.length; i++) {
         final s = data.servings[i];
@@ -241,7 +247,7 @@ class FoodRepository {
   }
 
   Future<Food> updateCustom(String foodId, FoodPatch patch) async {
-    if (kUseFixtures) {
+    if (_useFixtures) {
       final i = _store.indexWhere((f) => f.id == foodId);
       if (i < 0) throw FoodNotFoundError(foodId);
       final original = _store[i];
@@ -298,7 +304,7 @@ class FoodRepository {
   }
 
   Future<void> deleteCustom(String id) async {
-    if (kUseFixtures) {
+    if (_useFixtures) {
       final i = _store.indexWhere((f) => f.id == id);
       if (i < 0) throw FoodNotFoundError(id);
       _store.removeAt(i);
@@ -316,7 +322,7 @@ class FoodRepository {
   // -------- Writes — Serving --------
 
   Future<Serving> addServing(String foodId, ServingCreate input) async {
-    if (kUseFixtures) {
+    if (_useFixtures) {
       final i = _store.indexWhere((f) => f.id == foodId);
       if (i < 0) throw FoodNotFoundError(foodId);
       final food = _store[i];
@@ -360,7 +366,7 @@ class FoodRepository {
   }
 
   Future<Serving> updateServing(String id, ServingPatch patch) async {
-    if (kUseFixtures) {
+    if (_useFixtures) {
       for (var i = 0; i < _store.length; i++) {
         final food = _store[i];
         final si = food.servings.indexWhere((s) => s.id == id);
@@ -395,7 +401,7 @@ class FoodRepository {
   }
 
   Future<void> deleteServing(String id) async {
-    if (kUseFixtures) {
+    if (_useFixtures) {
       for (var i = 0; i < _store.length; i++) {
         final food = _store[i];
         final si = food.servings.indexWhere((s) => s.id == id);
@@ -415,7 +421,7 @@ class FoodRepository {
   }
 
   Future<Serving> setDefaultServing(String id) async {
-    if (kUseFixtures) {
+    if (_useFixtures) {
       for (var i = 0; i < _store.length; i++) {
         final food = _store[i];
         final si = food.servings.indexWhere((s) => s.id == id);
@@ -448,7 +454,7 @@ class FoodRepository {
   }
 
   Future<int> customCount() async {
-    if (kUseFixtures) {
+    if (_useFixtures) {
       return _store
           .where((f) => f.source == FoodSource.user && f.id != fx.quickAddFoodId)
           .length;
@@ -478,7 +484,7 @@ class FoodRepository {
   void resetInstanceForTesting() {
     _store.clear();
     _byIdCache.clear();
-    if (kUseFixtures) _seedFixtureStore();
+    if (_useFixtures) _seedFixtureStore();
   }
 
   /// No-op static reset retained for source compat with the pre-Ask-10
