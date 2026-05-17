@@ -1,16 +1,14 @@
-import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../data/api_client.dart';
 import '../../data/auth_providers.dart';
-import '../../data/auth_token.dart';
 import '../../form_factor/breakpoints.dart';
 import '../../routing/routes.dart';
 import '../../theme/context_extensions.dart';
 import 'login_controller.dart';
+import 'oidc_exchange.dart';
 import 'widgets/credentials_form.dart';
 import 'widgets/login_button.dart';
 import 'widgets/oidc_button.dart';
@@ -99,58 +97,20 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     // submit a code the server has already redeemed (single-use, 60s
     // TTL). The fragment route survives the replace.
     OidcNavigator.instance.stripQueryParam('oidc_code');
-    try {
-      final dio = ref.read(apiClientProvider).dio;
-      final res = await dio.post<dynamic>(
-        '/auth/oidc/exchange',
-        data: <String, String>{'code': handoff},
-      );
-      final body = res.data;
-      if (body is! Map ||
-          body['token'] is! String ||
-          (body['token'] as String).isEmpty) {
-        if (!mounted) return;
+    final result = await runOidcExchange(ref: ref, handoff: handoff);
+    if (!mounted) return;
+    switch (result) {
+      case OidcExchangeSuccess():
+        // Belt-and-suspenders: strip the handoff code again right
+        // before navigating. Guarantees the URL is clean before
+        // GoRouter writes the `/today` location.
+        OidcNavigator.instance.stripQueryParam('oidc_code');
+        context.go(Routes.todayPath);
+      case OidcExchangeError(:final message):
         setState(() {
           _exchanging = false;
-          _exchangeError =
-              'Sign-in completed but the server returned no token. '
-              'Please try again.';
+          _exchangeError = message;
         });
-        return;
-      }
-      final token = body['token'] as String;
-      await ref.read(authTokenProvider.notifier).signIn(token);
-      if (!mounted) return;
-      // Belt-and-suspenders: strip the handoff code again right before
-      // navigating. The first strip (before the POST) may have raced
-      // with the page-build, and the bug in the original
-      // implementation kept the code in the URL when `oidc_code` was
-      // the only query param. A second call here guarantees the URL
-      // is clean before GoRouter writes the `/today` location, so a
-      // refresh after sign-in doesn't re-submit a spent code.
-      OidcNavigator.instance.stripQueryParam('oidc_code');
-      // The LOG-007 router redirect rule will catch
-      // `has-token + /login → /today` on the next frame anyway, but
-      // an explicit go gets us there one frame sooner.
-      context.go(Routes.todayPath);
-    } on DioException catch (e) {
-      if (!mounted) return;
-      final status = e.response?.statusCode;
-      final message = _extractServerMessage(e.response?.data) ??
-          (status == null
-              ? "Couldn't reach the server. Check your connection and "
-                  'try again.'
-              : 'Sign-in failed (server returned $status).');
-      setState(() {
-        _exchanging = false;
-        _exchangeError = message;
-      });
-    } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _exchanging = false;
-        _exchangeError = 'An unexpected error occurred. Please try again.';
-      });
     }
   }
 
@@ -515,9 +475,3 @@ class _OidcErrorBody extends StatelessWidget {
 /// Pull a human-readable error message off a typical `Error` response
 /// body. The server emits `{code, message?}` on errors; we surface
 /// `message` verbatim when present.
-String? _extractServerMessage(Object? data) {
-  if (data is Map && data['message'] is String) {
-    return data['message'] as String;
-  }
-  return null;
-}

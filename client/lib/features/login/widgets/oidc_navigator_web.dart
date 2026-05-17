@@ -1,20 +1,29 @@
+import 'dart:async';
 // ignore: deprecated_member_use
 import 'dart:html' as html;
+
+import 'package:flutter/widgets.dart';
 
 import 'oidc_navigator.dart';
 
 /// Web implementation — full-page redirect via `window.location.href`.
 /// The browser tears down the Flutter view and loads the IdP's
 /// authorize URL; control comes back when the IdP redirects to the
-/// backend's `/auth/oidc/{id}/callback`, which in turn redirects to
-/// the FE's `/login/callback?code=...`. The FE picks the code up via
-/// the `/login/callback` route handler.
+/// backend's callback, which in turn redirects to the FE's origin
+/// with `?oidc_code=<handoff>#/login`. `LoginScreen.initState` picks
+/// the param off `Uri.base.queryParameters` and runs the exchange.
 class _WebNavigator implements OidcNavigator {
   const _WebNavigator();
 
   @override
-  void redirect(String url) {
-    html.window.location.href = url;
+  Future<OidcFlowResult> startFlow(
+    String startUrl, {
+    required BuildContext context,
+  }) {
+    html.window.location.href = startUrl;
+    // The page is about to tear down. Return a future that never
+    // completes — any awaiter in this isolate is gone before resume.
+    return Completer<OidcFlowResult>().future;
   }
 
   @override
