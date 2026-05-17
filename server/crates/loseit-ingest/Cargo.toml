@@ -50,4 +50,5 @@ futures = { version = "0.3", optional = true }
 
 [dev-dependencies]
 loseit-testing.workspace = true
+rust_decimal_macros.workspace = true
 tempfile = "3"

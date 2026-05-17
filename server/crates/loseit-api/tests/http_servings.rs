@@ -12,10 +12,10 @@ use axum::body::{to_bytes, Body};
 use axum::http::{Request, StatusCode};
 use loseit_api::{router, AppState};
 use loseit_core::auth::Authenticator;
-use loseit_core::domain::{FoodDraft, NutritionPer100g, ServingDraft, ServingSource, UserIdentity};
+use loseit_core::domain::{FoodDraft, ServingDraft, ServingSource, Unit, UserIdentity};
 use loseit_core::repo::{
-    FoodRepository, GoalRepository, LogRepository, OffFoodUpsert, OffServing, ServingRepository,
-    SystemServing, UserRepository, WeightRepository,
+    FoodDraftWithServings, FoodRepository, GoalRepository, LogRepository, ServingRepository,
+    UserRepository, WeightRepository,
 };
 use loseit_testing::{
     FakeAuthenticator, InMemoryFoodRepository, InMemoryGoalRepository, InMemoryLogRepository,
@@ -106,29 +106,52 @@ fn authed_json_request(method: &str, uri: &str, body: serde_json::Value) -> Requ
 
 async fn seed_off_food(foods: &Arc<InMemoryFoodRepository>, barcode: &str, name: &str) -> Uuid {
     let batch_id = Uuid::new_v4();
-    let rec = OffFoodUpsert {
+    let rec = FoodDraftWithServings {
         draft: FoodDraft {
             name: name.into(),
             brands: None,
             barcode: Some(barcode.into()),
             categories_tags: vec![],
-            nutrition: NutritionPer100g {
-                energy_kcal: Some(Decimal::new(120, 0)),
-                ..Default::default()
-            },
             nutriscore_grade: None,
+            servings: vec![],
         },
         quality_score: 50,
-        off_serving: Some(OffServing {
-            label: "1 cup".into(),
-            grams: Decimal::new(245, 0),
-        }),
-        system_100g_serving: SystemServing {
-            label: "100 g".into(),
-            grams: Decimal::new(100, 0),
-        },
+        servings: vec![
+            ServingDraft {
+                label: Some("1 cup".into()),
+                amount: Decimal::new(1, 0),
+                unit: Unit::Cup,
+                kcal: Decimal::new(293, 0), // 120 kcal/100g * 245g / 100
+                protein_g: None,
+                carbs_g: None,
+                fat_g: None,
+                fiber_g: None,
+                sugar_g: None,
+                sodium_mg: None,
+                saturated_fat_g: None,
+                is_default: true,
+                source: ServingSource::Off,
+                sort_order: 0,
+            },
+            ServingDraft {
+                label: Some("100 g".into()),
+                amount: Decimal::new(100, 0),
+                unit: Unit::Gram,
+                kcal: Decimal::new(120, 0),
+                protein_g: None,
+                carbs_g: None,
+                fat_g: None,
+                fiber_g: None,
+                sugar_g: None,
+                sodium_mg: None,
+                saturated_fat_g: None,
+                is_default: false,
+                source: ServingSource::System,
+                sort_order: 1,
+            },
+        ],
     };
-    foods.upsert_off_batch(batch_id, &[rec]).await.unwrap();
+    foods.upsert_external_food_batch(batch_id, vec![rec]).await.unwrap();
     foods
         .find_by_barcode(Uuid::nil(), barcode)
         .await
@@ -139,7 +162,7 @@ async fn seed_off_food(foods: &Arc<InMemoryFoodRepository>, barcode: &str, name:
 
 async fn seed_custom_food_with_default_serving(
     foods: &Arc<InMemoryFoodRepository>,
-    servings: &Arc<InMemoryServingRepository>,
+    _servings: &Arc<InMemoryServingRepository>,
     owner: Uuid,
     name: &str,
 ) -> (Uuid, Uuid) {
@@ -148,28 +171,41 @@ async fn seed_custom_food_with_default_serving(
         brands: None,
         barcode: None,
         categories_tags: vec![],
-        nutrition: NutritionPer100g {
-            energy_kcal: Some(Decimal::new(100, 0)),
-            ..Default::default()
-        },
         nutriscore_grade: None,
+        servings: vec![],
     };
-    let food = foods.create_custom(owner, &draft).await.unwrap();
-    // Synthesize the default 100 g serving the service would normally add.
-    let serving = servings
-        .create(
-            food.id,
-            &ServingDraft {
-                label: "100 g".into(),
-                grams: Decimal::from(100),
-                is_default: true,
-                source: ServingSource::System,
-                sort_order: 0,
-            },
-        )
+    // Use create_custom_with_servings — includes the default 100 g serving.
+    let default_serving_draft = ServingDraft {
+        label: Some("100 g".into()),
+        amount: Decimal::from(100),
+        unit: Unit::Gram,
+        kcal: Decimal::from(100),
+        protein_g: None,
+        carbs_g: None,
+        fat_g: None,
+        fiber_g: None,
+        sugar_g: None,
+        sodium_mg: None,
+        saturated_fat_g: None,
+        is_default: true,
+        source: ServingSource::System,
+        sort_order: 0,
+    };
+    let food = foods
+        .create_custom_with_servings(owner, &draft, vec![default_serving_draft])
         .await
         .unwrap();
-    (food.id, serving.id)
+    // Retrieve the serving that was inserted for this food.
+    // The food repo wires through to the serving repo, so list_for_food works.
+    // We need the serving id: find it via the serving repo that foods has wired in.
+    // Since the test app seeds through `foods_concrete`, we reach the serving repo
+    // by looking it up via the `_servings` parameter (which is wired to foods).
+    let serving_list = _servings.list_for_food(food.id).await.unwrap();
+    let default_serving = serving_list
+        .into_iter()
+        .find(|s| s.is_default)
+        .expect("must have default serving after create_custom_with_servings");
+    (food.id, default_serving.id)
 }
 
 // -- Tests -------------------------------------------------------------------
@@ -196,7 +232,9 @@ async fn test_post_serving_409_for_off_food() {
 
     let body = serde_json::json!({
         "label": "1 banana",
-        "grams": 118,
+        "amount": 118,
+        "unit": "g",
+        "kcal": 60,
         "is_default": false,
     });
     let resp = app
@@ -241,7 +279,9 @@ async fn test_post_serving_forbidden_on_other_users_custom() {
 
     let body = serde_json::json!({
         "label": "1 slice",
-        "grams": 90,
+        "amount": 90,
+        "unit": "g",
+        "kcal": 50,
     });
     let resp = app
         .oneshot(authed_json_request(
@@ -281,8 +321,17 @@ async fn test_patch_serving_403_for_other_users_custom() {
                         s.food_id
                     },
                     &ServingDraft {
-                        label: "1 small bowl".into(),
-                        grams: Decimal::from(200),
+                        label: Some("1 small bowl".into()),
+                        amount: Decimal::from(200),
+                        unit: Unit::Gram,
+                        kcal: Decimal::from(0),
+                        protein_g: None,
+                        carbs_g: None,
+                        fat_g: None,
+                        fiber_g: None,
+                        sugar_g: None,
+                        sodium_mg: None,
+                        saturated_fat_g: None,
                         is_default: false,
                         source: ServingSource::User,
                         sort_order: 1,
@@ -352,8 +401,17 @@ async fn test_set_default_serving_flips_atomically() {
                 .create(
                     food_id,
                     &ServingDraft {
-                        label: "1 slice".into(),
-                        grams: Decimal::from(30),
+                        label: Some("1 slice".into()),
+                        amount: Decimal::from(30),
+                        unit: Unit::Gram,
+                        kcal: Decimal::from(0),
+                        protein_g: None,
+                        carbs_g: None,
+                        fat_g: None,
+                        fiber_g: None,
+                        sugar_g: None,
+                        sodium_mg: None,
+                        saturated_fat_g: None,
                         is_default: false,
                         source: ServingSource::User,
                         sort_order: 1,
@@ -365,8 +423,17 @@ async fn test_set_default_serving_flips_atomically() {
                 .create(
                     food_id,
                     &ServingDraft {
-                        label: "2 slices".into(),
-                        grams: Decimal::from(60),
+                        label: Some("2 slices".into()),
+                        amount: Decimal::from(60),
+                        unit: Unit::Gram,
+                        kcal: Decimal::from(0),
+                        protein_g: None,
+                        carbs_g: None,
+                        fat_g: None,
+                        fiber_g: None,
+                        sugar_g: None,
+                        sodium_mg: None,
+                        saturated_fat_g: None,
                         is_default: false,
                         source: ServingSource::User,
                         sort_order: 2,
@@ -470,7 +537,7 @@ async fn test_set_default_serving_flips_atomically() {
 }
 
 #[tokio::test]
-async fn test_post_serving_creates_with_correct_grams() {
+async fn test_post_serving_creates_with_correct_fields() {
     use std::sync::OnceLock;
     let captured: Arc<OnceLock<Uuid>> = Arc::new(OnceLock::new());
     let captured_for_seed = captured.clone();
@@ -488,8 +555,10 @@ async fn test_post_serving_creates_with_correct_grams() {
     let food_id = *captured.get().unwrap();
 
     let body = serde_json::json!({
-        "label": "1 cup",
-        "grams": "40.5",
+        "label": "1 cup dry",
+        "amount": "40.5",
+        "unit": "g",
+        "kcal": "155",
         "is_default": false,
         "sort_order": 1,
     });
@@ -503,11 +572,13 @@ async fn test_post_serving_creates_with_correct_grams() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
     let body = read_json(resp.into_body()).await;
-    assert_eq!(body["label"], "1 cup");
+    assert_eq!(body["label"], "1 cup dry");
     // rust_decimal serializes as a string by default.
-    assert_eq!(body["grams"], "40.5");
+    assert_eq!(body["amount"], "40.5");
+    assert_eq!(body["unit"], "g");
+    assert_eq!(body["kcal"], "155");
     assert_eq!(body["is_default"], false);
     assert_eq!(body["sort_order"], 1);
-    // No explicit source → handler default to "user".
+    // No explicit source → handler defaults to "user".
     assert_eq!(body["source"], "user");
 }
