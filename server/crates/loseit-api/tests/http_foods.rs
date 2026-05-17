@@ -1,8 +1,12 @@
-//! HTTP integration tests for the `/foods/*` read endpoints (T10 + T11).
+//! HTTP integration tests for the `/foods/*` endpoints (T12 rewrite).
 //!
 //! Mirrors `tests/http.rs` — same `FakeAuthenticator` + in-memory ports —
 //! but exposes a `build_test_app_with` seeder so each test can preload
 //! foods + servings into the in-memory repos before the router is built.
+//!
+//! Per-serving wire shape (T09 / T11): `POST /foods` body carries a
+//! `servings` array (≥1) instead of a `nutrition` object. Every response
+//! serving carries `{amount, unit, kcal, …}`.
 //!
 //! NOTE: `InMemoryFoodRepository::search` is a substring matcher; the
 //! production CTE-then-rank SQL in `PgFoodRepository::search` is NOT
@@ -17,10 +21,12 @@ use axum::body::{to_bytes, Body};
 use axum::http::{Request, StatusCode};
 use loseit_api::{router, AppState};
 use loseit_core::auth::Authenticator;
-use loseit_core::domain::{FoodDraft, NutritionPer100g, UserIdentity};
+use loseit_core::domain::{FoodDraft, UserIdentity};
+use loseit_core::domain::unit::Unit;
+use loseit_core::domain::{ServingDraft, ServingSource};
 use loseit_core::repo::{
-    FoodRepository, GoalRepository, LogRepository, OffFoodUpsert, OffServing, ServingRepository,
-    SystemServing, UserRepository, WeightRepository,
+    FoodDraftWithServings, FoodRepository, GoalRepository, LogRepository, ServingRepository,
+    UserRepository, WeightRepository,
 };
 use loseit_testing::{
     FakeAuthenticator, InMemoryFoodRepository, InMemoryGoalRepository, InMemoryLogRepository,
@@ -32,8 +38,7 @@ use tower::ServiceExt;
 use uuid::Uuid;
 
 /// Local stand-in for `futures::future::BoxFuture` so this test file
-/// doesn't need a new dependency. The closure passed to
-/// `build_test_app_with` returns `Pin<Box<dyn Future<…>>>`.
+/// doesn't need a new dependency.
 type SeedFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 
 const TEST_TOKEN: &str = "test-token";
@@ -47,16 +52,8 @@ fn test_identity() -> UserIdentity {
     }
 }
 
-/// Sibling of the (private) `build_test_app` in `tests/http.rs`. The
-/// signature hands the concrete fake repositories to a `setup` closure so
-/// the test can seed them before the router is wired. Returns both the
-/// router and the alice user's id (provisioned during setup) so handlers
-/// can be hit and assertions can refer to "this user".
-///
-/// Why a closure rather than returning the `Arc`s and letting the test
-/// seed afterwards? Because seeding has to happen *before* the request
-/// reaches the router, and `AppState::from_ports` consumes the trait
-/// objects. The closure pattern keeps the wiring in one place.
+/// Build the test app, running `setup` to seed repos before wiring the router.
+/// Returns both the router and alice's user id.
 async fn build_test_app_with<F>(setup: F) -> (axum::Router, Uuid)
 where
     F: FnOnce(
@@ -71,12 +68,12 @@ where
     let servings_concrete = Arc::new(InMemoryServingRepository::new());
     let logs_concrete = Arc::new(InMemoryLogRepository::new());
 
-    // Pair the food repo with the serving repo so `upsert_off_batch` also
-    // materializes servings — the production wiring does the same.
+    // Pair the food repo with the serving repo so `upsert_external_food_batch`
+    // also materializes servings — the production wiring does the same.
     foods_concrete.set_serving_repo(servings_concrete.clone());
 
     // Provision the alice user up front so seeding closures can reference
-    // her uuid (e.g. for owner-only customs).
+    // her uuid.
     let alice = users_concrete.create(&test_identity()).await.unwrap();
 
     setup(
@@ -106,9 +103,9 @@ async fn read_json(body: Body) -> Value {
 
 // -- Seed helpers ------------------------------------------------------------
 
-/// Seed an OFF food + a default serving + a 100g system serving. Returns the
-/// food id (looked up via `find_by_barcode` because `upsert_off_batch` only
-/// returns counts).
+/// Seed an OFF food + a default cup serving + a 100g serving via
+/// `upsert_external_food_batch`. Returns the food id (looked up via
+/// `find_by_barcode` because the batch call only returns counts).
 async fn seed_off_food(
     foods: &Arc<InMemoryFoodRepository>,
     barcode: &str,
@@ -116,29 +113,55 @@ async fn seed_off_food(
     brands: Option<&str>,
 ) -> Uuid {
     let batch_id = Uuid::new_v4();
-    let rec = OffFoodUpsert {
+    let rec = FoodDraftWithServings {
         draft: FoodDraft {
             name: name.into(),
             brands: brands.map(|s| s.into()),
             barcode: Some(barcode.into()),
             categories_tags: vec![],
-            nutrition: NutritionPer100g {
-                energy_kcal: Some(Decimal::new(120, 0)),
-                ..Default::default()
-            },
             nutriscore_grade: None,
+            servings: vec![],
         },
         quality_score: 50,
-        off_serving: Some(OffServing {
-            label: "1 cup".into(),
-            grams: Decimal::new(245, 0),
-        }),
-        system_100g_serving: SystemServing {
-            label: "100 g".into(),
-            grams: Decimal::new(100, 0),
-        },
+        servings: vec![
+            ServingDraft {
+                label: Some("1 cup".into()),
+                amount: Decimal::new(1, 0),
+                unit: Unit::Cup,
+                kcal: Decimal::new(120, 0),
+                protein_g: None,
+                carbs_g: None,
+                fat_g: None,
+                fiber_g: None,
+                sugar_g: None,
+                sodium_mg: None,
+                saturated_fat_g: None,
+                is_default: true,
+                source: ServingSource::Off,
+                sort_order: 0,
+            },
+            ServingDraft {
+                label: Some("100 g".into()),
+                amount: Decimal::new(100, 0),
+                unit: Unit::Gram,
+                kcal: Decimal::new(120, 0),
+                protein_g: None,
+                carbs_g: None,
+                fat_g: None,
+                fiber_g: None,
+                sugar_g: None,
+                sodium_mg: None,
+                saturated_fat_g: None,
+                is_default: false,
+                source: ServingSource::System,
+                sort_order: 1,
+            },
+        ],
     };
-    foods.upsert_off_batch(batch_id, &[rec]).await.unwrap();
+    foods
+        .upsert_external_food_batch(batch_id, vec![rec])
+        .await
+        .unwrap();
 
     // Visibility is global for OFF foods so any viewer id will resolve it.
     let any_viewer = Uuid::nil();
@@ -150,22 +173,36 @@ async fn seed_off_food(
         .id
 }
 
-/// Create a user-custom food (no servings — tests that need them can ignore
-/// because the detail handler just returns whatever `list_for_food`
-/// produces).
+/// Create a user-custom food with a single default serving.
 async fn seed_custom_food(foods: &Arc<InMemoryFoodRepository>, owner: Uuid, name: &str) -> Uuid {
     let draft = FoodDraft {
         name: name.into(),
         brands: None,
         barcode: None,
         categories_tags: vec![],
-        nutrition: NutritionPer100g {
-            energy_kcal: Some(Decimal::new(100, 0)),
-            ..Default::default()
-        },
         nutriscore_grade: None,
+        servings: vec![ServingDraft {
+            label: Some("1 serving".into()),
+            amount: Decimal::new(1, 0),
+            unit: Unit::Serving,
+            kcal: Decimal::new(100, 0),
+            protein_g: None,
+            carbs_g: None,
+            fat_g: None,
+            fiber_g: None,
+            sugar_g: None,
+            sodium_mg: None,
+            saturated_fat_g: None,
+            is_default: true,
+            source: ServingSource::User,
+            sort_order: 0,
+        }],
     };
-    foods.create_custom(owner, &draft).await.unwrap().id
+    foods
+        .create_custom_with_servings(owner, &draft, draft.servings.clone())
+        .await
+        .unwrap()
+        .id
 }
 
 fn authed_request(method: &str, uri: &str) -> Request<Body> {
@@ -200,8 +237,7 @@ async fn test_get_food_by_id_returns_detail_with_servings() {
     })
     .await;
 
-    // Discover the food id via barcode (so the test doesn't have to know it
-    // ahead of time).
+    // Discover the food id via barcode.
     let resp = app
         .clone()
         .oneshot(authed_request("GET", "/api/v1/foods/barcode/1111"))
@@ -220,9 +256,15 @@ async fn test_get_food_by_id_returns_detail_with_servings() {
     assert_eq!(body["name"], "Greek Yogurt");
     assert_eq!(body["source"], "off");
     let servings = body["servings"].as_array().expect("servings array");
-    // OFF seed materializes both the 100 g system serving and the OFF
-    // "1 cup" serving — total 2.
-    assert_eq!(servings.len(), 2, "expected 100g + OFF serving");
+    // OFF seed materializes both the "1 cup" OFF serving and the 100g system
+    // serving — total 2.
+    assert_eq!(servings.len(), 2, "expected 2 servings from OFF seed");
+    // Each serving carries the per-serving wire fields.
+    for s in servings {
+        assert!(s.get("amount").is_some());
+        assert!(s.get("unit").is_some());
+        assert!(s.get("kcal").is_some());
+    }
 }
 
 #[tokio::test]
@@ -239,11 +281,6 @@ async fn test_get_food_by_id_404_for_unknown() {
 
 #[tokio::test]
 async fn test_get_food_by_id_404_when_custom_owned_by_other_user() {
-    // Seed a custom food owned by SOMEONE ELSE and capture its id via a
-    // `OnceLock` so the test (running outside the seeder closure) knows
-    // which uuid to request. We can't reach into the in-memory repo with a
-    // different viewer from the HTTP layer, so the id has to be smuggled
-    // out of the seeder.
     use std::sync::OnceLock;
     let other_user = Uuid::new_v4();
     let captured: Arc<OnceLock<Uuid>> = Arc::new(OnceLock::new());
@@ -324,8 +361,7 @@ async fn test_search_returns_lean_hits() {
     let body = read_json(resp.into_body()).await;
     let results = body["results"].as_array().expect("results array");
     assert!(!results.is_empty(), "expected at least one hit");
-    // Each hit must carry the lean fields, including the default serving
-    // when one exists.
+    // Each hit must carry the lean fields, including the default serving.
     for hit in results {
         assert!(hit.get("id").is_some());
         assert!(hit.get("name").is_some());
@@ -338,8 +374,6 @@ async fn test_search_returns_lean_hits() {
 
 #[tokio::test]
 async fn test_foods_search_default_limit_is_now_100() {
-    // Guards the contract bump from `SEARCH_DEFAULT_LIMIT=20` to the unified
-    // `DEFAULT_PAGE_LIMIT=100` across all paged endpoints.
     let (app, _alice) = build_test_app_with(|foods, _s, _l, _u| {
         let foods = foods.clone();
         Box::pin(async move {
@@ -359,7 +393,6 @@ async fn test_foods_search_default_limit_is_now_100() {
 
 #[tokio::test]
 async fn test_foods_search_clamps_limit_at_500() {
-    // Guards the `MAX_PAGE_LIMIT=500` silent clamp on `/foods/search`.
     let (app, _alice) = build_test_app_with(|foods, _s, _l, _u| {
         let foods = foods.clone();
         Box::pin(async move {
@@ -524,7 +557,6 @@ async fn test_search_excludes_other_users_customs() {
 async fn test_search_rejects_blank_query() {
     let (app, _alice) = build_test_app_with(|_f, _s, _l, _u| Box::pin(async move {})).await;
 
-    // Blank `q` — service-level validation surfaces as 400.
     let resp = app
         .clone()
         .oneshot(authed_request("GET", "/api/v1/foods/search?q="))
@@ -532,7 +564,6 @@ async fn test_search_rejects_blank_query() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 
-    // Whitespace-only `q` is also blank after trim.
     let resp = app
         .oneshot(authed_request("GET", "/api/v1/foods/search?q=%20%20"))
         .await
@@ -540,24 +571,19 @@ async fn test_search_rejects_blank_query() {
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }
 
-// -- Tests: POST /foods (T12) ------------------------------------------------
+// -- Tests: POST /foods (T12 per-serving wire) --------------------------------
 
 #[tokio::test]
-async fn test_post_food_returns_201_with_id_and_default_serving() {
+async fn food_create_with_volumetric_serving_round_trips() {
+    // POST /foods with a volumetric serving → 201; response echoes the
+    // serving with the same fields.
     let (app, _alice) = build_test_app_with(|_f, _s, _l, _u| Box::pin(async move {})).await;
 
     let body = serde_json::json!({
-        "name": "Homemade Smoothie",
-        "brands": "Alice",
-        "barcode": null,
-        "categories_tags": ["smoothie", "drink"],
-        "nutrition": {
-            "energy_kcal": 120,
-            "protein_g": 5,
-            "carbs_g": 20,
-            "fat_g": 2,
-        },
-        "nutriscore_grade": "b",
+        "name": "Test smoothie",
+        "servings": [
+            {"amount": 1, "unit": "cup", "kcal": 180}
+        ]
     });
 
     let resp = app
@@ -566,16 +592,133 @@ async fn test_post_food_returns_201_with_id_and_default_serving() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
     let body = read_json(resp.into_body()).await;
-    assert!(body["id"].as_str().is_some(), "must return an id");
-    assert_eq!(body["name"], "Homemade Smoothie");
+    assert!(body["id"].as_str().is_some(), "must return id");
+    assert_eq!(body["name"], "Test smoothie");
     assert_eq!(body["source"], "user");
-    assert_eq!(body["nutriscore"], "b");
     let servings = body["servings"].as_array().expect("servings array");
-    // The service synthesizes exactly one default 100 g serving.
     assert_eq!(servings.len(), 1);
-    assert_eq!(servings[0]["label"], "100 g");
-    assert_eq!(servings[0]["is_default"], true);
-    assert_eq!(servings[0]["source"], "system");
+    // Decimal serializes as a JSON string (e.g. "1", "180").
+    assert_eq!(servings[0]["amount"].as_str().unwrap_or(""), "1");
+    assert_eq!(servings[0]["unit"], "cup");
+    assert_eq!(servings[0]["kcal"].as_str().unwrap_or(""), "180");
+}
+
+#[tokio::test]
+async fn food_create_empty_servings_returns_400() {
+    // POST /foods with an empty servings array → 400 (service validation).
+    let (app, _alice) = build_test_app_with(|_f, _s, _l, _u| Box::pin(async move {})).await;
+
+    let body = serde_json::json!({
+        "name": "No Servings Food",
+        "servings": []
+    });
+
+    let resp = app
+        .oneshot(authed_json_request("POST", "/api/v1/foods", body))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn food_create_serving_missing_kcal_returns_400() {
+    // Serving body with no `kcal` field → serde/axum extractor rejects it
+    // because `kcal: Decimal` is required (non-optional in ServingBody).
+    let (app, _alice) = build_test_app_with(|_f, _s, _l, _u| Box::pin(async move {})).await;
+
+    let body = serde_json::json!({
+        "name": "Missing kcal",
+        "servings": [
+            {"amount": 1, "unit": "serving"}
+        ]
+    });
+
+    let resp = app
+        .oneshot(authed_json_request("POST", "/api/v1/foods", body))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn food_create_serving_macros_optional() {
+    // POST /foods with a serving that only supplies kcal (no macros) → 201;
+    // the response's protein_g / carbs_g / fat_g fields are null.
+    let (app, _alice) = build_test_app_with(|_f, _s, _l, _u| Box::pin(async move {})).await;
+
+    let body = serde_json::json!({
+        "name": "Kcal Only Food",
+        "servings": [
+            {"amount": 100, "unit": "g", "kcal": 250}
+        ]
+    });
+
+    let resp = app
+        .oneshot(authed_json_request("POST", "/api/v1/foods", body))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let body = read_json(resp.into_body()).await;
+    let servings = body["servings"].as_array().expect("servings array");
+    assert_eq!(servings.len(), 1);
+    assert!(servings[0]["protein_g"].is_null(), "protein_g must be null");
+    assert!(servings[0]["carbs_g"].is_null(), "carbs_g must be null");
+    assert!(servings[0]["fat_g"].is_null(), "fat_g must be null");
+}
+
+#[tokio::test]
+async fn food_patch_servings_full_list_replace() {
+    // PATCH /foods/{id} with a new servings list → 200; old servings gone,
+    // new ones present.
+    let (app, _alice) = build_test_app_with(|_f, _s, _l, _u| Box::pin(async move {})).await;
+
+    // Create the food with one serving.
+    let create_body = serde_json::json!({
+        "name": "Patch Test Food",
+        "servings": [
+            {"amount": 1, "unit": "serving", "kcal": 100}
+        ]
+    });
+    let resp = app
+        .clone()
+        .oneshot(authed_json_request("POST", "/api/v1/foods", create_body))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let created = read_json(resp.into_body()).await;
+    let food_id = created["id"].as_str().unwrap().to_string();
+    let old_serving_id = created["servings"][0]["id"].as_str().unwrap().to_string();
+
+    // PATCH with a completely different servings list.
+    let patch_body = serde_json::json!({
+        "servings": [
+            {"amount": 30, "unit": "g", "kcal": 120, "protein_g": 5}
+        ]
+    });
+    let resp = app
+        .clone()
+        .oneshot(authed_json_request(
+            "PATCH",
+            &format!("/api/v1/foods/{food_id}"),
+            patch_body,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let patched = read_json(resp.into_body()).await;
+    let new_servings = patched["servings"].as_array().expect("servings array");
+
+    // Old serving is gone; exactly one new serving exists.
+    assert_eq!(new_servings.len(), 1);
+    assert_ne!(
+        new_servings[0]["id"].as_str().unwrap(),
+        old_serving_id,
+        "old serving id must be replaced"
+    );
+    assert_eq!(new_servings[0]["unit"], "g");
+    // Decimal serializes as a JSON string.
+    assert_eq!(new_servings[0]["kcal"].as_str().unwrap_or(""), "120");
+    assert_eq!(new_servings[0]["protein_g"].as_str().unwrap_or(""), "5");
 }
 
 #[tokio::test]
@@ -584,7 +727,7 @@ async fn test_post_food_rejects_blank_name() {
 
     let body = serde_json::json!({
         "name": "   ",
-        "nutrition": {},
+        "servings": [{"amount": 1, "unit": "serving", "kcal": 100}],
     });
 
     let resp = app
@@ -613,13 +756,10 @@ async fn test_patch_food_404_for_unknown() {
 
 #[tokio::test]
 async fn test_patch_food_403_when_owned_by_other_user() {
-    // Decision: the in-memory `find_by_id` returns `None` for customs the
-    // viewer can't see (visibility rule established in T04 — see
-    // `is_visible` in `loseit-testing/src/foods.rs`). The service therefore
-    // maps cross-tenant custom-food patches to 404, not 403. This is the
-    // documented behaviour from `architect's plan / T10`'s
-    // `test_get_food_by_id_404_when_custom_owned_by_other_user`: the
-    // existence of someone else's private food is not disclosed.
+    // The in-memory `find_by_id` returns `None` for customs the viewer can't
+    // see (visibility rule). The service maps cross-tenant custom-food
+    // patches to 404, not 403 — existence of someone else's private food is
+    // not disclosed.
     use std::sync::OnceLock;
     let other_user = Uuid::new_v4();
     let captured: Arc<OnceLock<Uuid>> = Arc::new(OnceLock::new());
@@ -644,14 +784,13 @@ async fn test_patch_food_403_when_owned_by_other_user() {
         ))
         .await
         .unwrap();
-    // 404, not 403 — the food is invisible, so we don't acknowledge it.
+    // 404, not 403 — the food is invisible.
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
 async fn test_patch_food_403_on_off_food() {
-    // OFF foods are visible to everyone but writable by no one. The service
-    // distinguishes this from the cross-tenant case above and returns 403.
+    // OFF foods are visible to everyone but writable by no one.
     let (app, _alice) = build_test_app_with(|foods, _s, _l, _u| {
         let foods = foods.clone();
         Box::pin(async move {
@@ -661,7 +800,6 @@ async fn test_patch_food_403_on_off_food() {
     .await;
 
     let off_id = {
-        // Reach in via barcode to discover the id.
         let resp = app
             .clone()
             .oneshot(authed_request("GET", "/api/v1/foods/barcode/5555"))
@@ -789,6 +927,7 @@ async fn list_mine_excludes_other_users() {
 #[tokio::test]
 async fn test_delete_food_409_when_logs_reference_it() {
     use chrono::NaiveDate;
+    use loseit_core::domain::unit::Unit as DomainUnit;
     use loseit_core::domain::{Meal, NutritionSnapshot, PersistedLogEntry};
     use std::sync::OnceLock;
     let captured: Arc<OnceLock<Uuid>> = Arc::new(OnceLock::new());
@@ -813,7 +952,8 @@ async fn test_delete_food_409_when_logs_reference_it() {
                 consumed_on: NaiveDate::from_ymd_opt(2026, 5, 1).unwrap(),
                 meal: Meal::Lunch,
                 quantity: Decimal::from(1),
-                grams_total: Decimal::from(150),
+                entered_amount: Decimal::from(1),
+                entered_unit: DomainUnit::Serving,
                 snapshot: NutritionSnapshot {
                     calories_kcal: Decimal::from(150),
                     protein_g: None,
@@ -851,9 +991,7 @@ async fn food_detail_kind_normal_for_custom_food() {
 
     let body = serde_json::json!({
         "name": "Kind Test Custom Food",
-        "nutrition": {
-            "energy_kcal": 200,
-        },
+        "servings": [{"amount": 100, "unit": "g", "kcal": 200}],
     });
     let resp = app
         .clone()
