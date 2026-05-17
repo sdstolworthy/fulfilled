@@ -1,0 +1,19 @@
+{
+  "name": "fulfilled-e2e",
+  "version": "0.1.0",
+  "private": true,
+  "description": "End-to-end tests for Fulfilled (Rust+Axum API + Flutter web client). Spins up the full stack via compose.e2e.yaml and drives a headless Chromium with Playwright.",
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "test:ui": "playwright test --ui",
+    "report": "playwright show-report",
+    "stack:up": "docker compose -f compose.e2e.yaml up -d --wait --build",
+    "stack:down": "docker compose -f compose.e2e.yaml down -v"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0",
+    "@types/node": "^20.14.0",
+    "typescript": "^5.5.4"
+  }
+}

@@ -1,0 +1,101 @@
+name: E2E
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Cancel in-progress runs for the same ref. E2E builds the api +
+  # web images from scratch and is the slowest workflow in the repo
+  # — don't waste runner time on stale commits.
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: Spin up stack + run Playwright
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          # npm cache disabled until e2e/package-lock.json is committed
+          # — `npm ci` synthesizes a lock from package.json on first
+          # run. Enable `cache: npm` here once the lockfile lands.
+
+      - name: Set up Docker Buildx
+        # Buildx is the default builder on ubuntu-latest runners as of
+        # Nov 2024, but pin it explicitly so the cache-from/cache-to
+        # docker compose semantics behave predictably.
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build + start the e2e stack
+        # `--wait` blocks until every service's healthcheck reports
+        # healthy. If a healthcheck never turns green, this step times
+        # out and the workflow fails — exactly the signal we want.
+        working-directory: e2e
+        run: docker compose -f compose.e2e.yaml up -d --wait --build
+
+      - name: Print stack status
+        working-directory: e2e
+        if: always()
+        run: |
+          echo "::group::docker compose ps"
+          docker compose -f compose.e2e.yaml ps
+          echo "::endgroup::"
+
+      - name: Install Playwright deps
+        # Use `npm install` rather than `npm ci` until the e2e/
+        # package-lock.json is committed. Once the lead engineer
+        # commits the lockfile, swap this to `npm ci` for reproducible
+        # installs.
+        working-directory: e2e
+        run: |
+          npm install --no-audit --no-fund
+          npx playwright install --with-deps chromium
+
+      - name: Run Playwright tests
+        working-directory: e2e
+        run: npm test
+
+      - name: Dump api logs on failure
+        if: failure()
+        working-directory: e2e
+        run: |
+          echo "::group::api logs"
+          docker compose -f compose.e2e.yaml logs api
+          echo "::endgroup::"
+          echo "::group::web logs"
+          docker compose -f compose.e2e.yaml logs web
+          echo "::endgroup::"
+          echo "::group::db logs"
+          docker compose -f compose.e2e.yaml logs db
+          echo "::endgroup::"
+
+      - name: Upload screenshots + Playwright report
+        # `always()` so we still capture artifacts when tests fail —
+        # that's the primary debugging signal for reviewers.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-screenshots
+          path: |
+            e2e/screenshots/
+            e2e/playwright-report/
+            e2e/test-results/
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Tear down the e2e stack
+        if: always()
+        working-directory: e2e
+        run: docker compose -f compose.e2e.yaml down -v

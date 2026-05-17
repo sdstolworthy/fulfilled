@@ -1,0 +1,113 @@
+# Hermetic compose stack for end-to-end tests.
+#
+# Brings up three services:
+#
+#   db   — postgres:16-alpine, throwaway volume, no port published to host.
+#   api  — Rust loseit-api built from ../server/Dockerfile, exposed on :8080.
+#   web  — Flutter web (nginx) built from ../client/Dockerfile, exposed on :80.
+#
+# The web service overlays a custom nginx config (nginx.e2e.conf, bind-mounted
+# from this directory) that proxies `/api/v1/*` to the api service. That keeps
+# the Flutter web bundle's runtime apiBaseUrl resolution (`window.location.origin
+# + '/api/v1'`) pointing at the same origin the browser loaded, mirroring the
+# production single-origin deploy contract.
+#
+# All env-var defaults are hardcoded e2e values — no `.env` lookup, no
+# host-machine secrets. The DATABASE_URL points at the in-stack `db`, not
+# any external Postgres.
+#
+# Run:
+#   docker compose -f compose.e2e.yaml up -d --wait --build
+#   docker compose -f compose.e2e.yaml down -v
+#
+# `--wait` blocks until every healthcheck reports healthy. `down -v` tears
+# down the postgres volume so the next run is hermetic.
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: e2e
+      POSTGRES_PASSWORD: e2e
+      POSTGRES_DB: e2e
+    # Throwaway volume — wiped by `docker compose down -v`. No host bind
+    # mount, no persistence across runs.
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U e2e -d e2e"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    restart: "no"
+
+  api:
+    build:
+      context: ../server
+      dockerfile: Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      # Published on the host so Playwright (and curl) can hit the API
+      # directly without going through the web nginx proxy.
+      - "8080:8080"
+    environment:
+      DATABASE_URL: postgres://e2e:e2e@db:5432/e2e
+      LOSEIT_BIND: 0.0.0.0:8080
+      LOSEIT_RUN_MIGRATIONS: "true"
+      RUST_ENV: e2e
+      RUST_LOG: info,tower_http=info,sqlx=warn
+
+      # Dev-bypass auth: any request with `Authorization: Bearer
+      # e2e-test-token` is accepted as the dev user. BE-008 is not
+      # shipped yet, so the Flutter login flow falls back to the
+      # JWT-paste shortcut in v1.
+      DEV_AUTH_BYPASS: "true"
+      DEV_AUTH_TOKEN: e2e-test-token
+      DEV_AUTH_ISSUER: e2e
+      DEV_AUTH_USER_ID: e2e-user
+      DEV_AUTH_EMAIL: e2e@example.com
+      DEV_AUTH_DISPLAY_NAME: E2E User
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/api/v1/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+    restart: "no"
+
+  web:
+    build:
+      context: ../client
+      dockerfile: Dockerfile
+      args:
+        # The Flutter web release build ignores this arg at runtime (the
+        # dart-define is gated on kDebugMode in
+        # client/lib/providers/api_base_url_provider.dart) and falls back
+        # to `Uri.base.origin + '/api/v1'`. We still pass it for parity
+        # with compose.coolify.yaml; the nginx proxy below is what
+        # actually wires the browser to the api.
+        API_BASE_URL: /api/v1
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "80:80"
+    volumes:
+      # Override the stock nginx config (from client/nginx.conf) with one
+      # that adds an `/api/v1/` reverse-proxy block pointing at the api
+      # service. Read-only mount to make the override obvious in `docker
+      # inspect`.
+      - ./nginx.e2e.conf:/etc/nginx/conf.d/default.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost/health.txt || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    restart: "no"
+
+volumes:
+  db-data:
