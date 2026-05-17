@@ -22,15 +22,38 @@ class _WebNavigator implements OidcNavigator {
     final loc = html.window.location;
     final uri = Uri.parse(loc.href);
     if (!uri.queryParameters.containsKey(name)) return;
+
     final newParams = Map<String, String>.from(uri.queryParameters)
       ..remove(name);
-    final cleaned = uri.replace(
-      queryParameters: newParams.isEmpty ? null : newParams,
-    );
-    // `replaceState` updates the URL bar without reloading the page or
-    // adding a history entry. The fragment (`#/login` etc.) is
-    // preserved because `Uri.replace` keeps it.
-    html.window.history.replaceState(null, '', cleaned.toString());
+
+    // Build the URL manually rather than use `Uri.replace`. Dart's
+    // `Uri.replace(queryParameters: null)` treats `null` as
+    // "keep the current query," not "clear it" — so when the param
+    // we're removing was the **only** query param the existing
+    // `?oidc_code=…` survives untouched. Constructing the URL by
+    // hand avoids the null-vs-empty trap.
+    final buf = StringBuffer()
+      ..write(uri.scheme)
+      ..write('://')
+      ..write(uri.authority)
+      ..write(uri.path);
+    if (newParams.isNotEmpty) {
+      buf.write('?');
+      buf.write(
+        newParams.entries
+            .map(
+              (e) =>
+                  '${Uri.encodeQueryComponent(e.key)}='
+                  '${Uri.encodeQueryComponent(e.value)}',
+            )
+            .join('&'),
+      );
+    }
+    if (uri.fragment.isNotEmpty) {
+      buf.write('#');
+      buf.write(uri.fragment);
+    }
+    html.window.history.replaceState(null, '', buf.toString());
   }
 }
 

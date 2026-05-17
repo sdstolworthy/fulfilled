@@ -121,6 +121,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       final token = body['token'] as String;
       await ref.read(authTokenProvider.notifier).signIn(token);
       if (!mounted) return;
+      // Belt-and-suspenders: strip the handoff code again right before
+      // navigating. The first strip (before the POST) may have raced
+      // with the page-build, and the bug in the original
+      // implementation kept the code in the URL when `oidc_code` was
+      // the only query param. A second call here guarantees the URL
+      // is clean before GoRouter writes the `/today` location, so a
+      // refresh after sign-in doesn't re-submit a spent code.
+      OidcNavigator.instance.stripQueryParam('oidc_code');
       // The LOG-007 router redirect rule will catch
       // `has-token + /login → /today` on the next frame anyway, but
       // an explicit go gets us there one frame sooner.
