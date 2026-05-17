@@ -546,6 +546,138 @@ async fn start_accepts_path_next() {
     );
 }
 
+// 6b. mobile-callback (custom URL scheme): success path.
+#[tokio::test]
+async fn start_accepts_mobile_callback_with_allowed_scheme() {
+    let harness = build_harness(true).await;
+
+    let resp = harness
+        .app
+        .oneshot(
+            Request::builder()
+                .uri(
+                    "/api/v1/auth/oidc/authentik/start?\
+                     mobile_callback=fulfilled%3A%2F%2Foidc-callback",
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+
+    // The state cookie payload's `next` should be the custom-scheme
+    // URL verbatim — the callback handler appends `?oidc_code=…` to
+    // this so the mobile system-browser session receives the handoff.
+    let cookies: Vec<&str> = resp
+        .headers()
+        .get_all("set-cookie")
+        .iter()
+        .map(|v| v.to_str().unwrap())
+        .collect();
+    let state_cookie_header = cookies
+        .iter()
+        .find(|c| c.contains(STATE_COOKIE_NAME))
+        .expect("state cookie must be set");
+    let cookie_value = state_cookie_header
+        .split(';')
+        .next()
+        .unwrap()
+        .trim()
+        .strip_prefix(&format!("{}=", STATE_COOKIE_NAME))
+        .expect("cookie value");
+    let payload = harness
+        .state_signer
+        .verify(cookie_value)
+        .expect("cookie must be valid signed state");
+    assert_eq!(payload.next, "fulfilled://oidc-callback");
+}
+
+// 6c. mobile-callback wins over `next` when both are passed.
+#[tokio::test]
+async fn start_mobile_callback_overrides_next() {
+    let harness = build_harness(true).await;
+
+    let resp = harness
+        .app
+        .oneshot(
+            Request::builder()
+                .uri(
+                    "/api/v1/auth/oidc/authentik/start?\
+                     next=%2Ffoods&\
+                     mobile_callback=fulfilled%3A%2F%2Foidc-callback",
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+
+    let cookies: Vec<&str> = resp
+        .headers()
+        .get_all("set-cookie")
+        .iter()
+        .map(|v| v.to_str().unwrap())
+        .collect();
+    let cookie_value = cookies
+        .iter()
+        .find(|c| c.contains(STATE_COOKIE_NAME))
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .trim()
+        .strip_prefix(&format!("{}=", STATE_COOKIE_NAME))
+        .unwrap();
+    let payload = harness.state_signer.verify(cookie_value).unwrap();
+    // mobile_callback wins; the `next=/foods` is ignored.
+    assert_eq!(payload.next, "fulfilled://oidc-callback");
+}
+
+// 6d. mobile-callback with a non-allowlisted scheme → 400.
+#[tokio::test]
+async fn start_rejects_mobile_callback_with_wrong_scheme() {
+    let harness = build_harness(true).await;
+
+    let resp = harness
+        .app
+        .oneshot(
+            Request::builder()
+                .uri(
+                    "/api/v1/auth/oidc/authentik/start?\
+                     mobile_callback=https%3A%2F%2Fevil.example%2Foidc",
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
+// 6e. mobile-callback that doesn't parse as a URL → 400.
+#[tokio::test]
+async fn start_rejects_mobile_callback_with_invalid_url() {
+    let harness = build_harness(true).await;
+
+    let resp = harness
+        .app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/auth/oidc/authentik/start?mobile_callback=not%20a%20url")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+}
+
 // 7.
 #[tokio::test]
 async fn start_404_for_unknown_provider() {

@@ -84,6 +84,60 @@ async fn login(
 #[derive(Deserialize)]
 struct StartParams {
     next: Option<String>,
+    /// Custom-scheme URL the backend redirects to after a successful
+    /// IdP callback. When set, takes precedence over [`next`]. Used
+    /// by the mobile app's system-browser auth session
+    /// (`flutter_web_auth_2` on Flutter) to bounce the handoff code
+    /// back through a registered URL scheme.
+    ///
+    /// Must use an allowlisted scheme (see [`ALLOWED_MOBILE_SCHEMES`])
+    /// so this never becomes an open redirector.
+    mobile_callback: Option<String>,
+}
+
+/// Custom URL schemes the OIDC callback is allowed to redirect to.
+/// Anything else with `mobile_callback` gets 400 at `/start`.
+///
+/// Adding a new scheme is intentionally a code change — the value
+/// must match what the iOS Info.plist / Android intent-filter
+/// declares as a registered handler, so out-of-band coordination is
+/// the right gate. Mistakes here are open-redirector vulnerabilities.
+const ALLOWED_MOBILE_SCHEMES: &[&str] = &["fulfilled"];
+
+/// Pick the final-redirect target for the OIDC callback. Caller
+/// passes both `next` (web, FE-origin path or absolute URL) and
+/// `mobile_callback` (mobile, custom-scheme URL). Returns the URL
+/// the callback handler will append `?oidc_code=…` to.
+///
+/// Precedence: `mobile_callback` wins when present. The web flow
+/// only sees `next`; the mobile flow only sets `mobile_callback`.
+/// Setting both is allowed (the mobile value wins, the web value is
+/// ignored) — keeps the contract resilient if a caller forgets to
+/// drop one or the other.
+pub fn resolve_redirect_target(
+    fe_origin: &str,
+    next: Option<&str>,
+    mobile_callback: Option<&str>,
+) -> Result<String, ApiError> {
+    if let Some(cb) = mobile_callback {
+        return validate_mobile_callback(cb);
+    }
+    resolve_next(fe_origin, next)
+}
+
+/// Validate `mobile_callback`: must parse as a URL and use a scheme
+/// from [`ALLOWED_MOBILE_SCHEMES`]. The host / path are accepted
+/// verbatim — the registered scheme handler on the mobile OS is the
+/// trust anchor here, not the URL structure.
+fn validate_mobile_callback(raw: &str) -> Result<String, ApiError> {
+    let url = url::Url::parse(raw)
+        .map_err(|_| ApiError::bad_request("invalid `mobile_callback`"))?;
+    if !ALLOWED_MOBILE_SCHEMES.contains(&url.scheme()) {
+        return Err(ApiError::bad_request(
+            "`mobile_callback` scheme not allowed",
+        ));
+    }
+    Ok(raw.to_string())
 }
 
 /// Validate the `next` redirect destination against the configured `fe_origin`.
@@ -174,7 +228,11 @@ async fn oidc_start(
         .get(&provider_id)
         .ok_or_else(|| ApiError::not_found())?;
 
-    let next = resolve_next(&registry.fe_origin, params.next.as_deref())?;
+    let next = resolve_redirect_target(
+        &registry.fe_origin,
+        params.next.as_deref(),
+        params.mobile_callback.as_deref(),
+    )?;
 
     let pkce_verifier = b64url_random(32);
     let code_challenge = b64url_sha256(&pkce_verifier);

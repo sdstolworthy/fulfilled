@@ -1,40 +1,48 @@
-import 'package:flutter/material.dart';
-import 'package:webview_flutter/webview_flutter.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
+import 'package:flutter_web_auth_2/flutter_web_auth_2.dart';
 
 import 'oidc_navigator.dart';
 
-/// Mobile / desktop OIDC navigator — in-app webview that intercepts
-/// the redirect-back to the FE origin and captures the handoff code.
+/// Custom URL scheme the backend redirects to when finishing a
+/// mobile OIDC flow. Declared on both ends:
+///   - **Backend** allowlist: `routes/auth.rs::ALLOWED_MOBILE_SCHEMES`.
+///   - **iOS**: `client/ios/Runner/Info.plist` `CFBundleURLSchemes`.
+///   - **Android**: `client/android/app/src/main/AndroidManifest.xml`
+///     `intent-filter` on `com.linusu.flutter_web_auth_2.CallbackActivity`.
+///
+/// Changing this value requires updating all four places. The const
+/// here is the single FE source of truth — propagated into the
+/// backend's `mobile_callback` query param and matched against the
+/// `callbackUrlScheme` arg on [FlutterWebAuth2.authenticate].
+const String _kCallbackScheme = 'fulfilled';
+
+/// Full `mobile_callback` URL passed to the backend's
+/// `/api/v1/auth/oidc/{provider}/start` endpoint. The host segment
+/// (`oidc-callback`) is informational — the OS routes any URL with
+/// the registered scheme back to the app, and we read query params
+/// off the returned URL regardless of the host.
+const String _kCallbackUrl = '$_kCallbackScheme://oidc-callback';
+
+/// Mobile / desktop OIDC navigator — system-browser session that
+/// bounces the handoff code back through a registered URL scheme.
 ///
 /// The flow:
-///   1. [startFlow] pushes a full-screen route hosting a
-///      [WebViewWidget] pointed at the backend's `/auth/oidc/{p}/start`.
-///   2. The backend 302s to the IdP; the user signs in there inside
-///      the webview.
-///   3. The IdP redirects back to the backend's `/callback`; the
-///      backend mints a handoff code and 302s to
-///      `<LOSEIT_FE_ORIGIN>/?oidc_code=<code>#/login` (or
+///   1. [startFlow] composes `<startUrl>&mobile_callback=fulfilled://oidc-callback`
+///      and hands it to [FlutterWebAuth2.authenticate].
+///   2. The system browser (`ASWebAuthenticationSession` on iOS,
+///      Chrome Custom Tab on Android) opens the URL. The user signs
+///      in with the IdP there.
+///   3. The IdP redirects to the backend's `/callback`; the backend
+///      verifies state + mints a handoff code and 302s the browser
+///      to `fulfilled://oidc-callback?oidc_code=<handoff>` (or
 ///      `?oidc_error=<code>` on failure).
-///   4. The webview's [NavigationDelegate.onNavigationRequest] sees a
-///      URL whose query carries `oidc_code` (or `oidc_error`),
-///      [NavigationDecision.prevent]s the navigation, completes the
-///      result future, and pops the route.
-///   5. [OidcButton] receives the result and calls `runOidcExchange`
-///      with the captured handoff.
-///
-/// **No backend change required.** The same redirect target the web
-/// flow uses is what we intercept here — the in-app webview never
-/// actually navigates to the FE origin; it just observes the URL the
-/// browser was about to load and pulls the query params off it.
-///
-/// **Why webview and not a system browser session?** A system
-/// `ASWebAuthenticationSession` (iOS) / Chrome Custom Tab (Android)
-/// flow is the spec-correct shape (Apple/Google's preferred path for
-/// auth), but it requires either an app-link / universal-link setup
-/// or a custom URL scheme the backend redirects to — both involve
-/// extra ops. The in-app webview works against the current backend
-/// unchanged; for a closed-beta dev experience that's the right
-/// trade-off. Revisit when we ship to an app store.
+///   4. The OS recognizes the registered scheme and dismisses the
+///      browser session; `FlutterWebAuth2.authenticate` returns the
+///      callback URL.
+///   5. We parse `oidc_code` / `oidc_error` off the URL and surface
+///      the [OidcFlowResult] to [OidcButton], which runs the
+///      exchange.
 class _MobileNavigator implements OidcNavigator {
   const _MobileNavigator();
 
@@ -43,101 +51,49 @@ class _MobileNavigator implements OidcNavigator {
     String startUrl, {
     required BuildContext context,
   }) async {
-    final result = await Navigator.of(context, rootNavigator: true)
-        .push<OidcFlowResult>(
-      MaterialPageRoute<OidcFlowResult>(
-        fullscreenDialog: true,
-        builder: (_) => _OidcWebViewRoute(startUrl: startUrl),
-      ),
-    );
-    return result ?? const OidcFlowCancelled();
+    final urlWithCallback = _appendMobileCallback(startUrl);
+    try {
+      final returned = await FlutterWebAuth2.authenticate(
+        url: urlWithCallback,
+        callbackUrlScheme: _kCallbackScheme,
+      );
+      final uri = Uri.tryParse(returned);
+      if (uri == null) {
+        return const OidcFlowError('invalid_callback_url');
+      }
+      final code = uri.queryParameters['oidc_code'];
+      if (code != null && code.isNotEmpty) {
+        return OidcFlowHandoff(code);
+      }
+      final err = uri.queryParameters['oidc_error'];
+      if (err != null && err.isNotEmpty) {
+        return OidcFlowError(err);
+      }
+      return const OidcFlowError('missing_oidc_code');
+    } on PlatformException catch (e) {
+      // `FlutterWebAuth2` raises a PlatformException with code
+      // `CANCELED` when the user dismisses the system browser. Any
+      // other PlatformException is a real error (no scheme handler
+      // installed, no network, etc).
+      if (e.code == 'CANCELED') {
+        return const OidcFlowCancelled();
+      }
+      return OidcFlowError(e.code);
+    }
   }
 
   @override
   void stripQueryParam(String name) {
     // No-op on mobile — there's no document URL to clean.
   }
-}
 
-/// Full-screen route that hosts the OIDC webview. Owns the
-/// [WebViewController] + the result-completion handshake so the
-/// navigation-delegate side-channel cleanly resolves the future
-/// [_MobileNavigator.startFlow] returned.
-class _OidcWebViewRoute extends StatefulWidget {
-  const _OidcWebViewRoute({required this.startUrl});
-
-  final String startUrl;
-
-  @override
-  State<_OidcWebViewRoute> createState() => _OidcWebViewRouteState();
-}
-
-class _OidcWebViewRouteState extends State<_OidcWebViewRoute> {
-  late final WebViewController _controller;
-
-  /// True once we've handed a result back to the caller — stops the
-  /// `dispose` path from popping again.
-  bool _resolved = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setNavigationDelegate(NavigationDelegate(
-        onNavigationRequest: _onNavigationRequest,
-      ))
-      ..loadRequest(Uri.parse(widget.startUrl));
-  }
-
-  /// Inspect each navigation target. The backend's success redirect
-  /// carries `?oidc_code=<handoff>` in the URL's query (regardless of
-  /// the FE origin); the failure path carries `?oidc_error=<code>`.
-  /// Either case completes the flow without letting the webview
-  /// actually navigate to the FE origin.
-  NavigationDecision _onNavigationRequest(NavigationRequest req) {
-    final uri = Uri.tryParse(req.url);
-    if (uri == null) return NavigationDecision.navigate;
-    final code = uri.queryParameters['oidc_code'];
-    if (code != null && code.isNotEmpty) {
-      _resolveWith(OidcFlowHandoff(code));
-      return NavigationDecision.prevent;
-    }
-    final err = uri.queryParameters['oidc_error'];
-    if (err != null && err.isNotEmpty) {
-      _resolveWith(OidcFlowError(err));
-      return NavigationDecision.prevent;
-    }
-    return NavigationDecision.navigate;
-  }
-
-  void _resolveWith(OidcFlowResult result) {
-    if (_resolved) return;
-    _resolved = true;
-    // Pop on the next frame so the prevented navigation completes
-    // its delegate work before the route disposes.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      Navigator.of(context).pop(result);
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Sign in'),
-        leading: IconButton(
-          icon: const Icon(Icons.close),
-          onPressed: () {
-            if (_resolved) return;
-            _resolved = true;
-            Navigator.of(context).pop(const OidcFlowCancelled());
-          },
-        ),
-      ),
-      body: WebViewWidget(controller: _controller),
-    );
+  /// Append `mobile_callback=<scheme>://oidc-callback` to the
+  /// backend's start URL. Preserves any existing query params (the
+  /// caller may have already added `next=` or similar).
+  String _appendMobileCallback(String startUrl) {
+    final separator = startUrl.contains('?') ? '&' : '?';
+    return '$startUrl${separator}mobile_callback='
+        '${Uri.encodeQueryComponent(_kCallbackUrl)}';
   }
 }
 

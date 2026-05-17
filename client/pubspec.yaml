@@ -52,15 +52,16 @@ dependencies:
 
   cupertino_icons: ^1.0.8
 
-  # Mobile OIDC sign-in. The backend-as-RP flow redirects to the FE
-  # origin with `?oidc_code=<handoff>`; on web the document URL
-  # already carries the handoff after a full-page redirect. On
-  # mobile we open the start URL in an in-app webview, listen for
-  # the redirect to land on the FE origin, capture the handoff
-  # query param, and dismiss the webview. No backend change
-  # required for this flow — the existing `LOSEIT_FE_ORIGIN`
-  # redirect target is what we intercept.
-  webview_flutter: ^4.10.0
+  # Mobile OIDC sign-in. Opens the backend's
+  # `/api/v1/auth/oidc/{provider}/start?mobile_callback=fulfilled://oidc-callback`
+  # in a system-browser session (ASWebAuthenticationSession on iOS,
+  # Chrome Custom Tab on Android) and waits for the OS to route the
+  # registered `fulfilled://` scheme back to the app with
+  # `?oidc_code=<handoff>` appended. The system-browser approach is
+  # the spec-correct path Apple and Google require for auth flows.
+  # The `fulfilled` scheme is declared in iOS Info.plist and Android
+  # Manifest (see client/ios/Runner/Info.plist + client/android/...).
+  flutter_web_auth_2: ^4.1.0
 
 dev_dependencies:
   flutter_test:
