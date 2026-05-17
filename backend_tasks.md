@@ -844,7 +844,14 @@ optional).
 
 ## Ask 10 — Per-serving nutrition + unit families + flatten migrations + USDA/OFF ingest normalizer *(P0 — user directive 2026-05-17)*
 
-Status: `done (server)` — backend pipeline shipped on `main` (T01–T16, commits `7847bd3` → `a871704`). **Not yet deployed** — see "Deploy precondition" below. Full ask body also at `ask_10_per_serving_nutrition.md`.
+Status: `done` — backend pipeline shipped (T01–T16, `7847bd3` → `a871704`); DB reset + redeploy `sb0sbo17vxpw56vsonh899rz` live at commit `921b5748`; full E2E gate passes against `https://api.coolify.stolworthy.co`. Full ask body also at `ask_10_per_serving_nutrition.md`.
+
+**Live E2E gate (verified post-deploy):**
+
+- `POST /foods` with volumetric serving `{amount:"1", unit:"cup", kcal:"180", protein_g:"5", ...}` → **201**, response echoes `amount:"1.000", unit:"cup", kcal:"180.00"`. Optional macros (`fiber_g`, `sugar_g`, `sodium_mg`, `saturated_fat_g`) return `null` when not provided.
+- `POST /log` with `entered_unit:"g"` against a `unit:"cup"` serving → **400** with body `{"code":"unit_family_mismatch","message":"entered unit family does not match the serving's unit family"}`.
+- `POST /log` with `entered_amount:"4", entered_unit:"fl_oz"` against a `{amount:1, unit:"cup", kcal:180}` serving → **201**, `quantity:"0.500"` (exact: 4 × 29.5735…ml / 236.5882…ml), `calories_kcal:"90.00"` (0.5 × 180), macros scaled (`protein_g:"2.50"`, `carbs_g:"15.00"`, `fat_g:"2.00"`).
+- `GET /log` carries `food_name`, `serving_name` (Ask 9 denorm preserved), `entered_amount`, `entered_unit`, `quantity`, `calories_kcal`; no `grams_total` in the response shape.
 
 ### Backend reply
 
