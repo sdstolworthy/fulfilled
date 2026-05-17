@@ -4,8 +4,10 @@ use std::sync::Mutex;
 use async_trait::async_trait;
 use chrono::Utc;
 use loseit_core::domain::{Serving, ServingDraft, ServingPatch, ServingSource};
-use loseit_core::repo::{OffFoodUpsert, ServingRepository};
+use loseit_core::domain::unit::Unit;
+use loseit_core::repo::ServingRepository;
 use loseit_core::CoreResult;
+use rust_decimal::Decimal;
 use uuid::Uuid;
 
 #[derive(Default)]
@@ -18,17 +20,15 @@ impl InMemoryServingRepository {
         Self::default()
     }
 
-    /// Atomic find-or-insert of the default 100 g `kcal` serving for a food,
-    /// used by [`InMemoryFoodRepository::find_or_create_quick_add`] to mirror
-    /// the Pg `INSERT ... ON CONFLICT` against the `servings_one_default_per_food`
-    /// partial unique index.
+    /// Atomic find-or-insert of the sentinel serving for a quick-add food:
+    /// `{amount: 1, unit: Serving, kcal: 1.0, source: System, is_default: true}`.
+    /// Used by [`InMemoryFoodRepository::find_or_create_quick_add`] to mirror
+    /// the Pg `INSERT ... ON CONFLICT` against `servings_one_default_per_food`.
     ///
     /// The full check-and-insert happens under a single lock acquisition so
     /// two concurrent quick-add provisions on the same food converge on one
-    /// serving row, matching the Pg guarantee. Without this, the two-step
-    /// `list_for_food` → `create` pattern releases the serving-store lock
-    /// between steps and races under multi-threaded runtimes.
-    pub(crate) fn find_or_create_default_kcal_for_food(&self, food_id: Uuid) -> Serving {
+    /// serving row.
+    pub(crate) fn find_or_create_sentinel_serving_for_food(&self, food_id: Uuid) -> Serving {
         let mut store = self.by_id.lock().unwrap();
         if let Some(existing) = store
             .values()
@@ -40,8 +40,17 @@ impl InMemoryServingRepository {
         let serving = Serving {
             id: Uuid::new_v4(),
             food_id,
-            label: "kcal".to_string(),
-            grams: rust_decimal::Decimal::from(100),
+            label: None,
+            amount: Decimal::from(1),
+            unit: Unit::Serving,
+            kcal: Decimal::from(1),
+            protein_g: None,
+            carbs_g: None,
+            fat_g: None,
+            fiber_g: None,
+            sugar_g: None,
+            sodium_mg: None,
+            saturated_fat_g: None,
             is_default: true,
             source: ServingSource::System,
             sort_order: 0,
@@ -52,49 +61,41 @@ impl InMemoryServingRepository {
         serving
     }
 
-    /// Clear all servings for a food and replace with the system-100g plus
-    /// optional OFF-specific serving derived from an `OffFoodUpsert`. Used
-    /// by [`InMemoryFoodRepository::upsert_off_batch`].
-    pub(crate) async fn replace_for_food_with_off(
+    /// Drop all existing servings for `food_id` and insert the provided list.
+    /// Used by `update_custom_with_servings` and `upsert_external_food_batch`
+    /// to perform the full-list-replace operation.
+    pub(crate) async fn replace_all_for_food(
         &self,
         food_id: Uuid,
-        rec: &OffFoodUpsert,
+        new_servings: &[ServingDraft],
     ) -> CoreResult<()> {
         let now = Utc::now();
         let mut store = self.by_id.lock().unwrap();
+        // Drop all existing servings for this food.
         store.retain(|_, s| s.food_id != food_id);
-
-        let off_present = rec.off_serving.is_some();
-        let mut sort_order = 0i32;
-
-        let system = Serving {
-            id: Uuid::new_v4(),
-            food_id,
-            label: rec.system_100g_serving.label.clone(),
-            grams: rec.system_100g_serving.grams,
-            // Default to the system 100g serving when there is no OFF serving.
-            is_default: !off_present,
-            source: ServingSource::System,
-            sort_order,
-            created_at: now,
-            updated_at: now,
-        };
-        store.insert(system.id, system);
-        sort_order += 1;
-
-        if let Some(off) = &rec.off_serving {
-            let off_serving = Serving {
+        // Insert the new list.
+        for s in new_servings {
+            let serving = Serving {
                 id: Uuid::new_v4(),
                 food_id,
-                label: off.label.clone(),
-                grams: off.grams,
-                is_default: true,
-                source: ServingSource::Off,
-                sort_order,
+                label: s.label.clone(),
+                amount: s.amount,
+                unit: s.unit,
+                kcal: s.kcal,
+                protein_g: s.protein_g,
+                carbs_g: s.carbs_g,
+                fat_g: s.fat_g,
+                fiber_g: s.fiber_g,
+                sugar_g: s.sugar_g,
+                sodium_mg: s.sodium_mg,
+                saturated_fat_g: s.saturated_fat_g,
+                is_default: s.is_default,
+                source: s.source,
+                sort_order: s.sort_order,
                 created_at: now,
                 updated_at: now,
             };
-            store.insert(off_serving.id, off_serving);
+            store.insert(serving.id, serving);
         }
         Ok(())
     }
@@ -133,7 +134,16 @@ impl ServingRepository for InMemoryServingRepository {
             id: Uuid::new_v4(),
             food_id,
             label: draft.label.clone(),
-            grams: draft.grams,
+            amount: draft.amount,
+            unit: draft.unit,
+            kcal: draft.kcal,
+            protein_g: draft.protein_g,
+            carbs_g: draft.carbs_g,
+            fat_g: draft.fat_g,
+            fiber_g: draft.fiber_g,
+            sugar_g: draft.sugar_g,
+            sodium_mg: draft.sodium_mg,
+            saturated_fat_g: draft.saturated_fat_g,
             is_default: draft.is_default,
             source: draft.source,
             sort_order: draft.sort_order,
@@ -150,8 +160,35 @@ impl ServingRepository for InMemoryServingRepository {
         if let Some(v) = &patch.label {
             serving.label = v.clone();
         }
-        if let Some(v) = patch.grams {
-            serving.grams = v;
+        if let Some(v) = patch.amount {
+            serving.amount = v;
+        }
+        if let Some(v) = patch.unit {
+            serving.unit = v;
+        }
+        if let Some(v) = patch.kcal {
+            serving.kcal = v;
+        }
+        if let Some(v) = &patch.protein_g {
+            serving.protein_g = *v;
+        }
+        if let Some(v) = &patch.carbs_g {
+            serving.carbs_g = *v;
+        }
+        if let Some(v) = &patch.fat_g {
+            serving.fat_g = *v;
+        }
+        if let Some(v) = &patch.fiber_g {
+            serving.fiber_g = *v;
+        }
+        if let Some(v) = &patch.sugar_g {
+            serving.sugar_g = *v;
+        }
+        if let Some(v) = &patch.sodium_mg {
+            serving.sodium_mg = *v;
+        }
+        if let Some(v) = &patch.saturated_fat_g {
+            serving.saturated_fat_g = *v;
         }
         if let Some(v) = patch.sort_order {
             serving.sort_order = v;

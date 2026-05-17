@@ -87,7 +87,7 @@ impl InMemoryLogRepository {
             let servings = { self.servings.lock().unwrap().clone() };
             if let Some(servings) = servings {
                 if let Ok(Some(serving)) = servings.find_by_id(sid).await {
-                    entry.serving_name = Some(serving.label);
+                    entry.serving_name = serving.label;
                 }
             }
         }
@@ -102,13 +102,14 @@ impl LogRepository for InMemoryLogRepository {
             id: Uuid::new_v4(),
             user_id,
             food_id: entry.food_id,
-            food_name: String::new(),        // placeholder; T03 wires real lookup
+            food_name: String::new(),        // placeholder; resolved below
             serving_id: entry.serving_id,
-            serving_name: None,              // placeholder; T03 wires real lookup
+            serving_name: None,              // placeholder; resolved below
             consumed_on: entry.consumed_on,
             meal: entry.meal,
             quantity: entry.quantity,
-            grams_total: entry.grams_total,
+            entered_amount: entry.entered_amount,
+            entered_unit: entry.entered_unit,
             snapshot: entry.snapshot.clone(),
             note: entry.note.clone(),
             created_at: now,
@@ -140,12 +141,13 @@ impl LogRepository for InMemoryLogRepository {
             if let Some(v) = patch.meal {
                 entry.meal = v;
             }
-            if let Some(v) = &patch.note {
-                entry.note = v.clone();
+            if let Some(ref inner) = patch.note {
+                entry.note = inner.clone();
             }
             if let Some(r) = &patch.recompute {
                 entry.quantity = r.quantity;
-                entry.grams_total = r.grams_total;
+                entry.entered_amount = r.entered_amount;
+                entry.entered_unit = r.entered_unit;
                 entry.snapshot = r.snapshot.clone();
             }
             entry.updated_at = Utc::now();

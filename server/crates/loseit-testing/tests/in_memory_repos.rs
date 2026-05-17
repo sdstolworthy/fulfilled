@@ -4,8 +4,8 @@ use std::sync::Arc;
 
 use chrono::{Duration, NaiveDate, Utc};
 use loseit_core::domain::{
-    FoodDraft, FoodSource, HeightUnit, Meal, NutritionPer100g, NutritionSnapshot,
-    PersistedLogEntry, ProfilePatch, UserIdentity, WeightDraft, WeightUnit,
+    unit::Unit, FoodDraft, FoodSource, HeightUnit, Meal, NutritionSnapshot, PersistedLogEntry,
+    ProfilePatch, ServingDraft, ServingSource, UserIdentity, WeightDraft, WeightUnit,
 };
 use loseit_core::repo::{
     FoodRepository, LogRepository, ServingRepository, UserRepository, WeightRepository,
@@ -19,14 +19,34 @@ use loseit_testing::{
 use rust_decimal::Decimal;
 use uuid::Uuid;
 
+/// Minimal `ServingDraft` usable as the required first serving on custom foods.
+fn minimal_serving() -> ServingDraft {
+    ServingDraft {
+        label: None,
+        amount: Decimal::from(1),
+        unit: Unit::Serving,
+        kcal: Decimal::from(100),
+        protein_g: None,
+        carbs_g: None,
+        fat_g: None,
+        fiber_g: None,
+        sugar_g: None,
+        sodium_mg: None,
+        saturated_fat_g: None,
+        is_default: true,
+        source: ServingSource::User,
+        sort_order: 0,
+    }
+}
+
 fn sample_draft(name: &str) -> FoodDraft {
     FoodDraft {
         name: name.to_string(),
         brands: None,
         barcode: None,
         categories_tags: Vec::new(),
-        nutrition: NutritionPer100g::default(),
         nutriscore_grade: None,
+        servings: vec![minimal_serving()],
     }
 }
 
@@ -37,7 +57,8 @@ fn sample_persisted_entry(food_id: Uuid, consumed_on: NaiveDate) -> PersistedLog
         consumed_on,
         meal: Meal::Breakfast,
         quantity: Decimal::from(1),
-        grams_total: Decimal::from(100),
+        entered_amount: Decimal::from(1),
+        entered_unit: Unit::Serving,
         snapshot: NutritionSnapshot {
             calories_kcal: Decimal::from(100),
             protein_g: None,
@@ -58,7 +79,7 @@ async fn test_in_memory_food_repo_hides_other_users_customs() {
     let alice = Uuid::new_v4();
     let bob = Uuid::new_v4();
     let food = repo
-        .create_custom(alice, &sample_draft("Alice's smoothie"))
+        .create_custom_with_servings(alice, &sample_draft("Alice's smoothie"), vec![minimal_serving()])
         .await
         .expect("create");
 
@@ -76,7 +97,7 @@ async fn test_in_memory_food_repo_search_respects_visibility() {
     let repo = InMemoryFoodRepository::new();
     let alice = Uuid::new_v4();
     let bob = Uuid::new_v4();
-    repo.create_custom(alice, &sample_draft("Secret kale shake"))
+    repo.create_custom_with_servings(alice, &sample_draft("Secret kale shake"), vec![minimal_serving()])
         .await
         .expect("create");
 
@@ -92,8 +113,6 @@ async fn test_in_memory_food_repo_search_respects_visibility() {
 
 #[tokio::test]
 async fn test_in_memory_serving_repo_set_default_is_atomic() {
-    use loseit_core::domain::{ServingDraft, ServingSource};
-
     let repo = Arc::new(InMemoryServingRepository::new());
     let food_id = Uuid::new_v4();
 
@@ -104,8 +123,17 @@ async fn test_in_memory_serving_repo_set_default_is_atomic() {
             .create(
                 food_id,
                 &ServingDraft {
-                    label: format!("serving {i}"),
-                    grams: Decimal::from(10 * (i + 1)),
+                    label: Some(format!("serving {i}")),
+                    amount: Decimal::from(10 * (i + 1)),
+                    unit: Unit::Gram,
+                    kcal: Decimal::from(10 * (i + 1)),
+                    protein_g: None,
+                    carbs_g: None,
+                    fat_g: None,
+                    fiber_g: None,
+                    sugar_g: None,
+                    sodium_mg: None,
+                    saturated_fat_g: None,
                     is_default: i == 0,
                     source: ServingSource::User,
                     sort_order: i,
@@ -182,7 +210,7 @@ async fn test_in_memory_food_repo_delete_conflict_when_log_repo_has_entries() {
 
     let owner = Uuid::new_v4();
     let food = foods
-        .create_custom(owner, &sample_draft("Custom protein bar"))
+        .create_custom_with_servings(owner, &sample_draft("Custom protein bar"), vec![minimal_serving()])
         .await
         .expect("create");
 
@@ -212,50 +240,46 @@ fn draft_with_brands(name: &str, brands: &str) -> FoodDraft {
         brands: Some(brands.to_string()),
         barcode: None,
         categories_tags: Vec::new(),
-        nutrition: NutritionPer100g::default(),
         nutriscore_grade: None,
+        servings: vec![minimal_serving()],
     }
 }
 
 #[tokio::test]
 async fn list_mine_returns_only_user_owned_foods() {
-    use loseit_core::repo::{OffFoodUpsert, SystemServing};
+    use loseit_core::repo::food::{FoodDraftWithServings};
 
     let repo = InMemoryFoodRepository::new();
     let alice = Uuid::new_v4();
     let bob = Uuid::new_v4();
 
     // Alice's custom food.
-    repo.create_custom(alice, &sample_draft("Alice's bar"))
+    repo.create_custom_with_servings(alice, &sample_draft("Alice's bar"), vec![minimal_serving()])
         .await
         .expect("create");
 
-    // An OFF food (visible to everyone but must NOT appear in list_mine).
+    // An external food (visible to everyone but must NOT appear in list_mine).
     let batch = Uuid::new_v4();
-    repo.upsert_off_batch(
+    repo.upsert_external_food_batch(
         batch,
-        &[OffFoodUpsert {
+        vec![FoodDraftWithServings {
             draft: FoodDraft {
                 name: "Banana".to_string(),
                 brands: None,
                 barcode: Some("0000000000001".to_string()),
                 categories_tags: Vec::new(),
-                nutrition: NutritionPer100g::default(),
                 nutriscore_grade: None,
+                servings: vec![minimal_serving()],
             },
             quality_score: 50,
-            off_serving: None,
-            system_100g_serving: SystemServing {
-                label: "100g".to_string(),
-                grams: Decimal::from(100),
-            },
+            servings: vec![minimal_serving()],
         }],
     )
     .await
-    .expect("upsert_off_batch");
+    .expect("upsert_external_food_batch");
 
     // Bob's custom food.
-    repo.create_custom(bob, &sample_draft("Bob's shake"))
+    repo.create_custom_with_servings(bob, &sample_draft("Bob's shake"), vec![minimal_serving()])
         .await
         .expect("create");
 
@@ -271,15 +295,15 @@ async fn list_mine_filters_by_q_case_insensitive() {
     let alice = Uuid::new_v4();
 
     // Name match.
-    repo.create_custom(alice, &sample_draft("Chocolate Brownie"))
+    repo.create_custom_with_servings(alice, &sample_draft("Chocolate Brownie"), vec![minimal_serving()])
         .await
         .expect("create");
     // Brand match only.
-    repo.create_custom(alice, &draft_with_brands("Protein Cookie", "MuscleCraft"))
+    repo.create_custom_with_servings(alice, &draft_with_brands("Protein Cookie", "MuscleCraft"), vec![minimal_serving()])
         .await
         .expect("create");
     // No match.
-    repo.create_custom(alice, &sample_draft("Plain Oatmeal"))
+    repo.create_custom_with_servings(alice, &sample_draft("Plain Oatmeal"), vec![minimal_serving()])
         .await
         .expect("create");
 
@@ -317,7 +341,7 @@ async fn list_mine_paginates() {
     let mut names = Vec::new();
     for i in 0..5i32 {
         let name = format!("food_{i:02}");
-        repo.create_custom(alice, &sample_draft(&name))
+        repo.create_custom_with_servings(alice, &sample_draft(&name), vec![minimal_serving()])
             .await
             .expect("create");
         names.push(name);
@@ -339,23 +363,24 @@ async fn list_mine_excludes_quick_add_sentinel() {
     let repo = InMemoryFoodRepository::new();
     let alice = Uuid::new_v4();
 
-    // Insert a sentinel directly via create_custom (name matches the filter).
-    repo.create_custom(
+    // Insert a sentinel directly via create_custom_with_servings (name matches the filter).
+    repo.create_custom_with_servings(
         alice,
         &FoodDraft {
             name: "__quick_add__".to_string(),
             brands: None,
             barcode: None,
             categories_tags: Vec::new(),
-            nutrition: NutritionPer100g::default(),
             nutriscore_grade: None,
+            servings: vec![minimal_serving()],
         },
+        vec![minimal_serving()],
     )
     .await
     .expect("create sentinel");
 
     // Insert a normal food.
-    repo.create_custom(alice, &sample_draft("Real Food"))
+    repo.create_custom_with_servings(alice, &sample_draft("Real Food"), vec![minimal_serving()])
         .await
         .expect("create");
 
@@ -373,7 +398,7 @@ async fn count_mine_matches_list_mine_total_independent_of_pagination() {
     let alice = Uuid::new_v4();
 
     for i in 0..5i32 {
-        repo.create_custom(alice, &sample_draft(&format!("food_{i}")))
+        repo.create_custom_with_servings(alice, &sample_draft(&format!("food_{i}")), vec![minimal_serving()])
             .await
             .expect("create");
     }
@@ -392,10 +417,10 @@ async fn list_mine_trims_whitespace_in_q() {
     let repo = InMemoryFoodRepository::new();
     let alice = Uuid::new_v4();
 
-    repo.create_custom(alice, &sample_draft("Chocolate Brownie"))
+    repo.create_custom_with_servings(alice, &sample_draft("Chocolate Brownie"), vec![minimal_serving()])
         .await
         .expect("create");
-    repo.create_custom(alice, &sample_draft("Plain Oatmeal"))
+    repo.create_custom_with_servings(alice, &sample_draft("Plain Oatmeal"), vec![minimal_serving()])
         .await
         .expect("create");
 
@@ -748,7 +773,7 @@ async fn log_repo_create_many_returns_matching_field_values() {
     let jan1 = NaiveDate::from_ymd_opt(2026, 1, 1).unwrap();
 
     let qty = Decimal::from(2); // 2 servings
-    let grams = Decimal::from(200);
+    let entered = Decimal::from(2);
     let cal = Decimal::from(300);
     let protein = Decimal::from(15);
     let carbs = Decimal::from(40);
@@ -760,7 +785,8 @@ async fn log_repo_create_many_returns_matching_field_values() {
         consumed_on: jan1,
         meal: Meal::Lunch,
         quantity: qty,
-        grams_total: grams,
+        entered_amount: entered,
+        entered_unit: Unit::Serving,
         snapshot: NutritionSnapshot {
             calories_kcal: cal,
             protein_g: Some(protein),
@@ -783,7 +809,8 @@ async fn log_repo_create_many_returns_matching_field_values() {
     assert_eq!(r.consumed_on, jan1);
     assert_eq!(r.meal, Meal::Lunch);
     assert_eq!(r.quantity, qty);
-    assert_eq!(r.grams_total, grams);
+    assert_eq!(r.entered_amount, entered);
+    assert_eq!(r.entered_unit, Unit::Serving);
     assert_eq!(r.snapshot.calories_kcal, cal);
     assert_eq!(r.snapshot.protein_g, Some(protein));
     assert_eq!(r.note.as_deref(), Some("test note"));
@@ -1020,17 +1047,18 @@ async fn find_or_create_quick_add_is_idempotent() {
     assert_eq!(serving_a.id, serving_b.id, "same serving row across calls");
     assert_eq!(food_a.name, "__quick_add__");
     assert!(serving_a.is_default);
-    assert_eq!(serving_a.label, "kcal");
-    assert_eq!(serving_a.grams, Decimal::from(100));
+    // Per §6.3 sentinel: {amount: 1, unit: Serving, kcal: 1.0}
+    assert_eq!(serving_a.amount, Decimal::from(1));
+    assert_eq!(serving_a.unit, Unit::Serving);
+    assert_eq!(serving_a.kcal, Decimal::from(1));
 }
 
 // Multi-threaded runtime is used here intentionally: both steps of the fake's
 // `find_or_create_quick_add` (food upsert and default-serving upsert) must
 // converge to a single row under real contention. The food step has always
 // been atomic (check-and-insert under the food-store mutex); the serving step
-// is now also atomic via `find_or_create_default_kcal_for_food`. Without that
-// fix this test races on multi-threaded runtimes — `list_for_food` would
-// release the lock before `create` acquired it, allowing two inserts.
+// is now also atomic via `find_or_create_sentinel_serving_for_food`. Without
+// that fix this test races on multi-threaded runtimes.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn find_or_create_quick_add_concurrent_first_uses_dont_duplicate() {
     use tokio::task::JoinSet;
@@ -1083,7 +1111,7 @@ async fn search_excludes_quick_add_sentinel() {
         .await
         .expect("provision sentinel");
     foods
-        .create_custom(alice, &sample_draft("Quick oats"))
+        .create_custom_with_servings(alice, &sample_draft("Quick oats"), vec![minimal_serving()])
         .await
         .expect("create real food");
 
@@ -1110,7 +1138,7 @@ async fn recent_food_ids_excludes_sentinel_when_filter_wired() {
         .await
         .expect("provision");
     let real = foods
-        .create_custom(user, &sample_draft("Real bar"))
+        .create_custom_with_servings(user, &sample_draft("Real bar"), vec![minimal_serving()])
         .await
         .expect("create");
 
@@ -1138,7 +1166,7 @@ async fn frequent_food_ids_excludes_sentinel_when_filter_wired() {
         .await
         .expect("provision");
     let real = foods
-        .create_custom(user, &sample_draft("Real bar"))
+        .create_custom_with_servings(user, &sample_draft("Real bar"), vec![minimal_serving()])
         .await
         .expect("create");
 
@@ -1236,7 +1264,7 @@ async fn update_custom_rejects_renaming_to_reserved_sentinel_name() {
 
     let owner = Uuid::new_v4();
     let real = foods
-        .create_custom(owner, &sample_draft("Real bar"))
+        .create_custom_with_servings(owner, &sample_draft("Real bar"), vec![minimal_serving()])
         .await
         .expect("create real food");
 
@@ -1354,4 +1382,3 @@ async fn in_memory_user_repo_update_profile_only_overwrites_provided_units() {
     assert_eq!(after_height.weight_unit, WeightUnit::Lb, "weight survived");
     assert_eq!(after_height.height_unit, HeightUnit::FtIn);
 }
-

@@ -4,13 +4,12 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use chrono::Utc;
 use loseit_core::domain::{
-    Food, FoodDraft, FoodKind, FoodPatch, FoodSearchHit, FoodSource, NutritionPer100g, Serving,
+    Food, FoodDraft, FoodKind, FoodPatch, FoodSearchHit, FoodSource, Serving, ServingDraft,
     ServingPreview, ServingSource,
 };
-use loseit_core::repo::food::QUICK_ADD_SENTINEL_NAME;
-use loseit_core::repo::{
-    FoodRepository, LogRepository, OffFoodUpsert, ServingRepository, UpsertStats,
-};
+use loseit_core::domain::unit::Unit;
+use loseit_core::repo::food::{FoodDraftWithServings, QUICK_ADD_SENTINEL_NAME};
+use loseit_core::repo::{FoodRepository, LogRepository, ServingRepository};
 use loseit_core::CoreResult;
 use rust_decimal::Decimal;
 use uuid::Uuid;
@@ -19,8 +18,8 @@ use crate::logs::InMemoryLogRepository;
 use crate::servings::InMemoryServingRepository;
 
 /// In-memory implementation of [`FoodRepository`]. Pair with
-/// [`InMemoryServingRepository`] to materialize servings when ingesting OFF
-/// batches; pair with [`InMemoryLogRepository`] (via
+/// [`InMemoryServingRepository`] to materialize servings when ingesting
+/// external batches; pair with [`InMemoryLogRepository`] (via
 /// [`InMemoryFoodRepository::set_log_repo_for_delete_check`]) to surface
 /// the same `Conflict` on `delete_custom` that the SQL FK-restrict produces
 /// in production.
@@ -36,9 +35,10 @@ impl InMemoryFoodRepository {
         Self::default()
     }
 
-    /// Wire the serving repo so `upsert_off_batch` can also (re)materialize
-    /// the per-100g + OFF servings for each food. Optional — leaving this
-    /// unset just skips the serving side-effect.
+    /// Wire the serving repo so `create_custom_with_servings`,
+    /// `update_custom_with_servings`, and `upsert_external_food_batch` can
+    /// materialize serving rows. Optional — leaving this unset skips the
+    /// serving side-effect.
     pub fn set_serving_repo(&self, servings: Arc<InMemoryServingRepository>) {
         *self.servings.lock().unwrap() = Some(servings);
     }
@@ -69,9 +69,10 @@ fn hit_from(food: &Food, default_serving: Option<Serving>) -> FoodSearchHit {
         default_serving: default_serving.map(|s| ServingPreview {
             id: s.id,
             label: s.label,
-            grams: s.grams,
+            amount: s.amount,
+            unit: s.unit,
+            kcal: s.kcal,
         }),
-        calories_per_serving: None,
     }
 }
 
@@ -162,7 +163,19 @@ impl FoodRepository for InMemoryFoodRepository {
         Ok(n as i64)
     }
 
-    async fn create_custom(&self, owner: Uuid, draft: &FoodDraft) -> CoreResult<Food> {
+    /// Create a user-custom food together with its initial servings. Enforces
+    /// at least one serving. Mirrors the Pg transactional INSERT + INSERT.
+    async fn create_custom_with_servings(
+        &self,
+        owner: Uuid,
+        draft: &FoodDraft,
+        servings: Vec<ServingDraft>,
+    ) -> CoreResult<Food> {
+        if servings.is_empty() {
+            return Err(loseit_core::CoreError::Validation(
+                "at least one serving required".into(),
+            ));
+        }
         let now = Utc::now();
         let food = Food {
             id: Uuid::new_v4(),
@@ -175,7 +188,6 @@ impl FoodRepository for InMemoryFoodRepository {
             name: draft.name.clone(),
             brands: draft.brands.clone(),
             categories_tags: draft.categories_tags.clone(),
-            nutrition: draft.nutrition.clone(),
             nutriscore_grade: draft.nutriscore_grade,
             quality_score: 0,
             extra_nutrients: None,
@@ -184,35 +196,69 @@ impl FoodRepository for InMemoryFoodRepository {
             updated_at: now,
         };
         self.by_id.lock().unwrap().insert(food.id, food.clone());
+
+        let servings_guard = self.servings.lock().unwrap().clone();
+        if let Some(srv_repo) = servings_guard {
+            for s in &servings {
+                srv_repo.create(food.id, s).await?;
+            }
+        }
         Ok(food)
     }
 
-    async fn update_custom(&self, owner: Uuid, id: Uuid, patch: &FoodPatch) -> CoreResult<Food> {
-        let mut store = self.by_id.lock().unwrap();
-        let food = store.get_mut(&id).ok_or(loseit_core::CoreError::NotFound)?;
-        if food.source != FoodSource::User || food.owner_user_id != Some(owner) {
-            return Err(loseit_core::CoreError::NotFound);
+    /// Update a user-custom food. When `servings` is `Some`, performs a
+    /// full-list replace (drop-all + re-insert) mirroring the Pg behaviour.
+    async fn update_custom_with_servings(
+        &self,
+        owner: Uuid,
+        id: Uuid,
+        patch: &FoodPatch,
+        servings: Option<Vec<ServingDraft>>,
+    ) -> CoreResult<Food> {
+        {
+            let mut store = self.by_id.lock().unwrap();
+            let food = store.get_mut(&id).ok_or(loseit_core::CoreError::NotFound)?;
+            if food.source != FoodSource::User || food.owner_user_id != Some(owner) {
+                return Err(loseit_core::CoreError::NotFound);
+            }
+            if let Some(v) = &patch.name {
+                food.name = v.clone();
+            }
+            if let Some(v) = &patch.brands {
+                food.brands = Some(v.clone());
+            }
+            if let Some(v) = &patch.barcode {
+                food.barcode = Some(v.clone());
+            }
+            if let Some(v) = &patch.categories_tags {
+                food.categories_tags = v.clone();
+            }
+            if let Some(v) = patch.nutriscore_grade {
+                food.nutriscore_grade = Some(v);
+            }
+            food.updated_at = Utc::now();
         }
-        if let Some(v) = &patch.name {
-            food.name = v.clone();
+
+        if let Some(new_servings) = servings {
+            if new_servings.is_empty() {
+                return Err(loseit_core::CoreError::Validation(
+                    "at least one serving required".into(),
+                ));
+            }
+            let servings_guard = self.servings.lock().unwrap().clone();
+            if let Some(srv_repo) = servings_guard {
+                srv_repo.replace_all_for_food(id, &new_servings).await?;
+            }
         }
-        if let Some(v) = &patch.brands {
-            food.brands = Some(v.clone());
-        }
-        if let Some(v) = &patch.barcode {
-            food.barcode = Some(v.clone());
-        }
-        if let Some(v) = &patch.categories_tags {
-            food.categories_tags = v.clone();
-        }
-        if let Some(v) = &patch.nutrition {
-            food.nutrition = v.clone();
-        }
-        if let Some(v) = patch.nutriscore_grade {
-            food.nutriscore_grade = Some(v);
-        }
-        food.updated_at = Utc::now();
-        Ok(food.clone())
+
+        let food = self
+            .by_id
+            .lock()
+            .unwrap()
+            .get(&id)
+            .cloned()
+            .ok_or(loseit_core::CoreError::NotFound)?;
+        Ok(food)
     }
 
     async fn delete_custom(&self, owner: Uuid, id: Uuid) -> CoreResult<()> {
@@ -232,6 +278,76 @@ impl FoodRepository for InMemoryFoodRepository {
             }
         }
         self.by_id.lock().unwrap().remove(&id);
+        Ok(())
+    }
+
+    /// Upsert a batch of external (OFF / USDA) food records. Per-food:
+    /// upsert the food row (by barcode), then full-list replace servings.
+    async fn upsert_external_food_batch(
+        &self,
+        batch_id: Uuid,
+        batch: Vec<FoodDraftWithServings>,
+    ) -> CoreResult<()> {
+        for rec in &batch {
+            let draft = &rec.draft;
+            let now = Utc::now();
+
+            // Upsert: find existing by barcode (OFF) or insert new.
+            let food_id: Uuid = {
+                let mut store = self.by_id.lock().unwrap();
+                let existing_id = draft.barcode.as_ref().and_then(|bc| {
+                    store
+                        .values()
+                        .find(|f| {
+                            (f.source == FoodSource::Off || f.source == FoodSource::Usda)
+                                && f.barcode.as_deref() == Some(bc.as_str())
+                        })
+                        .map(|f| f.id)
+                });
+                match existing_id {
+                    Some(id) => {
+                        let food = store.get_mut(&id).expect("existing id missing");
+                        food.name = draft.name.clone();
+                        food.brands = draft.brands.clone();
+                        food.categories_tags = draft.categories_tags.clone();
+                        food.nutriscore_grade = draft.nutriscore_grade;
+                        food.quality_score = rec.quality_score;
+                        food.last_import_batch_id = Some(batch_id);
+                        food.updated_at = now;
+                        id
+                    }
+                    None => {
+                        let food = Food {
+                            id: Uuid::new_v4(),
+                            source: FoodSource::Off,
+                            kind: FoodKind::Normal,
+                            owner_user_id: None,
+                            barcode: draft.barcode.clone(),
+                            fdc_id: None,
+                            data_type: None,
+                            name: draft.name.clone(),
+                            brands: draft.brands.clone(),
+                            categories_tags: draft.categories_tags.clone(),
+                            nutriscore_grade: draft.nutriscore_grade,
+                            quality_score: rec.quality_score,
+                            extra_nutrients: None,
+                            last_import_batch_id: Some(batch_id),
+                            created_at: now,
+                            updated_at: now,
+                        };
+                        let id = food.id;
+                        store.insert(id, food);
+                        id
+                    }
+                }
+            };
+
+            // Full-list serving replace.
+            let servings_guard = self.servings.lock().unwrap().clone();
+            if let Some(srv_repo) = servings_guard {
+                srv_repo.replace_all_for_food(food_id, &rec.servings).await?;
+            }
+        }
         Ok(())
     }
 
@@ -325,16 +441,11 @@ impl FoodRepository for InMemoryFoodRepository {
     async fn find_or_create_quick_add(&self, owner: Uuid) -> CoreResult<(Food, Serving)> {
         // Idempotent: if a sentinel food already exists for `owner`, return
         // the existing pair. Otherwise create both the food and a synthetic
-        // 100 g default serving. Mirrors the Pg `INSERT ... ON CONFLICT`
-        // behaviour without the partial-unique index, by checking-then-
-        // inserting under the food-store lock.
+        // {amount:1, unit:Serving, kcal:1.0} default serving per §6.3.
         //
         // The serving side-effect goes through the wired-in serving repo if
-        // one is attached (mirroring `upsert_off_batch`'s `set_serving_repo`).
-        // If no serving repo is attached, the fake synthesizes a Serving
-        // value to return so callers see the same `(Food, Serving)` shape
-        // as the Pg impl. Tests that exercise quick-add end-to-end attach
-        // a serving repo.
+        // one is attached. If no serving repo is attached, the fake synthesizes
+        // a Serving so callers see the same `(Food, Serving)` shape.
         let now = Utc::now();
         let servings_guard = self.servings.lock().unwrap().clone();
 
@@ -359,16 +470,6 @@ impl FoodRepository for InMemoryFoodRepository {
                     name: QUICK_ADD_SENTINEL_NAME.to_string(),
                     brands: None,
                     categories_tags: Vec::new(),
-                    nutrition: NutritionPer100g {
-                        energy_kcal: Some(Decimal::from(1)),
-                        protein_g: None,
-                        carbs_g: None,
-                        fat_g: None,
-                        fiber_g: None,
-                        sugar_g: None,
-                        sodium_g: None,
-                        saturated_fat_g: None,
-                    },
                     nutriscore_grade: None,
                     quality_score: 0,
                     extra_nutrients: None,
@@ -381,24 +482,27 @@ impl FoodRepository for InMemoryFoodRepository {
             }
         };
 
-        // Step 2: find-or-insert the default 100 g serving. The
-        // `find_or_create_default_kcal_for_food` helper performs the
-        // check-and-insert atomically under a single serving-store lock
-        // acquisition, mirroring the Pg `ON CONFLICT` against
-        // `servings_one_default_per_food`. The previous implementation
-        // released the lock between `list_for_food` and `create`, which made
-        // concurrent first-uses racy under multi-threaded runtimes.
+        // Step 2: find-or-insert the default sentinel serving:
+        // {amount: 1, unit: Serving, kcal: 1.0, source: System, is_default: true}.
         let serving = if let Some(servings) = servings_guard {
-            servings.find_or_create_default_kcal_for_food(food.id)
+            servings.find_or_create_sentinel_serving_for_food(food.id)
         } else {
             // No serving repo wired in — synthesize a Serving so callers can
-            // still rely on the `(Food, Serving)` shape. This matches the
-            // Pg impl which always returns a real serving row.
+            // still rely on the `(Food, Serving)` shape.
             Serving {
                 id: Uuid::new_v4(),
                 food_id: food.id,
-                label: "kcal".to_string(),
-                grams: Decimal::from(100),
+                label: None,
+                amount: Decimal::from(1),
+                unit: Unit::Serving,
+                kcal: Decimal::from(1),
+                protein_g: None,
+                carbs_g: None,
+                fat_g: None,
+                fiber_g: None,
+                sugar_g: None,
+                sodium_mg: None,
+                saturated_fat_g: None,
                 is_default: true,
                 source: ServingSource::System,
                 sort_order: 0,
@@ -426,74 +530,5 @@ impl FoodRepository for InMemoryFoodRepository {
             }
         }
         Ok(out)
-    }
-
-    async fn upsert_off_batch(
-        &self,
-        batch_id: Uuid,
-        records: &[OffFoodUpsert],
-    ) -> CoreResult<UpsertStats> {
-        let mut stats = UpsertStats::default();
-        let mut materialize: Vec<(Uuid, &OffFoodUpsert)> = Vec::with_capacity(records.len());
-        {
-            let mut store = self.by_id.lock().unwrap();
-            for rec in records {
-                let now = Utc::now();
-                let existing_id = rec.draft.barcode.as_ref().and_then(|bc| {
-                    store
-                        .values()
-                        .find(|f| f.source == FoodSource::Off && f.barcode.as_deref() == Some(bc))
-                        .map(|f| f.id)
-                });
-                match existing_id {
-                    Some(id) => {
-                        let food = store.get_mut(&id).expect("existing id missing");
-                        food.name = rec.draft.name.clone();
-                        food.brands = rec.draft.brands.clone();
-                        food.categories_tags = rec.draft.categories_tags.clone();
-                        food.nutrition = rec.draft.nutrition.clone();
-                        food.nutriscore_grade = rec.draft.nutriscore_grade;
-                        food.quality_score = rec.quality_score;
-                        food.last_import_batch_id = Some(batch_id);
-                        food.updated_at = now;
-                        stats.updated += 1;
-                        materialize.push((id, rec));
-                    }
-                    None => {
-                        let food = Food {
-                            id: Uuid::new_v4(),
-                            source: FoodSource::Off,
-                            kind: FoodKind::Normal,
-                            owner_user_id: None,
-                            barcode: rec.draft.barcode.clone(),
-                            fdc_id: None,
-                            data_type: None,
-                            name: rec.draft.name.clone(),
-                            brands: rec.draft.brands.clone(),
-                            categories_tags: rec.draft.categories_tags.clone(),
-                            nutrition: rec.draft.nutrition.clone(),
-                            nutriscore_grade: rec.draft.nutriscore_grade,
-                            quality_score: rec.quality_score,
-                            extra_nutrients: None,
-                            last_import_batch_id: Some(batch_id),
-                            created_at: now,
-                            updated_at: now,
-                        };
-                        let id = food.id;
-                        store.insert(id, food);
-                        stats.inserted += 1;
-                        materialize.push((id, rec));
-                    }
-                }
-            }
-        }
-
-        let servings = self.servings.lock().unwrap().clone();
-        if let Some(servings) = servings {
-            for (food_id, rec) in materialize {
-                servings.replace_for_food_with_off(food_id, rec).await?;
-            }
-        }
-        Ok(stats)
     }
 }
