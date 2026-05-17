@@ -325,7 +325,7 @@ async fn exchange_code(
     code: &str,
     pkce_verifier: &str,
 ) -> Result<TokenResponse, ApiError> {
-    let token_url = format!("{}token/", p.config.issuer.trim_end_matches('/'));
+    let token_url = format!("{}/token/", p.config.issuer.trim_end_matches('/'));
     let resp = p
         .http
         .post(&token_url)
