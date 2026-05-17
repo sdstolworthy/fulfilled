@@ -70,6 +70,55 @@ impl ActivityLevel {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WeightUnit {
+    Kg,
+    Lb,
+    St,
+}
+
+impl WeightUnit {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            WeightUnit::Kg => "kg",
+            WeightUnit::Lb => "lb",
+            WeightUnit::St => "st",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "kg" => Some(Self::Kg),
+            "lb" => Some(Self::Lb),
+            "st" => Some(Self::St),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HeightUnit {
+    Cm,
+    FtIn,
+}
+
+impl HeightUnit {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            HeightUnit::Cm => "cm",
+            HeightUnit::FtIn => "ft_in",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "cm" => Some(Self::Cm),
+            "ft_in" => Some(Self::FtIn),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct User {
     pub id: Uuid,
@@ -78,6 +127,8 @@ pub struct User {
     pub birth_date: Option<NaiveDate>,
     pub height_cm: Option<Decimal>,
     pub activity_level: Option<ActivityLevel>,
+    pub weight_unit: WeightUnit,
+    pub height_unit: HeightUnit,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -94,4 +145,6 @@ pub struct ProfilePatch {
     pub birth_date: Option<NaiveDate>,
     pub height_cm: Option<Decimal>,
     pub activity_level: Option<ActivityLevel>,
+    pub weight_unit: Option<WeightUnit>,
+    pub height_unit: Option<HeightUnit>,
 }
