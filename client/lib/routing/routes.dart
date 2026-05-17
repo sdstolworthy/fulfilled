@@ -80,4 +80,44 @@ class Routes {
 
   static const String onboardingName = 'onboarding';
   static const String onboardingPath = '/onboarding/:step';
+
+  /// Canonical path for a given day-view date. Today is always the
+  /// bare `/today` path; any other date is `/today/YYYY-MM-DD`. The
+  /// route table reserves the bare path for "today right now", so the
+  /// chevrons, the post-save router (T-24 Case 2), and the date pill
+  /// all agree on the same shape via this helper.
+  ///
+  /// Audit finding #6: this used to live in `features/today/
+  /// today_internals.dart`, which created a cyclic feature
+  /// dependency (`log_entry/` and `quick_add/` reached *into* the
+  /// `today/` feature for one pure path helper). Path computation
+  /// belongs in the routing layer.
+  static String todayPathFor(DateTime date) {
+    if (isLocalNowDay(date)) return todayPath;
+    final y = date.year.toString().padLeft(4, '0');
+    final m = date.month.toString().padLeft(2, '0');
+    final d = date.day.toString().padLeft(2, '0');
+    return '$todayPath/$y-$m-$d';
+  }
+
+  /// True when [date]'s local-calendar Y/M/D matches the local-now
+  /// Y/M/D. The day-view's pill, title, post-save router, and the
+  /// `todayHeadline` greeting all read off this predicate so the
+  /// "today vs. backdate" decision lands the same answer everywhere.
+  static bool isLocalNowDay(DateTime date) {
+    final now = DateTime.now();
+    return date.year == now.year &&
+        date.month == now.month &&
+        date.day == now.day;
+  }
 }
+
+/// Top-level alias for [Routes.todayPathFor]. The audit recommended
+/// keeping the bare function name accessible (the call sites read as
+/// `context.go(pathForDay(date))`) — adding `Routes.` everywhere would
+/// have meant touching every call site for no reader benefit.
+String pathForDay(DateTime date) => Routes.todayPathFor(date);
+
+/// Top-level alias for [Routes.isLocalNowDay]. Same reasoning as
+/// [pathForDay].
+bool isLocalNowDay(DateTime date) => Routes.isLocalNowDay(date);

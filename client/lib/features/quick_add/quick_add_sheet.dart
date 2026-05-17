@@ -12,12 +12,12 @@ import '../../form_factor/form_factor.dart';
 import '../../providers/log_providers.dart';
 import '../../providers/food_providers.dart';
 import '../../providers/repository_providers.dart';
+import '../../routing/routes.dart' show pathForDay;
 import '../../theme/context_extensions.dart';
 import '../../widgets/motion.dart';
 import '../../widgets/primary_button.dart';
 import '../../widgets/quantity_stepper.dart';
 import '../log_entry/widgets/meal_chip_picker.dart';
-import '../today/today_internals.dart' show pathForDay;
 
 // The Quick-add synthetic food + serving ids live on
 // `domain/quick_add.dart` (audit finding #8). The widget reads them

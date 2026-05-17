@@ -10,11 +10,11 @@ import '../../../form_factor/form_factor.dart';
 import '../../../providers/food_providers.dart';
 import '../../../providers/log_providers.dart';
 import '../../../providers/repository_providers.dart';
+import '../../../routing/routes.dart' show pathForDay;
 import '../../../theme/context_extensions.dart';
 import '../../../widgets/icon_button_36.dart';
 import '../../../widgets/primary_button.dart';
 import '../../../widgets/snackbar_throttle.dart';
-import '../today_internals.dart' show pathForDay;
 
 /// Bottom sheet (compact) / dialog (expanded) shaped form for
 /// `POST /log/copy`. F1 from `architect_ux_pack.md` §3 / PM UX pack

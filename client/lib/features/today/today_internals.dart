@@ -65,18 +65,12 @@ Map<Meal, List<LogEntry>> entriesByMeal(List<LogEntry> entries) {
 /// machine's local-now Y/M/D resolves to "today" regardless of the
 /// hour/minute fields. Callers therefore don't need to normalise to
 /// midnight before calling.
-String pathForDay(DateTime date) {
-  final now = DateTime.now();
-  final isToday = date.year == now.year &&
-      date.month == now.month &&
-      date.day == now.day;
-  if (isToday) return Routes.todayPath;
-  final y = date.year.toString().padLeft(4, '0');
-  final m = date.month.toString().padLeft(2, '0');
-  final d = date.day.toString().padLeft(2, '0');
-  return '${Routes.todayPath}/$y-$m-$d';
-}
-
+///
+/// Audit finding #6: the concrete `pathForDay` / `isLocalNowDay`
+/// helpers now live on `lib/routing/routes.dart` so cross-feature
+/// callers (the log-entry sheet, the quick-add sheet) don't have to
+/// import the today-feature internals for a pure path helper.
+///
 /// Push a relative day route. Today is always the canonical `/today` path
 /// — addressing it as `/today/2026-05-15` would work but the route table
 /// reserves the bare path for "today right now". Thin wrapper over
@@ -472,16 +466,6 @@ class DaySwipeWrap extends StatelessWidget {
       child: child,
     );
   }
-}
-
-/// True when [date]'s Y/M/D matches the local-now Y/M/D. Mirrors the
-/// `pathForDay` / `todayHeadline` checks so the day-view's pill, title
-/// and post-save router stay in lock-step.
-bool isLocalNowDay(DateTime date) {
-  final now = DateTime.now();
-  return date.year == now.year &&
-      date.month == now.month &&
-      date.day == now.day;
 }
 
 /// Inline error card used in place of a snackbar inside the
