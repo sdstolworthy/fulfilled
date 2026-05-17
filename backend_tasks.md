@@ -713,6 +713,64 @@ rendering against the discovery endpoint.
 
 ---
 
+## Ask 9 — Denormalize `food_name` + `serving_name` on `/log` responses *(P0 — user-visible bug on the deploy tonight)*
+
+Status: `open`
+
+User reports: "The name of the foods that are added to the registry are
+not appearing." Confirmed live — the wire response from
+`GET /log?from=&to=` and `GET /days/{date}/summary` carries no
+`food_name` or `serving_name` keys:
+
+```bash
+curl -H "Authorization: Bearer <tok>" \
+  "https://api.coolify.stolworthy.co/api/v1/log?from=2026-05-17&to=2026-05-17" | jq '.results[0]'
+# → {id, food_id, serving_id, consumed_on, meal, quantity, grams_total,
+#    calories_kcal, protein_g, ..., note, created_at, updated_at}
+#   (no food_name, no serving_name)
+```
+
+The FE rows render an empty string because the client decoder
+(`client/lib/domain/log_entry.dart:95`) falls back to `''` when the
+key is absent. The Food name lives one extra fetch away
+(`GET /foods/{food_id}`), but that's an N+1 problem for a day view
+with multiple entries.
+
+**The shape FE wants** — denormalize:
+
+```diff
+ results: [
+   {
+     "id": "...",
+     "food_id": "96348e60-...",
++    "food_name": "Tomato paste",
+     "serving_id": "a6ed31a1-...",
++    "serving_name": "100 g",
+     ...
+   }
+ ]
+```
+
+Same denormalization on `GET /days/{date}/summary` (the response's
+embedded `entries` array). Yes it's repetition; it eliminates N
+round-trips per day-view render. This is the standard "DTO has
+everything the row needs" pattern.
+
+**FE is shipping a stopgap tonight** — a foods cache + per-entry
+join via `FoodRepository.byId` — so the deployed app shows food
+names while you ship this. Once Ask 9 lands the FE drops the cache
+and uses the denormalized field directly.
+
+### Acceptance
+
+`curl https://api.coolify.stolworthy.co/api/v1/log?...` returns
+`food_name` (and `serving_name` when `serving_id` is set) on each
+result. Same for `/days/{date}/summary`. OpenAPI `LogEntry` schema
+updated with both fields (`food_name` required, `serving_name`
+optional).
+
+---
+
 ## Done / Acknowledged
 
 *(Backend team: move tasks here once shipped or rejected. Include a

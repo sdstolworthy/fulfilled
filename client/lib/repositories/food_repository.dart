@@ -38,6 +38,19 @@ class FoodRepository {
 
   final ApiClient _api;
 
+  /// Per-instance cache of `Food` rows we've already seen. Populated by
+  /// every successful read; consulted by [lookup] (sync) and
+  /// [prefetchByIds] (async batch-fill). Drives the FE-side join in
+  /// `LogRepository._decodeEntryWithDenorm` so the day-view shows food
+  /// names while we wait for Ask 9 (server-side denormalization) to
+  /// land. Once `LogEntry` carries `food_name` on the wire this cache
+  /// becomes informational — the entry already has the name.
+  final Map<String, Food> _byIdCache = <String, Food>{};
+
+  void _remember(Food food) {
+    _byIdCache[food.id] = food;
+  }
+
   // -------- Reads --------
 
   /// `GET /foods/search?q=...&limit=&offset=`. Returns the decoded
@@ -97,11 +110,38 @@ class FoodRepository {
   Future<Food> get(String id) async {
     try {
       final resp = await _api.dio.get<dynamic>('/foods/$id');
-      return Food.fromJson(resp.data as Map<String, dynamic>);
+      final food = Food.fromJson(resp.data as Map<String, dynamic>);
+      _remember(food);
+      return food;
     } on DioException catch (e) {
       if (e.response?.statusCode == 404) throw FoodNotFoundError(id);
       rethrow;
     }
+  }
+
+  /// Batch-fill the per-instance cache with `Food` rows for every `id`
+  /// in [ids] that isn't already cached. Used by
+  /// `LogRepository.entriesForDate` (and friends) to enrich
+  /// `LogEntry.foodName` / `servingName` from the catalog while the
+  /// wire shape doesn't denormalize them (Ask 9). Missing IDs (404) are
+  /// silently skipped — the day-view falls back to the existing empty-
+  /// string render, which is no worse than the current state.
+  Future<void> prefetchByIds(Iterable<String> ids) async {
+    final missing = ids.toSet().where((id) => !_byIdCache.containsKey(id));
+    if (missing.isEmpty) return;
+    await Future.wait(
+      missing.map((id) async {
+        try {
+          await get(id);
+        } on FoodNotFoundError {
+          // The food was deleted between log-time and now; the row still
+          // has its snapshot kcal/macros — it just won't have a name.
+        } on DioException {
+          // Network blip or 5xx — let the next read try again. We do not
+          // want a single food fetch failure to block the whole day view.
+        }
+      }),
+    );
   }
 
   /// `GET /foods/barcode/{barcode}`. **404 → null** — there's no food
@@ -111,7 +151,9 @@ class FoodRepository {
   Future<Food?> byBarcode(String barcode) async {
     try {
       final resp = await _api.dio.get<dynamic>('/foods/barcode/$barcode');
-      return Food.fromJson(resp.data as Map<String, dynamic>);
+      final food = Food.fromJson(resp.data as Map<String, dynamic>);
+      _remember(food);
+      return food;
     } on DioException catch (e) {
       if (e.response?.statusCode == 404) return null;
       rethrow;
@@ -276,12 +318,14 @@ class FoodRepository {
     return 0;
   }
 
-  /// Synchronous lookup used by [LogRepository._decodeEntryWithDenorm]
-  /// to populate `LogEntry.foodName` / `servingName` from a local
-  /// cache. On the wired path there is no in-memory cache — `null` is
-  /// always returned, and the entry surfaces with the server-emitted
-  /// names (which the wire now carries directly on `LogEntry`).
-  Food? lookup(String id) => null;
+  /// Synchronous cache lookup used by
+  /// [LogRepository._decodeEntryWithDenorm] to populate
+  /// `LogEntry.foodName` / `servingName`. Populated by every successful
+  /// read on this repository instance + by [prefetchByIds]. Returns
+  /// `null` on miss; callers fall back to whatever the wire carried
+  /// (empty string today, the denormalized `food_name` once Ask 9
+  /// lands).
+  Food? lookup(String id) => _byIdCache[id];
 
   /// Stub kept for source compatibility with `LogRepository.create`'s
   /// optimistic path. Recent / frequent projections are server-derived
@@ -304,14 +348,22 @@ class FoodRepository {
     if (data is! Map<String, dynamic>) return const <Food>[];
     final results = (data['results'] as List<dynamic>? ?? const <dynamic>[])
         .cast<Map<String, dynamic>>();
-    return <Food>[for (final h in results) _hitToFood(h)];
+    final foods = <Food>[for (final h in results) _hitToFood(h)];
+    for (final f in foods) {
+      _remember(f);
+    }
+    return foods;
   }
 
   List<Food> _decodeHitArray(Object? data) {
     if (data is! List<dynamic>) return const <Food>[];
-    return <Food>[
+    final foods = <Food>[
       for (final h in data.cast<Map<String, dynamic>>()) _hitToFood(h),
     ];
+    for (final f in foods) {
+      _remember(f);
+    }
+    return foods;
   }
 
   /// Project a `FoodSearchHit` JSON map into a `Food`. The slim hit
