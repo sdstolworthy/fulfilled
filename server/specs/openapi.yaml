@@ -115,6 +115,125 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "422": { $ref: "#/components/responses/BadRequest" }
 
+  /auth/providers:
+    get:
+      tags: [Auth]
+      operationId: list_auth_providers
+      summary: Discover configured auth providers
+      description: |
+        Returns the set of authentication methods this deployment
+        accepts. Called by the FE before sign-in; drives whether the
+        local credentials form is rendered and the per-provider OIDC
+        button list.
+      security: []
+      responses:
+        "200":
+          description: Provider catalogue.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthProviders" }
+
+  /auth/oidc/{provider_id}/start:
+    get:
+      tags: [Auth]
+      operationId: oidc_start
+      summary: Start an OIDC sign-in flow
+      description: |
+        Sets an HMAC-signed `loseit_oidc_state` cookie carrying the
+        PKCE verifier + CSRF state + return-to URL, then 302s to the
+        provider's authorize endpoint with `code_challenge_method=S256`.
+        FE renders this as a plain anchor — the browser follows the
+        302 to Authentik and the user signs in.
+      security: []
+      parameters:
+        - in: path
+          name: provider_id
+          required: true
+          schema: { type: string }
+        - in: query
+          name: next
+          required: false
+          schema: { type: string, default: "/" }
+          description: |
+            Path or absolute URL to land at after a successful sign-in.
+            Validated against `LOSEIT_FE_ORIGIN`. Rejected with 400 if
+            it points elsewhere.
+      responses:
+        "302":
+          description: Redirect to the provider's authorize endpoint.
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404":
+          description: Unknown `provider_id` or OIDC not configured.
+
+  /auth/oidc/{provider_id}/callback:
+    get:
+      tags: [Auth]
+      operationId: oidc_callback
+      summary: Provider redirect target after sign-in
+      description: |
+        Hit by the browser after the IdP redirects back to us. Verifies
+        the signed state cookie, exchanges `code` + `pkce_verifier` at
+        the provider's `/token` endpoint, validates the returned ID
+        token via JWKS, upserts the local user row, mints an opaque
+        bearer, stores it under a one-time handoff code, and 302s the
+        browser to `<next>?oidc_code=<handoff>`.
+      security: []
+      parameters:
+        - in: path
+          name: provider_id
+          required: true
+          schema: { type: string }
+        - in: query
+          name: code
+          required: false
+          schema: { type: string }
+        - in: query
+          name: state
+          required: true
+          schema: { type: string }
+        - in: query
+          name: error
+          required: false
+          schema: { type: string }
+        - in: query
+          name: error_description
+          required: false
+          schema: { type: string }
+      responses:
+        "302":
+          description: Redirect to the FE with a handoff code.
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404":
+          description: Unknown `provider_id` or OIDC not configured.
+        "502":
+          description: Upstream IdP failure (`/token` unreachable).
+
+  /auth/oidc/exchange:
+    post:
+      tags: [Auth]
+      operationId: oidc_exchange
+      summary: Swap an OIDC handoff code for an opaque bearer
+      description: |
+        One-time exchange. The handoff code is the value the callback
+        302'd to the FE in the URL. The opaque bearer returned here is
+        the same shape as the local-creds `/auth/login` response — the
+        FE stores it and uses it on every subsequent authenticated
+        request.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/OidcExchangeRequest" }
+      responses:
+        "200":
+          description: Bearer issued.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LoginResponse" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+
   /me:
     get:
       tags: [Profile]
@@ -925,6 +1044,51 @@ components:
           type: string
           format: date-time
           description: Absolute kill date for the token, in UTC.
+
+    AuthProviders:
+      type: object
+      required: [local, oidc]
+      properties:
+        local: { $ref: "#/components/schemas/LocalProviderDescriptor" }
+        oidc:
+          type: array
+          items: { $ref: "#/components/schemas/OidcProviderDescriptor" }
+
+    LocalProviderDescriptor:
+      type: object
+      required: [enabled]
+      properties:
+        enabled:
+          type: boolean
+          description: |
+            `true` when `POST /auth/login` is accepted on this deploy.
+
+    OidcProviderDescriptor:
+      type: object
+      required: [id, display_name, start_url]
+      properties:
+        id:
+          type: string
+          description: URL-safe slug; appears in `start_url`.
+        display_name: { type: string }
+        icon_url:
+          type: [string, "null"]
+          format: uri
+        start_url:
+          type: string
+          description: |
+            Relative URL the FE puts behind the per-provider button.
+            Hitting it begins the redirect chain; no JS required.
+
+    OidcExchangeRequest:
+      type: object
+      required: [code]
+      properties:
+        code:
+          type: string
+          description: |
+            One-time handoff code from the `oidc_code` query parameter
+            on the FE callback URL.
 
     User:
       type: object

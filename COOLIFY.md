@@ -29,15 +29,28 @@ Set these in Coolify's UI (Application → Environment Variables). Anything mark
 | `DATABASE_URL` | api | **Secret.** Postgres connection string. e.g. `postgres://user:pass@host:5432/loseit`. |
 | `API_BASE_URL` | web | The api service's public URL plus `/api/v1`. e.g. `https://api.example.com/api/v1`. Baked in at build time. |
 
-### Required only when switching off dev-bypass auth
+### Auth — local credentials
 
-| Variable | Notes |
-|---|---|
-| `DEV_AUTH_BYPASS` | Set to `false` once OIDC is configured. |
-| `OIDC_ISSUER` | The `iss` claim your idP issues, exactly. e.g. `https://example.us.auth0.com/`. |
-| `OIDC_AUDIENCE` | The `aud` your idP signs for this API. |
-| `OIDC_JWKS_URL` | The well-known JWKS endpoint, e.g. `https://example.us.auth0.com/.well-known/jwks.json`. |
-| `OIDC_JWKS_CACHE_TTL_SECS` | Optional; defaults to `600`. |
+| Variable | Default | Notes |
+|---|---|---|
+| `LOSEIT_AUTH_LOCAL` | `true` | Set to `false` to disable `POST /auth/login` (username + password). |
+| `LOSEIT_SEED_DEV_AUTH` | `true` | Seeds the dev user row on boot when dev-bypass is active. |
+
+### Auth — OIDC (Authentik or other provider)
+
+| Variable | Default | Notes |
+|---|---|---|
+| `OIDC_PROVIDERS` | _(empty)_ | Comma-separated provider IDs. Set to `authentik` (or another slug) to enable OIDC. Empty = no OIDC. |
+| `LOSEIT_AUTH_STATE_SECRET` | _(empty)_ | **Secret.** 32+ random bytes (base64 or hex). Required when `OIDC_PROVIDERS` is non-empty. Generate with `openssl rand -hex 32`. |
+| `LOSEIT_FE_ORIGIN` | _(empty)_ | The frontend origin, e.g. `https://app.coolify.stolworthy.co`. Used to validate the `next` redirect parameter. |
+| `OIDC_AUTHENTIK_DISPLAY_NAME` | `Authentik` | Button label on the sign-in page. |
+| `OIDC_AUTHENTIK_ISSUER` | _(empty)_ | The `iss` claim, e.g. `https://auth.example.com/application/o/loseit/`. |
+| `OIDC_AUTHENTIK_CLIENT_ID` | _(empty)_ | OAuth2 client ID from the Authentik application. |
+| `OIDC_AUTHENTIK_CLIENT_SECRET` | _(empty)_ | **Secret.** OAuth2 client secret. |
+| `OIDC_AUTHENTIK_REDIRECT_URI` | _(empty)_ | Must match the redirect URI configured in Authentik, e.g. `https://api.coolify.stolworthy.co/api/v1/auth/oidc/authentik/callback`. |
+| `OIDC_AUTHENTIK_JWKS_URL` | _(empty)_ | JWKS endpoint, e.g. `https://auth.example.com/application/o/loseit/jwks/`. |
+| `OIDC_AUTHENTIK_ICON_URL` | _(empty)_ | Optional URL to the provider logo shown on the sign-in button. |
+| `OIDC_AUTHENTIK_SCOPES` | _(empty)_ | Space-separated scopes. Defaults to `openid profile email` if left empty. |
 
 ### Optional overrides
 
@@ -85,15 +98,33 @@ Not in this deployment. Open a ticket when the split lands.
    - `GET https://<api-fqdn>/api/v1/health` → `{"status":"ok"}`
    - `GET https://<web-fqdn>/health.txt` → `ok`
 
-## Switching from dev-bypass to OIDC
+## Switching from dev-bypass to production auth
 
-While dev-bypass is on, anyone with `DEV_AUTH_TOKEN` is fully authenticated as the configured dev user. That's only acceptable while the URL is private. To flip:
+While dev-bypass is on, anyone with `DEV_AUTH_TOKEN` is fully authenticated as the configured dev user. That's only acceptable while the URL is private.
 
-1. Provision your idP (Auth0, Cognito, Keycloak, Apple/Google — anything that publishes a JWKS endpoint).
-2. Set the four `OIDC_*` env vars in Coolify, plus `DEV_AUTH_BYPASS=false`.
-3. Optionally set `RUST_ENV=production` to make the dev-bypass refusal absolute (the server will fail to boot if you ever accidentally re-enable dev-bypass alongside production).
-4. Redeploy. Health endpoint returns 200 publicly; every other endpoint now requires a valid bearer token from your idP.
-5. Update the Flutter client's sign-in flow (FE-11 in `server/specs/v1_finishup_frontend_tasks.md`).
+### Enabling local credentials (username + password)
+
+`LOSEIT_AUTH_LOCAL` defaults to `true`. Local sign-in via `POST /api/v1/auth/login` works out of the box. Set to `false` to disable it.
+
+### Adding Authentik (OIDC)
+
+1. In Authentik, create a new OAuth2/OpenID Provider:
+   - **Name**: LoseIt (or any label).
+   - **Client type**: Confidential.
+   - **Redirect URIs**: `https://<api-fqdn>/api/v1/auth/oidc/authentik/callback` (replace `<api-fqdn>` with your API service FQDN).
+   - **Scopes**: `openid`, `profile`, `email`.
+   - Note the **Client ID**, **Client Secret**, **Issuer URL**, and **JWKS URL** from the provider detail page.
+2. In Coolify, set the following env vars on the `api` service:
+   - `OIDC_PROVIDERS=authentik`
+   - `LOSEIT_AUTH_STATE_SECRET` — generate with `openssl rand -hex 32`. **Mark as secret.**
+   - `LOSEIT_FE_ORIGIN` — the frontend FQDN, e.g. `https://app.coolify.stolworthy.co`.
+   - `OIDC_AUTHENTIK_ISSUER`, `OIDC_AUTHENTIK_CLIENT_ID`, `OIDC_AUTHENTIK_CLIENT_SECRET`, `OIDC_AUTHENTIK_REDIRECT_URI`, `OIDC_AUTHENTIK_JWKS_URL`.
+3. Unset (or leave empty) the old removed vars: `LOSEIT_AUTH_BACKEND`, `OIDC_ISSUER`, `OIDC_AUDIENCE`, `OIDC_JWKS_URL`, `OIDC_JWKS_CACHE_TTL_SECS` — these are no longer read by the server.
+4. Set `DEV_AUTH_BYPASS=false`.
+5. Optionally set `RUST_ENV=production` to make dev-bypass refusal absolute (the server refuses to boot if dev-bypass is re-enabled in production mode).
+6. Redeploy. `GET /api/v1/auth/providers` will now return both `local` and the Authentik OIDC entry.
+
+Local credentials and OIDC can coexist — the FE renders the password form alongside the per-provider buttons based on the `/auth/providers` response.
 
 ## Rolling back
 
