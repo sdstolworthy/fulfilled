@@ -8,6 +8,7 @@ import '../../domain/goal.dart';
 import '../../domain/locale_defaults.dart';
 import '../../domain/user.dart';
 import '../../providers/draft_providers.dart';
+import '../../providers/profile_providers.dart';
 import '../../providers/repository_providers.dart';
 import '../../routing/routes.dart';
 import '../../theme/context_extensions.dart';
@@ -182,6 +183,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
             estimate == null ? null : Decimal.fromInt(estimate.fatG),
       ));
 
+      ref.invalidate(meProvider);
       ref.read(onboardingDraftProvider.notifier).reset();
 
       if (!mounted) return;
