@@ -122,6 +122,11 @@ pub async fn build_state(pool: PgPool, config: &AppConfig) -> Result<AppState> {
 /// network.
 pub fn router(state: AppState) -> Router {
     let public = routes::health::router();
+    let public = if state.auth.is_some() {
+        public.merge(routes::auth::router())
+    } else {
+        public
+    };
 
     let authed = Router::new()
         .merge(routes::profile::router())
