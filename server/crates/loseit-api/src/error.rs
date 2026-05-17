@@ -40,6 +40,20 @@ impl ApiError {
     pub fn not_found() -> Self {
         Self::new(StatusCode::NOT_FOUND, "not_found", "resource not found")
     }
+
+    pub fn internal(msg: impl Into<String>) -> Self {
+        let msg = msg.into();
+        tracing::error!(message = %msg, "internal error");
+        Self::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal_error",
+            "something went wrong",
+        )
+    }
+
+    pub fn bad_gateway(msg: impl Into<String>) -> Self {
+        Self::new(StatusCode::BAD_GATEWAY, "bad_gateway", msg)
+    }
 }
 
 #[derive(Serialize)]

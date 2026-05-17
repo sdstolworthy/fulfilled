@@ -5,6 +5,7 @@ use axum::{Json, Router};
 use axum_extra::extract::cookie::{Cookie, SameSite};
 use axum_extra::extract::CookieJar;
 use chrono::{DateTime, Utc};
+use loseit_core::domain::UserIdentity;
 use serde::{Deserialize, Serialize};
 
 use crate::auth::oidc::state::{StatePayload, STATE_TTL_SECS};
@@ -47,6 +48,7 @@ pub fn router() -> Router<AppState> {
         .route("/auth/providers", get(providers))
         .route("/auth/login", post(login))
         .route("/auth/oidc/:id/start", get(oidc_start))
+        .route("/auth/oidc/:id/callback", get(oidc_callback))
 }
 
 async fn login(
@@ -183,6 +185,190 @@ async fn oidc_start(
     let authorize_url = build_authorize_url(provider, &state_csrf, &code_challenge, &nonce);
     let cookie = build_state_cookie(signed, state.env_is_production);
     Ok((cookies.add(cookie), Redirect::to(&authorize_url)))
+}
+
+// ── OIDC callback ─────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct CallbackParams {
+    code: Option<String>,
+    state: String,
+    #[allow(dead_code)]
+    error: Option<String>,
+    #[allow(dead_code)]
+    error_description: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct TokenResponse {
+    id_token: String,
+    // We don't keep access_token or refresh_token.
+}
+
+async fn oidc_callback(
+    State(state): State<AppState>,
+    Path(provider_id): Path<String>,
+    Query(params): Query<CallbackParams>,
+    cookies: CookieJar,
+) -> Result<(CookieJar, Redirect), ApiError> {
+    let registry = state.oidc.as_ref().ok_or_else(|| ApiError::not_found())?;
+    let provider = registry
+        .providers
+        .get(&provider_id)
+        .ok_or_else(|| ApiError::not_found())?;
+
+    // 1. Read + verify state cookie.
+    let signed = cookies
+        .get("loseit_oidc_state")
+        .ok_or_else(|| ApiError::bad_request("missing state cookie"))?;
+    let payload = registry
+        .state_signer
+        .verify(signed.value())
+        .map_err(|_| ApiError::bad_request("invalid state cookie"))?;
+
+    // 2. Same-provider + CSRF check.
+    if payload.provider_id != provider_id {
+        return Err(ApiError::bad_request("provider mismatch"));
+    }
+    use subtle::ConstantTimeEq;
+    if payload
+        .state
+        .as_bytes()
+        .ct_eq(params.state.as_bytes())
+        .unwrap_u8()
+        == 0
+    {
+        return Err(ApiError::bad_request("state mismatch"));
+    }
+
+    // 3. Either the IdP told us about an error, or we have a code.
+    if let Some(err) = params.error.as_deref() {
+        let cleared = clear_state_cookie(state.env_is_production);
+        let url = next_with_error(&payload.next, err);
+        return Ok((cookies.add(cleared), Redirect::to(&url)));
+    }
+    let code = params
+        .code
+        .ok_or_else(|| ApiError::bad_request("missing code"))?;
+
+    // 4. Exchange code at the IdP's /token endpoint.
+    let token_resp = exchange_code(provider, &code, &payload.pkce_verifier).await?;
+
+    // 5. Verify ID token via JWKS, checking iss + aud + nonce.
+    let claims = provider
+        .jwks
+        .verify(
+            &token_resp.id_token,
+            &provider.config.issuer,
+            &provider.config.client_id,
+            Some(&payload.nonce),
+        )
+        .await
+        .map_err(|_| ApiError::bad_request("invalid id_token"))?;
+
+    // 6. Upsert local user row.
+    let identity = UserIdentity {
+        issuer: provider_id.clone(),
+        external_id: claims.sub.clone(),
+        email: claims.email.clone(),
+        display_name: claims.name.clone().or(claims.preferred_username.clone()),
+    };
+    let user = state
+        .users
+        .ensure_user(&identity)
+        .await
+        .map_err(|e| ApiError::internal(format!("ensure_user: {e}")))?;
+
+    // 7. Mint opaque session token.
+    let session = registry
+        .auth
+        .mint_session_for(user.id)
+        .await
+        .map_err(|e| ApiError::internal(format!("mint_session: {e}")))?;
+
+    // 8. Insert handoff row (60s TTL).
+    let handoff_raw = b64url_random(32);
+    let code_hash = sha256_hex(&handoff_raw);
+    let handoff_expires_at = chrono::Utc::now() + chrono::Duration::seconds(60);
+    registry
+        .handoffs
+        .insert(
+            &code_hash,
+            user.id,
+            &session.raw,
+            session.expires_at,
+            handoff_expires_at,
+        )
+        .await
+        .map_err(|e| ApiError::internal(format!("handoff insert: {e}")))?;
+
+    // 9. Clear the state cookie + 302 the browser back to the FE.
+    let cleared = clear_state_cookie(state.env_is_production);
+    let redirect_url = next_with_handoff(&payload.next, &handoff_raw);
+    Ok((cookies.add(cleared), Redirect::to(&redirect_url)))
+}
+
+async fn exchange_code(
+    p: &OidcProvider,
+    code: &str,
+    pkce_verifier: &str,
+) -> Result<TokenResponse, ApiError> {
+    let token_url = format!("{}token/", p.config.issuer.trim_end_matches('/'));
+    let resp = p
+        .http
+        .post(&token_url)
+        .form(&[
+            ("grant_type", "authorization_code"),
+            ("code", code),
+            ("redirect_uri", p.config.redirect_uri.as_str()),
+            ("client_id", p.config.client_id.as_str()),
+            ("client_secret", p.config.client_secret.as_str()),
+            ("code_verifier", pkce_verifier),
+        ])
+        .send()
+        .await
+        .map_err(|e| ApiError::bad_gateway(format!("idp /token: {e}")))?;
+    if !resp.status().is_success() {
+        return Err(ApiError::bad_gateway(format!(
+            "idp /token returned {}",
+            resp.status()
+        )));
+    }
+    resp.json::<TokenResponse>()
+        .await
+        .map_err(|e| ApiError::bad_gateway(format!("idp /token body: {e}")))
+}
+
+fn clear_state_cookie(secure: bool) -> Cookie<'static> {
+    let mut c = Cookie::new("loseit_oidc_state", "");
+    c.set_http_only(true);
+    c.set_same_site(SameSite::Lax);
+    c.set_max_age(time::Duration::ZERO);
+    c.set_path("/api/v1/auth/oidc");
+    if secure {
+        c.set_secure(true);
+    }
+    c
+}
+
+fn next_with_handoff(next: &str, handoff: &str) -> String {
+    let mut url = url::Url::parse(next).expect("next validated at start");
+    url.query_pairs_mut().append_pair("oidc_code", handoff);
+    url.to_string()
+}
+
+fn next_with_error(next: &str, err: &str) -> String {
+    let mut url = url::Url::parse(next).expect("next validated at start");
+    url.query_pairs_mut().append_pair("oidc_error", err);
+    url.to_string()
+}
+
+fn sha256_hex(input: &str) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(input.as_bytes())
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect()
 }
 
 async fn providers(State(state): State<AppState>) -> Json<ProvidersResponse> {
