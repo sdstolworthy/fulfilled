@@ -189,18 +189,33 @@ fn build_authorize_url(
     state_csrf: &str,
     code_challenge: &str,
     nonce: &str,
+    mobile: bool,
 ) -> String {
     let mut url =
         url::Url::parse(&p.config.authorize_url).expect("authorize URL validated at boot");
-    url.query_pairs_mut()
-        .append_pair("response_type", "code")
-        .append_pair("client_id", &p.config.client_id)
-        .append_pair("redirect_uri", &p.config.redirect_uri)
-        .append_pair("scope", &p.config.scopes.join(" "))
-        .append_pair("state", state_csrf)
-        .append_pair("nonce", nonce)
-        .append_pair("code_challenge", code_challenge)
-        .append_pair("code_challenge_method", "S256");
+    {
+        let mut q = url.query_pairs_mut();
+        q.append_pair("response_type", "code")
+            .append_pair("client_id", &p.config.client_id)
+            .append_pair("redirect_uri", &p.config.redirect_uri)
+            .append_pair("scope", &p.config.scopes.join(" "))
+            .append_pair("state", state_csrf)
+            .append_pair("nonce", nonce)
+            .append_pair("code_challenge", code_challenge)
+            .append_pair("code_challenge_method", "S256");
+        // Mobile flows: force the IdP to re-prompt for credentials
+        // rather than silently auto-completing on an existing session.
+        // The system-browser session can inherit (or not inherit) the
+        // user's IdP cookies depending on the platform / mode, which
+        // makes auto-completion non-deterministic and surfaces as
+        // "Authentik page loads slowly, then refresh lands on the
+        // Authentik dashboard." `prompt=login` removes that variance —
+        // the user is always presented with the IdP's login form.
+        // Web flows skip this so single-sign-on stays seamless there.
+        if mobile {
+            q.append_pair("prompt", "login");
+        }
+    }
     url.to_string()
 }
 
@@ -228,6 +243,7 @@ async fn oidc_start(
         .get(&provider_id)
         .ok_or_else(|| ApiError::not_found())?;
 
+    let mobile = params.mobile_callback.is_some();
     let next = resolve_redirect_target(
         &registry.fe_origin,
         params.next.as_deref(),
@@ -249,7 +265,8 @@ async fn oidc_start(
     };
     let signed = registry.state_signer.sign(&payload);
 
-    let authorize_url = build_authorize_url(provider, &state_csrf, &code_challenge, &nonce);
+    let authorize_url =
+        build_authorize_url(provider, &state_csrf, &code_challenge, &nonce, mobile);
     let cookie = build_state_cookie(signed, state.env_is_production);
     Ok((cookies.add(cookie), Redirect::to(&authorize_url)))
 }

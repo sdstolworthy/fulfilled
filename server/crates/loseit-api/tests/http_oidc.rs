@@ -637,6 +637,72 @@ async fn start_mobile_callback_overrides_next() {
     assert_eq!(payload.next, "fulfilled://oidc-callback");
 }
 
+// 6c2. mobile-callback flow appends `prompt=login` to the authorize URL.
+#[tokio::test]
+async fn start_mobile_callback_emits_prompt_login_on_authorize() {
+    let harness = build_harness(true).await;
+
+    let resp = harness
+        .app
+        .oneshot(
+            Request::builder()
+                .uri(
+                    "/api/v1/auth/oidc/authentik/start?\
+                     mobile_callback=fulfilled%3A%2F%2Foidc-callback",
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    let location = resp
+        .headers()
+        .get("location")
+        .expect("Location header on /start redirect")
+        .to_str()
+        .unwrap();
+    // Mobile flows force `prompt=login` so the IdP re-prompts rather
+    // than silently auto-completing on an existing session.
+    assert!(
+        location.contains("prompt=login"),
+        "mobile authorize URL must carry prompt=login, got: {}",
+        location,
+    );
+}
+
+// 6c3. web flow (no mobile_callback) MUST NOT include prompt=login —
+// single-sign-on stays seamless for the web client.
+#[tokio::test]
+async fn start_web_flow_omits_prompt_login() {
+    let harness = build_harness(true).await;
+
+    let resp = harness
+        .app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/auth/oidc/authentik/start")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::SEE_OTHER);
+    let location = resp
+        .headers()
+        .get("location")
+        .unwrap()
+        .to_str()
+        .unwrap();
+    assert!(
+        !location.contains("prompt=login"),
+        "web authorize URL must not carry prompt=login, got: {}",
+        location,
+    );
+}
+
 // 6d. mobile-callback with a non-allowlisted scheme → 400.
 #[tokio::test]
 async fn start_rejects_mobile_callback_with_wrong_scheme() {

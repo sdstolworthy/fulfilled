@@ -56,6 +56,18 @@ class _MobileNavigator implements OidcNavigator {
       final returned = await FlutterWebAuth2.authenticate(
         url: urlWithCallback,
         callbackUrlScheme: _kCallbackScheme,
+        // `preferEphemeral` forces ASWebAuthenticationSession on iOS
+        // to use a private cookie jar (no sharing with Safari).
+        // Without this, the system browser may inherit an Authentik
+        // session the user has open in Safari — Authentik then
+        // silently auto-completes the OAuth flow, and any glitch in
+        // the final `fulfilled://` hand-off presents as "Authentik
+        // page loads slowly, then refresh sends me to the Authentik
+        // dashboard" (because the browser's current URL is still
+        // Authentik's, and the OAuth code has been consumed).
+        // Android Chrome Custom Tabs ignore this flag — they always
+        // share cookies with Chrome.
+        options: const FlutterWebAuth2Options(preferEphemeral: true),
       );
       final uri = Uri.tryParse(returned);
       if (uri == null) {
