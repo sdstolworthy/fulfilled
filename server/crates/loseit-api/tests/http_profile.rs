@@ -64,7 +64,7 @@ fn build_test_app_alice() -> (axum::Router, Arc<InMemoryUserRepository>) {
     let authn: Arc<dyn Authenticator> =
         Arc::new(FakeAuthenticator::new(ALICE_TOKEN, alice_identity()));
     let users_dyn: Arc<dyn UserRepository> = users_concrete.clone();
-    let state = AppState::from_ports(users_dyn, weights, goals, foods, servings, logs, authn, None, None, false);
+    let state = AppState::from_ports(users_dyn, weights, goals, foods, servings, logs, authn, None, None, false, false);
     (router(state), users_concrete)
 }
 
@@ -86,7 +86,7 @@ fn build_test_app_two_users() -> (axum::Router, axum::Router, Arc<InMemoryUserRe
         let logs: Arc<dyn LogRepository> = Arc::new(InMemoryLogRepository::new());
         let authn: Arc<dyn Authenticator> = Arc::new(FakeAuthenticator::new(token, identity));
         let users_dyn: Arc<dyn UserRepository> = users_concrete.clone();
-        let state = AppState::from_ports(users_dyn, weights, goals, foods, servings, logs, authn, None, None, false);
+        let state = AppState::from_ports(users_dyn, weights, goals, foods, servings, logs, authn, None, None, false, false);
         router(state)
     };
 

@@ -81,6 +81,9 @@ pub struct AppState {
     pub oidc: Option<Arc<OidcRegistry>>,
     /// `true` when the local-creds login path is enabled.
     pub local_login_enabled: bool,
+    /// `true` when `LOSEIT_ENV_NAME=production`; used to set the `Secure`
+    /// attribute on cookies that must not be sent over plain HTTP.
+    pub env_is_production: bool,
 }
 
 impl AppState {
@@ -99,6 +102,7 @@ impl AppState {
         auth_service: Option<Arc<AuthService>>,
         oidc: Option<Arc<OidcRegistry>>,
         local_login_enabled: bool,
+        env_is_production: bool,
     ) -> Self {
         let user_service = Arc::new(UserService::new(users));
         let weight_service = Arc::new(WeightService::new(weights));
@@ -117,6 +121,7 @@ impl AppState {
             auth: auth_service,
             oidc,
             local_login_enabled,
+            env_is_production,
         }
     }
 }
@@ -188,6 +193,7 @@ pub async fn build_state(pool: PgPool, config: &AppConfig) -> Result<AppState> {
         }))
     };
 
+    let env_is_production = config.env_name == "production";
     Ok(AppState::from_ports(
         users,
         weights,
@@ -199,6 +205,7 @@ pub async fn build_state(pool: PgPool, config: &AppConfig) -> Result<AppState> {
         auth_service,
         oidc,
         local_login_enabled,
+        env_is_production,
     ))
 }
 
