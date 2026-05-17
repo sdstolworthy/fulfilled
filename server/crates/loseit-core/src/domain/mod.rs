@@ -1,3 +1,4 @@
+pub mod auth;
 pub mod day_summary;
 pub mod food;
 pub mod food_import_batch;
@@ -8,6 +9,7 @@ pub mod serving;
 pub mod user;
 pub mod weight;
 
+pub use auth::{LocalAuthCredential, LocalAuthToken, Username};
 pub use day_summary::{DaySummary, MealSubtotal};
 pub use food::{
     Food, FoodDraft, FoodPatch, FoodSearchHit, FoodSource, NutriscoreGrade, NutritionPer100g,

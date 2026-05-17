@@ -3,6 +3,7 @@
 //! implementations, tests can provide in-memory fakes.
 
 pub mod batch;
+pub mod local_auth;
 pub mod food;
 pub mod goal;
 pub mod log;
@@ -11,6 +12,7 @@ pub mod user;
 pub mod weight;
 
 pub use batch::BatchRepository;
+pub use local_auth::LocalAuthRepository;
 pub use food::{FoodRepository, OffFoodUpsert, OffServing, SystemServing, UpsertStats};
 pub use goal::GoalRepository;
 pub use log::LogRepository;
