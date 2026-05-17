@@ -126,6 +126,38 @@ While dev-bypass is on, anyone with `DEV_AUTH_TOKEN` is fully authenticated as t
 
 Local credentials and OIDC can coexist — the FE renders the password form alongside the per-provider buttons based on the `/auth/providers` response.
 
+## Ask 10 deploy — resetting the migration chain
+
+Ask 10 (branch `be-per-serving-nutrition`) flattens migrations `0001..0009` into a
+single new `0001_initial.sql`. Any existing database that has already applied some or
+all of the old chain will have rows in `_sqlx_migrations` whose checksums differ from
+the new file. The server will refuse to start until the tracking table is cleared.
+
+**Option A — brand-new DB (recommended; there is no data worth keeping):**
+
+```bash
+psql $DATABASE_URL -c "DROP DATABASE loseit; CREATE DATABASE loseit;"
+```
+
+Then deploy normally. `sqlx migrate run` on boot will apply `0001_initial.sql` from
+scratch.
+
+**Option B — preserve the DB, clear sqlx's tracking table only:**
+
+```bash
+psql $DATABASE_URL -c "DROP TABLE IF EXISTS _sqlx_migrations;"
+```
+
+On the next boot, the server's `sqlx migrate run` reapplies `0001_initial.sql` from
+scratch against the existing (now schema-mismatched) database. Only use this if you
+have already dropped and recreated all application tables manually, otherwise the
+migration will fail on `CREATE TABLE` conflicts.
+
+Option A is simpler and correct for the Coolify staging environment where all data is
+regeneratable.
+
+---
+
 ## Rolling back
 
 Coolify's UI keeps recent deployments. The migration story is forward-only — the application calls `sqlx::migrate!` on boot, which fails closed if a migration can't apply. If you need to roll back code that depended on a new column, you'll want to either:

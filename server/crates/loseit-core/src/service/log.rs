@@ -6,8 +6,9 @@ use rust_decimal::Decimal;
 use uuid::Uuid;
 
 use crate::domain::{
-    DaySummary, Food, FoodLogEntry, FoodSearchHit, LogDraft, LogPatch, Meal, MealSubtotal,
-    NutritionSnapshot, PersistedLogEntry, PersistedLogPatch, RecomputedSnapshot, ServingPreview,
+    DaySummary, FoodLogEntry, FoodSearchHit, LogDraft, LogPatch, Meal, MealSubtotal,
+    NutritionSnapshot, PersistedLogEntry, PersistedLogPatch, RecomputedSnapshot, Serving,
+    ServingPreview,
 };
 use crate::repo::{FoodRepository, GoalRepository, LogRepository, ServingRepository};
 use crate::service::page::{resolve_page_params, Paginated};
@@ -63,50 +64,31 @@ impl LogService {
         &self.goals
     }
 
-    /// Scale a food's per-100g nutrition to a concrete number of grams.
-    /// Sodium converts grams → mg in the process (snapshot column is mg).
-    /// Rounds to the SQL column precision (`NUMERIC(8,2)`) so what the
-    /// service computes matches what the database stores byte-for-byte —
-    /// otherwise round-trip comparisons in tests would fail.
-    pub(crate) fn compute_snapshot(food: &Food, grams_total: Decimal) -> NutritionSnapshot {
-        let scale = grams_total / Decimal::from(100);
-        // `to_numeric_8_2` is the rounding+rescale helper used everywhere
-        // the schema is `NUMERIC(8,2)` — it always returns scale=2, so
-        // tests' string assertions ("150.00") match production's Postgres
-        // output byte-for-byte. `round_dp(2)` alone won't pad — a Decimal
-        // of 150 stays "150" — so we explicitly rescale afterwards.
-        let scale_round = |v: Decimal| to_numeric_8_2(v * scale);
-        let n = &food.nutrition;
+    /// Compute a nutrition snapshot from a serving and a quantity multiplier.
+    /// Snapshot = quantity * serving.<nutrient>. Rounds to NUMERIC(8,2).
+    /// T08 replaces the per-100g path with this per-serving path.
+    pub(crate) fn compute_snapshot(serving: &Serving, quantity: Decimal) -> NutritionSnapshot {
+        let scale_round = |v: Decimal| to_numeric_8_2(v * quantity);
         NutritionSnapshot {
-            calories_kcal: n
-                .energy_kcal
-                .map(scale_round)
-                .unwrap_or_else(|| to_numeric_8_2(Decimal::ZERO)),
-            protein_g: n.protein_g.map(scale_round),
-            carbs_g: n.carbs_g.map(scale_round),
-            fat_g: n.fat_g.map(scale_round),
-            fiber_g: n.fiber_g.map(scale_round),
-            sugar_g: n.sugar_g.map(scale_round),
-            // sodium_g → sodium_mg: scale by grams_total/100, then *1000 for
-            // g→mg. Composed into a single expression so we round once at the
-            // end.
-            sodium_mg: n
-                .sodium_g
-                .map(|grams| to_numeric_8_2(grams * scale * Decimal::from(1000))),
-            saturated_fat_g: n.saturated_fat_g.map(scale_round),
+            calories_kcal: to_numeric_8_2(serving.kcal * quantity),
+            protein_g: serving.protein_g.map(scale_round),
+            carbs_g: serving.carbs_g.map(scale_round),
+            fat_g: serving.fat_g.map(scale_round),
+            fiber_g: serving.fiber_g.map(scale_round),
+            sugar_g: serving.sugar_g.map(scale_round),
+            sodium_mg: serving.sodium_mg.map(scale_round),
+            saturated_fat_g: serving.saturated_fat_g.map(scale_round),
         }
     }
 
     #[tracing::instrument(skip(self, draft), fields(food_id = %draft.food_id, serving_id = %draft.serving_id))]
     pub async fn create(&self, user: Uuid, draft: LogDraft) -> CoreResult<FoodLogEntry> {
-        if draft.quantity <= Decimal::ZERO {
-            return Err(CoreError::Validation("quantity must be positive".into()));
-        }
         let food = self
             .foods
             .find_by_id(user, draft.food_id)
             .await?
             .ok_or(CoreError::NotFound)?;
+        let _ = food; // food visibility confirmed; T08 uses it for family check
         let serving = self
             .servings
             .find_by_id(draft.serving_id)
@@ -117,24 +99,26 @@ impl LogService {
                 "serving does not belong to that food".into(),
             ));
         }
-        // `grams_total` lives in `NUMERIC(10,2)` — round + pad at the service
-        // so tests and production agree byte-for-byte on the stored value.
-        let grams_total = to_numeric_8_2(serving.grams * draft.quantity);
-        // Reject overflow at the service boundary so we surface a 400 rather
-        // than a Postgres numeric_overflow when grams_total >= 10^8.
-        if grams_total >= Decimal::new(100_000_000, 2) {
+        // T08 derives quantity from entered_amount + entered_unit + serving.
+        // Placeholder: quantity = entered_amount / serving.amount (same-unit assumed).
+        let quantity = to_numeric_8_3(draft.entered_amount / serving.amount);
+        if quantity <= Decimal::ZERO {
+            return Err(CoreError::Validation("quantity must be positive".into()));
+        }
+        if quantity >= Decimal::from(10_000) {
             return Err(CoreError::Validation(
-                "grams_total exceeds maximum allowed value".into(),
+                "quantity exceeds maximum allowed value".into(),
             ));
         }
-        let snapshot = Self::compute_snapshot(&food, grams_total);
+        let snapshot = Self::compute_snapshot(&serving, quantity);
         let persisted = PersistedLogEntry {
             food_id: draft.food_id,
             serving_id: Some(serving.id),
             consumed_on: draft.consumed_on,
             meal: draft.meal,
-            quantity: draft.quantity,
-            grams_total,
+            quantity,
+            entered_amount: draft.entered_amount,
+            entered_unit: draft.entered_unit,
             snapshot,
             note: draft.note,
         };
@@ -150,10 +134,7 @@ impl LogService {
         consumed_on: NaiveDate,
         note: Option<String>,
     ) -> CoreResult<FoodLogEntry> {
-        // Validation: must be strictly positive, < 9_999.
-        // The upper bound is set below 10_000 so the explicit calories error
-        // fires before the grams_total guard (grams_total = calories * 100,
-        // so grams_total >= 1_000_000 at calories >= 10_000).
+        use crate::domain::Unit;
         if calories_kcal <= Decimal::ZERO {
             return Err(CoreError::Validation(
                 "calories_kcal must be positive".into(),
@@ -165,27 +146,21 @@ impl LogService {
             ));
         }
 
-        // Provision sentinel (idempotent) → reuse standard create path.
-        let (food, serving) = self.foods.find_or_create_quick_add(user).await?;
+        let (_food, serving) = self.foods.find_or_create_quick_add(user).await?;
 
-        // grams_total = calories_kcal * 100  (sentinel has 1 kcal / 100 g,
-        // serving.grams = 100, so quantity = calories_kcal). Pad to NUMERIC(8,2).
+        // Sentinel serving has {amount: 1, unit: Serving, kcal: 1.0}.
+        // quantity = calories_kcal (each serving unit = 1 kcal).
         let quantity = calories_kcal;
-        let grams_total = to_numeric_8_2(serving.grams * quantity);
-        if grams_total >= Decimal::new(100_000_000, 2) {
-            return Err(CoreError::Validation(
-                "grams_total exceeds maximum allowed value".into(),
-            ));
-        }
-        let snapshot = Self::compute_snapshot(&food, grams_total);
+        let snapshot = Self::compute_snapshot(&serving, quantity);
 
         let persisted = PersistedLogEntry {
-            food_id: food.id,
+            food_id: serving.food_id,
             serving_id: Some(serving.id),
             consumed_on,
             meal,
             quantity,
-            grams_total,
+            entered_amount: calories_kcal,
+            entered_unit: Unit::Serving,
             snapshot,
             note,
         };
@@ -200,29 +175,24 @@ impl LogService {
             .await?
             .ok_or(CoreError::NotFound)?;
 
-        // Validate the patched quantity if present; the unpatched (existing)
-        // quantity was validated at create time and is trusted.
-        if let Some(q) = patch.quantity {
-            if q <= Decimal::ZERO {
-                return Err(CoreError::Validation("quantity must be positive".into()));
-            }
-        }
-
-        // Did the snapshot inputs change? Only recompute if so.
         let serving_changed = patch
             .serving_id
             .is_some_and(|new| Some(new) != existing.serving_id);
-        let quantity_changed = patch.quantity.is_some_and(|new| new != existing.quantity);
+        let amount_changed = patch
+            .entered_amount
+            .is_some_and(|new| new != existing.entered_amount);
+        let unit_changed = patch
+            .entered_unit
+            .is_some_and(|new| new != existing.entered_unit);
 
-        let recompute = if serving_changed || quantity_changed {
-            // Resolve the effective serving_id. If neither the patch nor the
-            // existing entry has one, we can't recompute the snapshot.
+        let recompute = if serving_changed || amount_changed || unit_changed {
             let serving_id = patch.serving_id.or(existing.serving_id).ok_or_else(|| {
                 CoreError::Validation(
                     "cannot edit log entry whose serving was deleted; create a new entry".into(),
                 )
             })?;
-            let quantity = patch.quantity.unwrap_or(existing.quantity);
+            let entered_amount = patch.entered_amount.unwrap_or(existing.entered_amount);
+            let entered_unit = patch.entered_unit.unwrap_or(existing.entered_unit);
             let serving = self
                 .servings
                 .find_by_id(serving_id)
@@ -233,23 +203,21 @@ impl LogService {
                     "serving does not belong to that food".into(),
                 ));
             }
-            // The food never changes on update (food_id is immutable), so
-            // re-fetch by the entry's food id, not the serving's food id.
-            let food = self
-                .foods
-                .find_by_id(user, existing.food_id)
-                .await?
-                .ok_or(CoreError::NotFound)?;
-            let grams_total = to_numeric_8_2(serving.grams * quantity);
-            if grams_total >= Decimal::new(100_000_000, 2) {
+            // T08 proper cross-family validation + conversion.
+            let quantity = to_numeric_8_3(entered_amount / serving.amount);
+            if quantity <= Decimal::ZERO {
+                return Err(CoreError::Validation("quantity must be positive".into()));
+            }
+            if quantity >= Decimal::from(10_000) {
                 return Err(CoreError::Validation(
-                    "grams_total exceeds maximum allowed value".into(),
+                    "quantity exceeds maximum allowed value".into(),
                 ));
             }
-            let snapshot = Self::compute_snapshot(&food, grams_total);
+            let snapshot = Self::compute_snapshot(&serving, quantity);
             Some(RecomputedSnapshot {
                 quantity,
-                grams_total,
+                entered_amount,
+                entered_unit,
                 snapshot,
             })
         } else {
@@ -272,25 +240,7 @@ impl LogService {
     }
 
     /// Copy every entry on `from_date` (optionally filtered by `meal`) onto
-    /// `to_date`, **re-snapshotting** each from the current food + serving.
-    ///
-    /// The re-snapshot is the entire reason this is a server endpoint and
-    /// not a client loop: if the user edited a custom food between the two
-    /// dates, the destination entries reflect the *new* nutrition, not the
-    /// source's frozen snapshot.
-    ///
-    /// Entries whose food is no longer visible to `user`, whose serving was
-    /// deleted, or whose computed `grams_total` would overflow the
-    /// `NUMERIC(8,2)` column are silently skipped — the response contains
-    /// only the entries that were successfully inserted. Skips are logged at
-    /// `tracing::info` so production has a paper trail; the wire envelope
-    /// (`{ copied: [...] }`) is future-proofed so a `skipped` field can be
-    /// added later without breaking existing clients.
-    ///
-    /// Both `from_date == to_date` (duplicate onto the same day) and
-    /// `from_date > to_date` (backward copy) are legitimate. Pre-existing
-    /// entries on `to_date` are *not* replaced — the copy coexists with
-    /// them.
+    /// `to_date`, re-snapshotting each from the current serving.
     #[tracing::instrument(skip(self))]
     pub async fn copy_day(
         &self,
@@ -303,9 +253,7 @@ impl LogService {
 
         let mut persisted: Vec<PersistedLogEntry> = Vec::with_capacity(source.len());
         for e in source.iter().filter(|e| meal.map_or(true, |m| e.meal == m)) {
-            // Re-resolve food. find_by_id returns None for "deleted or
-            // cross-tenant" — both indistinguishable here, both skip.
-            let Some(food) = self.foods.find_by_id(user, e.food_id).await? else {
+            let Some(_food) = self.foods.find_by_id(user, e.food_id).await? else {
                 tracing::info!(
                     entry_id = %e.id,
                     food_id = %e.food_id,
@@ -313,11 +261,6 @@ impl LogService {
                 );
                 continue;
             };
-
-            // Without a serving id there's no way to recompute grams_total,
-            // so we can't construct a fresh snapshot. v1 always populates
-            // serving_id, but the column is nullable for forward-compat —
-            // skip rather than guess.
             let Some(serving_id) = e.serving_id else {
                 tracing::info!(
                     entry_id = %e.id,
@@ -333,36 +276,33 @@ impl LogService {
                 );
                 continue;
             };
-            if serving.food_id != food.id {
-                // Defensive: a serving reparented to a different food would
-                // produce a wrong snapshot. Skip rather than 500.
+            if serving.food_id != e.food_id {
                 tracing::info!(
                     entry_id = %e.id,
                     serving_food = %serving.food_id,
-                    entry_food = %food.id,
+                    entry_food = %e.food_id,
                     "copy_day: skipping entry — serving.food_id mismatch",
                 );
                 continue;
             }
 
-            let grams_total = to_numeric_8_2(serving.grams * e.quantity);
-            // Same overflow guard as `create` — silently skip rather than
-            // fail the whole batch.
-            if grams_total >= Decimal::new(100_000_000, 2) {
+            let quantity = e.quantity;
+            if quantity >= Decimal::from(10_000) {
                 tracing::info!(
                     entry_id = %e.id,
-                    "copy_day: skipping entry — grams_total overflow",
+                    "copy_day: skipping entry — quantity overflow",
                 );
                 continue;
             }
-            let snapshot = Self::compute_snapshot(&food, grams_total);
+            let snapshot = Self::compute_snapshot(&serving, quantity);
             persisted.push(PersistedLogEntry {
-                food_id: food.id,
+                food_id: e.food_id,
                 serving_id: Some(serving.id),
                 consumed_on: to_date,
                 meal: e.meal,
-                quantity: e.quantity,
-                grams_total,
+                quantity,
+                entered_amount: e.entered_amount,
+                entered_unit: e.entered_unit,
                 snapshot,
                 note: e.note.clone(),
             });
@@ -381,12 +321,6 @@ impl LogService {
         self.logs.list_in_range(user, from, to).await
     }
 
-    /// Paginated log entries for `user`, optionally filtered by date range.
-    ///
-    /// Returns a [`Paginated`] envelope with `total` set to the full match
-    /// count so callers can page through results. Validates that `from <= to`
-    /// when both are supplied, and delegates limit/offset defaulting to
-    /// [`resolve_page_params`].
     #[tracing::instrument(skip(self))]
     pub async fn list(
         &self,
@@ -420,8 +354,6 @@ impl LogService {
         let entries = self.logs.list_for_day(user, on).await?;
         let active_goal = self.goals.find_active_on(user, on).await?;
 
-        // Build a per-meal accumulator for the four meals, then turn into a
-        // Vec in canonical display order so the wire shape is stable.
         let mut by_meal_map: HashMap<Meal, MealSubtotal> = HashMap::new();
         for meal in Meal::all() {
             by_meal_map.insert(
@@ -437,10 +369,6 @@ impl LogService {
             );
         }
 
-        // Total accumulators. The required `calories_kcal` always sums to a
-        // number; optional macros are "Some(sum) if at least one entry had a
-        // value, else None" — `seen_*` tracks the "was anything present?" bit
-        // so we can distinguish "no data" from "explicit zero."
         let mut total_calories = Decimal::ZERO;
         let mut total_protein = (Decimal::ZERO, false);
         let mut total_carbs = (Decimal::ZERO, false);
@@ -481,13 +409,6 @@ impl LogService {
             .map(|m| by_meal_map.remove(&m).expect("seeded above"))
             .collect();
 
-        // The per-entry snapshots are already `NUMERIC(8,2)`, but `Decimal`
-        // addition only preserves the *max* operand scale — `0 (scale=0) +
-        // 250.00 (scale=2)` collapses trailing zeros on some operand orders.
-        // Rescaling here keeps the wire shape stable. For the empty-day case
-        // (no entries, no `.then_some(...)` triggered) the optionals stay
-        // `None`; `calories_kcal` keeps `Decimal::ZERO`'s default rendering
-        // ("0") so the empty-day response matches existing UX expectations.
         let total = if !entries.is_empty() {
             NutritionSnapshot {
                 calories_kcal: to_numeric_8_2(total_calories),
@@ -534,17 +455,12 @@ impl LogService {
             .logs
             .frequent_food_ids(user, FREQUENT_WINDOW_DAYS, limit)
             .await?;
-        // v1 is lossy: the repo returns `(food_id, count)` but the wire shape
-        // for `FoodSearchHit` has nowhere to express the count. The ordering
-        // is preserved (repo returns ranked by count desc), so the client
-        // still sees "most frequent first" — only the count itself is dropped.
         let ids: Vec<Uuid> = pairs.into_iter().map(|(id, _count)| id).collect();
         self.hydrate_hits(user, ids).await
     }
 
-    /// Walk a ranked list of food ids and hydrate each into a
-    /// `FoodSearchHit`. Skips foods that are no longer visible (deleted or
-    /// cross-tenant). Order is preserved.
+    /// Hydrate a ranked list of food ids into `FoodSearchHit`. Skips foods no
+    /// longer visible. Order is preserved.
     async fn hydrate_hits(&self, user: Uuid, ids: Vec<Uuid>) -> CoreResult<Vec<FoodSearchHit>> {
         let mut out = Vec::with_capacity(ids.len());
         for id in ids {
@@ -558,18 +474,10 @@ impl LogService {
                 .map(|s| ServingPreview {
                     id: s.id,
                     label: s.label.clone(),
-                    grams: s.grams,
+                    amount: s.amount,
+                    unit: s.unit,
+                    kcal: s.kcal,
                 });
-            // calories_per_serving = energy_kcal * (grams/100), only if both
-            // exist. Matches the search-hit semantics in `repo::food` for
-            // production parity.
-            let calories_per_serving = match (
-                food.nutrition.energy_kcal,
-                default_serving.as_ref().map(|s| s.grams),
-            ) {
-                (Some(kcal), Some(grams)) => Some((kcal * grams / Decimal::from(100)).round()),
-                _ => None,
-            };
             out.push(FoodSearchHit {
                 id: food.id,
                 source: food.source,
@@ -577,19 +485,23 @@ impl LogService {
                 brand: food.brands,
                 barcode: food.barcode,
                 default_serving,
-                calories_per_serving,
             });
         }
         Ok(out)
     }
 }
 
-/// Round + pad a Decimal to exactly two fractional digits. This matches the
-/// `NUMERIC(8,2)` columns the snapshot lands in, so the in-memory value
-/// always serializes the same way Postgres would render it.
+/// Round + pad a Decimal to exactly two fractional digits (NUMERIC(8,2)).
 fn to_numeric_8_2(value: Decimal) -> Decimal {
     let mut v = value.round_dp(2);
     v.rescale(2);
+    v
+}
+
+/// Round + pad a Decimal to exactly three fractional digits (NUMERIC(8,3)).
+fn to_numeric_8_3(value: Decimal) -> Decimal {
+    let mut v = value.round_dp(3);
+    v.rescale(3);
     v
 }
 
@@ -608,98 +520,7 @@ fn accumulate(acc: &mut (Decimal, bool), value: Option<Decimal>) {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::domain::{FoodKind, FoodSource, NutritionPer100g};
-    use chrono::Utc;
-
-    fn food_with_nutrition(n: NutritionPer100g) -> Food {
-        let now = Utc::now();
-        Food {
-            id: Uuid::new_v4(),
-            source: FoodSource::Off,
-            kind: FoodKind::Normal,
-            owner_user_id: None,
-            barcode: None,
-            fdc_id: None,
-            data_type: None,
-            name: "Test".into(),
-            brands: None,
-            categories_tags: vec![],
-            nutrition: n,
-            nutriscore_grade: None,
-            quality_score: 0,
-            extra_nutrients: None,
-            last_import_batch_id: None,
-            created_at: now,
-            updated_at: now,
-        }
-    }
-
-    fn dec(n: i64, scale: u32) -> Decimal {
-        Decimal::new(n, scale)
-    }
-
-    #[test]
-    fn test_compute_snapshot_scales_per_100g_to_grams_total() {
-        // 200 g of a food with 50 kcal / 5 g protein per 100 g should
-        // double the per-100g values.
-        let food = food_with_nutrition(NutritionPer100g {
-            energy_kcal: Some(dec(50, 0)),
-            protein_g: Some(dec(5, 0)),
-            carbs_g: Some(dec(10, 0)),
-            fat_g: Some(dec(2, 0)),
-            ..Default::default()
-        });
-        let snap = LogService::compute_snapshot(&food, dec(200, 0));
-        assert_eq!(snap.calories_kcal, dec(10000, 2)); // 100.00
-        assert_eq!(snap.protein_g, Some(dec(1000, 2))); // 10.00
-        assert_eq!(snap.carbs_g, Some(dec(2000, 2))); // 20.00
-        assert_eq!(snap.fat_g, Some(dec(400, 2))); // 4.00
-    }
-
-    #[test]
-    fn test_compute_snapshot_converts_sodium_from_grams_to_milligrams() {
-        // 1 g sodium per 100 g, scaled to 200 g → 2 g of sodium → 2000 mg.
-        let food = food_with_nutrition(NutritionPer100g {
-            energy_kcal: Some(dec(0, 0)),
-            sodium_g: Some(dec(1, 0)),
-            ..Default::default()
-        });
-        let snap = LogService::compute_snapshot(&food, dec(200, 0));
-        assert_eq!(snap.sodium_mg, Some(dec(200000, 2))); // 2000.00 mg
-    }
-
-    #[test]
-    fn test_compute_snapshot_passes_through_nullable_nutrients() {
-        // Only energy_kcal set; all macros should remain None.
-        let food = food_with_nutrition(NutritionPer100g {
-            energy_kcal: Some(dec(100, 0)),
-            ..Default::default()
-        });
-        let snap = LogService::compute_snapshot(&food, dec(150, 0));
-        assert_eq!(snap.calories_kcal, dec(15000, 2)); // 150.00
-        assert!(snap.protein_g.is_none());
-        assert!(snap.carbs_g.is_none());
-        assert!(snap.fat_g.is_none());
-        assert!(snap.fiber_g.is_none());
-        assert!(snap.sugar_g.is_none());
-        assert!(snap.sodium_mg.is_none());
-        assert!(snap.saturated_fat_g.is_none());
-    }
-
-    #[test]
-    fn test_compute_snapshot_zero_calories_when_food_has_no_energy_kcal() {
-        // calories_kcal is the snapshot's only required field. A food with
-        // no energy_kcal must produce `Decimal::ZERO`, not panic.
-        let food = food_with_nutrition(NutritionPer100g {
-            energy_kcal: None,
-            protein_g: Some(dec(5, 0)),
-            ..Default::default()
-        });
-        let snap = LogService::compute_snapshot(&food, dec(100, 0));
-        assert_eq!(snap.calories_kcal, Decimal::ZERO);
-        assert_eq!(snap.protein_g, Some(dec(500, 2))); // 5.00
-    }
-}
+// Note: tests for the old per-100g compute_snapshot path are removed here.
+// T08 will add tests for the new per-serving compute_snapshot path.
+// The _food parameter to create() is kept for the visibility check;
+// T08 adds cross-family unit validation using food.id.
