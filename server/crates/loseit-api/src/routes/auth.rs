@@ -24,6 +24,17 @@ struct LoginResponse {
     expires_at: DateTime<Utc>,
 }
 
+#[derive(Deserialize)]
+struct ExchangeBody {
+    code: String,
+}
+
+#[derive(Serialize)]
+struct ExchangeResponse {
+    token: String,
+    expires_at: DateTime<Utc>,
+}
+
 #[derive(Serialize)]
 struct ProvidersResponse {
     local: LocalProviderDescriptor,
@@ -49,6 +60,7 @@ pub fn router() -> Router<AppState> {
         .route("/auth/login", post(login))
         .route("/auth/oidc/:id/start", get(oidc_start))
         .route("/auth/oidc/:id/callback", get(oidc_callback))
+        .route("/auth/oidc/exchange", post(oidc_exchange))
 }
 
 async fn login(
@@ -361,6 +373,26 @@ fn next_with_error(next: &str, err: &str) -> String {
     let mut url = url::Url::parse(next).expect("next validated at start");
     url.query_pairs_mut().append_pair("oidc_error", err);
     url.to_string()
+}
+
+// ── OIDC exchange ─────────────────────────────────────────────────────────────
+
+async fn oidc_exchange(
+    State(state): State<AppState>,
+    Json(body): Json<ExchangeBody>,
+) -> Result<Json<ExchangeResponse>, ApiError> {
+    let registry = state.oidc.as_ref().ok_or_else(|| ApiError::not_found())?;
+    let code_hash = sha256_hex(&body.code);
+    let claim = registry
+        .handoffs
+        .claim(&code_hash)
+        .await
+        .map_err(|e| ApiError::internal(format!("handoff claim: {e}")))?
+        .ok_or_else(|| ApiError::unauthorized("invalid or expired handoff code"))?;
+    Ok(Json(ExchangeResponse {
+        token: claim.raw_token,
+        expires_at: claim.token_expires_at,
+    }))
 }
 
 fn sha256_hex(input: &str) -> String {
