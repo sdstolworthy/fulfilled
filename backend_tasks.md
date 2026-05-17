@@ -125,7 +125,15 @@ without checking with FE):
 - **Response 401**: standard `Error` body for bad credentials. FE
   renders this inline under the password field via
   `BadCredentialsError` (already wired in `auth_token.dart:158-167`).
-- **Migration**: add a `users` table:
+- **Architect refinements (2026-05-17 follow-up review)** — three
+  concrete shapes the original ask left open:
+
+  **(a) Separate `users_local_auth` table.** Keep the OIDC invariant
+  on `users` clean — local-creds is a second authentication method,
+  not a property of the person. Mixing nullable `username` /
+  `password_hash` columns into `users` muddies the existing
+  `UNIQUE(issuer, external_id)` invariant and creates dead columns
+  for OIDC-only users:
   ```sql
   CREATE TABLE users_local_auth (
     user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -135,23 +143,52 @@ without checking with FE):
     PRIMARY KEY (user_id)
   );
   ```
-  (Or a single combined `users` table — your design call. The key
-  invariant: existing `users.id` rows survive; the dev-bypass user
-  picks up a username and a known-test password via the same
-  migration.)
+  Newly-created local accounts get `users.issuer = 'local'` +
+  `users.external_id = <username>` (so the existing
+  `UNIQUE(issuer, external_id)` invariant on `users` stays
+  meaningful). The seeded dev row preserves
+  `users.issuer = 'dev'` so existing dev-bypass middleware identity
+  remains stable.
+
+  **(b) Opaque token table, not JWT.** Gives revocation for free
+  (DELETE row on logout / breach), no key-rotation drift against the
+  existing JWKS path, and no refresh-token rotation story to design
+  yet (architect §10.7 defers refresh to v1.1+):
+  ```sql
+  CREATE TABLE auth_tokens (
+    token_hash  TEXT PRIMARY KEY,         -- sha256(token), hex-encoded
+    user_id     UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at  TIMESTAMPTZ                -- optional; null = no expiry
+  );
+  ```
+  Generate the token as 32 random bytes base64url-encoded (entropy
+  source for the token itself; no JWT claim parsing). Hash with
+  sha256 at rest. Auth middleware's local-token path becomes a
+  single `SELECT user_id FROM auth_tokens WHERE token_hash =
+  sha256_hex($bearer)` (parallel with JWKS / dev-bypass branches).
+
+  **(c) Idempotent seed.** Guard with `ON CONFLICT DO NOTHING` so
+  re-running migrations stays safe under all conditions.
+
 - **Password hashing**: argon2id, default parameters from `argon2`
-  crate (`Argon2::default()` = `m=19456, t=2, p=1`). Constant-time
-  verify via the crate.
-- **Seed**: insert one row for the dev user:
+  crate (`Argon2::default()` = `m=19456, t=2, p=1`, OWASP 2023
+  minimum — architect-approved). Constant-time verify via the crate.
+- **Seed (idempotent)**: one `users_local_auth` row for the dev
+  user, `ON CONFLICT DO NOTHING`:
   - `username`: `dev`
   - `password`: `dev`
   - `password_hash`: argon2id(`'dev'`)
-  - `user_id`: the same UUID the dev-bypass identity already binds
-    to in the migration that established it.
+  - `user_id`: the same UUID the dev-bypass identity binds to
+    (`users.issuer='dev'`, `users.external_id='dev-user'`).
+  Production safety comes from `DEV_AUTH_BYPASS=false` shipping as
+  the prod default + the existing `config.rs` refusal to start with
+  `DEV_AUTH_BYPASS=true` under `RUST_ENV=production`. The
+  `dev`/`dev` seed is local-dev ergonomics only.
 - **Bypass flag**: `DEV_AUTH_BYPASS` env var defaults to `false`
   in `compose.coolify.yaml`. Existing `dev-token` keeps working
   *only* when `DEV_AUTH_BYPASS=true` is explicitly set (local dev /
-  CI). Production deploy flips it off.
+  CI smoke). Production deploy flips it off.
 
 **Acceptance** (FE will verify against `https://api.coolify.stolworthy.co`):
 - `curl -X POST -H 'Content-Type: application/json'
@@ -309,6 +346,24 @@ Touchpoints (each tracked as a separate commit on FE side):
   `/foods/recent`, `/foods/frequent`, `/foods/barcode/{barcode}`,
   `/foods/{id}`, `POST /foods`, plus `/foods/{id}/servings` +
   `/servings/{id}[/default]`.
+
+**Watch-outs (backend architect, 2026-05-17 — flagged here so the FE
+agents wiring the repos see them):**
+
+1. **Pagination envelope is `{results, total, limit, offset}`** —
+   `total` is the full-population count, not the page size. "Load
+   more" logic must advance `offset += results.length`, not
+   `offset += limit`, because the server clamps `limit` above 500.
+2. **`POST /log/copy` wraps its array as `{copied: [...]}`** — a
+   different envelope shape from `GET /log`'s `{results, total, ...}`.
+   Easy to miss in the decoder.
+3. **No idempotency keys on writes (yet).** POSTs to `/log`,
+   `/log/quick_add`, `/weights`, `/goals` will double-write on
+   retry. FE should debounce client-side; an `Idempotency-Key`
+   header is on the v1.1 backlog.
+4. **`POST /log/quick_add` auto-provisions** a sentinel "quick-add"
+   food on first use per user. First call may be measurably slower
+   than subsequent calls — not a bug.
 
 ---
 
