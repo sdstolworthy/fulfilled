@@ -460,7 +460,7 @@ impl LogRepository for PgLogRepository {
                 x.note \
              FROM UNNEST(\
                 $2::uuid[], \
-                $3::uuid[],  -- nullable: Vec<Option<Uuid>>\
+                $3::uuid[], \
                 $4::date[], \
                 $5::text[], \
                 $6::numeric[], \
@@ -509,5 +509,61 @@ impl LogRepository for PgLogRepository {
         tx.commit().await.map_err(map_sqlx)?;
 
         Ok(rows.into_iter().map(Into::into).collect())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn create_many_sql_has_no_inline_comments() {
+        // The create_many SQL is built with Rust line-continuation (\).
+        // If an inline SQL comment (--) exists, Postgres will treat it as
+        // a line comment and consume the rest of the string as a comment,
+        // causing "syntax error at end of input". This test catches that
+        // regression by asserting the final SQL has no -- substring.
+        //
+        // We reconstruct the SQL the same way the impl does, filling in
+        // SELECT_COLS where needed.
+        let sql = format!(
+            "INSERT INTO food_log_entries (\
+                user_id, food_id, serving_id, consumed_on, meal, \
+                quantity, grams_total, \
+                calories_kcal, protein_g, carbs_g, fat_g, fiber_g, sugar_g, sodium_mg, saturated_fat_g, \
+                note\
+             ) \
+             SELECT \
+                $1, x.food_id, x.serving_id, x.consumed_on, x.meal, \
+                x.quantity, x.grams_total, \
+                x.calories_kcal, x.protein_g, x.carbs_g, x.fat_g, x.fiber_g, x.sugar_g, x.sodium_mg, x.saturated_fat_g, \
+                x.note \
+             FROM UNNEST(\
+                $2::uuid[], \
+                $3::uuid[], \
+                $4::date[], \
+                $5::text[], \
+                $6::numeric[], \
+                $7::numeric[], \
+                $8::numeric[], \
+                $9::numeric[], \
+                $10::numeric[], \
+                $11::numeric[], \
+                $12::numeric[], \
+                $13::numeric[], \
+                $14::numeric[], \
+                $15::numeric[], \
+                $16::text[] \
+             ) WITH ORDINALITY \
+               AS x(\
+                food_id, serving_id, consumed_on, meal, \
+                quantity, grams_total, \
+                calories_kcal, protein_g, carbs_g, fat_g, fiber_g, sugar_g, sodium_mg, saturated_fat_g, \
+                note, ord\
+             ) \
+             ORDER BY x.ord \
+             RETURNING id, user_id, food_id, serving_id, consumed_on, meal, quantity, grams_total, \
+             calories_kcal, protein_g, carbs_g, fat_g, fiber_g, sugar_g, sodium_mg, saturated_fat_g, \
+             note, created_at, updated_at"
+        );
+        assert!(!sql.contains("--"), "SQL must not contain inline comments (--) to avoid comment-swallowing due to Rust line-continuation");
     }
 }
