@@ -33,6 +33,9 @@ pub enum AuthConfig {
         jwks_url: String,
         cache_ttl_secs: u64,
     },
+    /// Local credentials backed by `users_local_auth` + `local_auth_tokens`.
+    /// Issued at `POST /api/v1/auth/login`, verified by `LocalAuthenticator`.
+    Local,
 }
 
 impl AppConfig {
@@ -75,22 +78,32 @@ fn load_auth(env_name: &str) -> Result<AuthConfig> {
         });
     }
 
-    let issuer =
-        env::var("OIDC_ISSUER").context("OIDC_ISSUER is required when DEV_AUTH_BYPASS is off")?;
-    let audience = env::var("OIDC_AUDIENCE")
-        .context("OIDC_AUDIENCE is required when DEV_AUTH_BYPASS is off")?;
-    let jwks_url = env::var("OIDC_JWKS_URL")
-        .context("OIDC_JWKS_URL is required when DEV_AUTH_BYPASS is off")?;
-    let cache_ttl_secs = env::var("OIDC_JWKS_CACHE_TTL_SECS")
-        .unwrap_or_else(|_| "600".to_string())
-        .parse::<u64>()
-        .context("OIDC_JWKS_CACHE_TTL_SECS must be a non-negative integer (seconds)")?;
-    Ok(AuthConfig::Jwks {
-        issuer,
-        audience,
-        jwks_url,
-        cache_ttl_secs,
-    })
+    let backend = env::var("LOSEIT_AUTH_BACKEND")
+        .unwrap_or_else(|_| "local".to_string());
+    match backend.as_str() {
+        "local" => Ok(AuthConfig::Local),
+        "jwks" => {
+            let issuer = env::var("OIDC_ISSUER")
+                .context("OIDC_ISSUER is required when LOSEIT_AUTH_BACKEND=jwks")?;
+            let audience = env::var("OIDC_AUDIENCE")
+                .context("OIDC_AUDIENCE is required when LOSEIT_AUTH_BACKEND=jwks")?;
+            let jwks_url = env::var("OIDC_JWKS_URL")
+                .context("OIDC_JWKS_URL is required when LOSEIT_AUTH_BACKEND=jwks")?;
+            let cache_ttl_secs = env::var("OIDC_JWKS_CACHE_TTL_SECS")
+                .unwrap_or_else(|_| "600".to_string())
+                .parse::<u64>()
+                .context("OIDC_JWKS_CACHE_TTL_SECS must be a non-negative integer (seconds)")?;
+            Ok(AuthConfig::Jwks {
+                issuer,
+                audience,
+                jwks_url,
+                cache_ttl_secs,
+            })
+        }
+        other => Err(anyhow!(
+            "LOSEIT_AUTH_BACKEND must be one of local|jwks (got {other})"
+        )),
+    }
 }
 
 fn env_bool(key: &str, default: bool) -> bool {
