@@ -14,7 +14,7 @@ pub mod weight;
 
 pub use batch::BatchRepository;
 pub use local_auth::LocalAuthRepository;
-pub use food::{FoodRepository, OffFoodUpsert, OffServing, SystemServing, UpsertStats};
+pub use food::{FoodDraftWithServings, FoodRepository, UpsertStats};
 pub use goal::GoalRepository;
 pub use log::LogRepository;
 pub use oidc_handoff::{HandoffClaim, OidcHandoffRepository};

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use async_trait::async_trait;
 use uuid::Uuid;
 
-use crate::domain::{Food, FoodDraft, FoodPatch, FoodSearchHit, Serving};
+use crate::domain::{Food, FoodDraft, FoodPatch, FoodSearchHit, Serving, ServingDraft};
 use crate::CoreResult;
 
 /// Sentinel name used to identify the internal "Quick Add" food that is
@@ -11,10 +11,10 @@ use crate::CoreResult;
 /// user-facing food listings.
 pub const QUICK_ADD_SENTINEL_NAME: &str = "__quick_add__";
 
-/// Per-batch upsert counters returned by `upsert_off_batch`. Inserted vs.
-/// updated are distinguished by the repo via the `(xmax = 0)` Postgres
-/// trick or via `RETURNING (xmax = 0)` — the trait just receives the
-/// counts.
+/// Per-batch upsert counters. Returned by `IngestService::run` and consumed
+/// by `BatchRepository::finish`. No longer returned by the food repo itself
+/// (which returns `()` on upsert). Kept here because `BatchRepository` imports
+/// it from this module.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct UpsertStats {
     pub inserted: u64,
@@ -22,29 +22,15 @@ pub struct UpsertStats {
     pub skipped: u64,
 }
 
-/// Record shape consumed by `upsert_off_batch`. This is the *normalized*
-/// view ingest hands to the storage layer: per-100g nutrition,
-/// quality-score, plus the two intended servings to materialize. We keep
-/// this in core (rather than the ingest binary) because the repo trait
-/// signature needs to refer to it, and core has no I/O dependencies.
+/// Record shape consumed by `upsert_external_food_batch`. This is the
+/// *normalized* view ingest hands to the storage layer: a `FoodDraft` that
+/// already carries `servings`, plus a `quality_score` that the ingest
+/// normalizer computes and the food repo persists on the `foods` row.
 #[derive(Debug, Clone)]
-pub struct OffFoodUpsert {
+pub struct FoodDraftWithServings {
     pub draft: FoodDraft,
     pub quality_score: i16,
-    pub off_serving: Option<OffServing>,
-    pub system_100g_serving: SystemServing,
-}
-
-#[derive(Debug, Clone)]
-pub struct OffServing {
-    pub label: String,
-    pub grams: rust_decimal::Decimal,
-}
-
-#[derive(Debug, Clone)]
-pub struct SystemServing {
-    pub label: String,
-    pub grams: rust_decimal::Decimal,
+    pub servings: Vec<ServingDraft>,
 }
 
 #[async_trait]
@@ -67,27 +53,42 @@ pub trait FoodRepository: Send + Sync + 'static {
 
     async fn search_count(&self, viewer: Uuid, q: &str) -> CoreResult<i64>;
 
-    async fn create_custom(&self, owner: Uuid, draft: &FoodDraft) -> CoreResult<Food>;
+    /// Create a user-custom food together with its initial servings in a
+    /// single transaction. At least one serving is required (service-validated
+    /// before this is called).
+    async fn create_custom_with_servings(
+        &self,
+        owner: Uuid,
+        draft: &FoodDraft,
+        servings: Vec<ServingDraft>,
+    ) -> CoreResult<Food>;
 
-    async fn update_custom(&self, owner: Uuid, id: Uuid, patch: &FoodPatch) -> CoreResult<Food>;
+    /// Update a user-custom food. When `servings` is `Some`, the existing
+    /// serving list is replaced atomically (DELETE + INSERT in one txn).
+    /// When `servings` is `None`, only the food metadata is patched.
+    async fn update_custom_with_servings(
+        &self,
+        owner: Uuid,
+        id: Uuid,
+        patch: &FoodPatch,
+        servings: Option<Vec<ServingDraft>>,
+    ) -> CoreResult<Food>;
 
     async fn delete_custom(&self, owner: Uuid, id: Uuid) -> CoreResult<()>;
 
-    /// Upsert a chunk of OFF records under the given batch. The trait does
-    /// not specify whether this is one SQL round-trip or many — the sqlx
-    /// implementation uses `UNNEST` for a single statement; in-memory
-    /// fakes loop.
-    async fn upsert_off_batch(
+    /// Upsert a chunk of external (OFF / USDA) records. Per-food: UPSERT the
+    /// food row, then atomically replace the serving list (DELETE + INSERT).
+    /// Returns `()` — batch-level counts are tracked separately by
+    /// `BatchRepository`.
+    async fn upsert_external_food_batch(
         &self,
         batch_id: Uuid,
-        records: &[OffFoodUpsert],
-    ) -> CoreResult<UpsertStats>;
+        batch: Vec<FoodDraftWithServings>,
+    ) -> CoreResult<()>;
 
     /// Bulk lookup of food ids by barcode for the given viewer. Returns a
     /// map keyed by the barcode; barcodes that don't resolve to a visible
-    /// food are simply absent from the result. Used by the ingest service
-    /// to wire up servings after `upsert_off_batch` without paying N
-    /// round-trips per chunk.
+    /// food are simply absent from the result.
     async fn find_ids_by_barcodes(
         &self,
         viewer: Uuid,
@@ -111,8 +112,8 @@ pub trait FoodRepository: Send + Sync + 'static {
     async fn count_mine(&self, owner: Uuid, q: Option<&str>) -> CoreResult<i64>;
 
     /// Idempotently provision the per-user quick-add sentinel food. Returns
-    /// the food plus its synthetic 100 g default serving (label `"kcal"`,
-    /// source `system`). Safe under concurrent first-uses thanks to the
-    /// `foods_quick_add_singleton` partial unique index.
+    /// the food plus its synthetic `{amount: 1, unit: serving, kcal: 1}`
+    /// default serving (source `system`). Safe under concurrent first-uses
+    /// thanks to the `foods_quick_add_singleton` partial unique index.
     async fn find_or_create_quick_add(&self, owner: Uuid) -> CoreResult<(Food, Serving)>;
 }

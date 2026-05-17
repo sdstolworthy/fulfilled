@@ -148,12 +148,11 @@ impl FoodService {
             validate_serving_draft(s)?;
         }
 
-        let food = self.foods.create_custom(owner, &draft).await?;
-
-        // Persist servings. T03+ will fold this into create_custom_with_servings.
-        for s in &draft.servings {
-            self.servings.create(food.id, s).await?;
-        }
+        let servings = draft.servings.clone();
+        let food = self
+            .foods
+            .create_custom_with_servings(owner, &draft, servings)
+            .await?;
         Ok(food)
     }
 
@@ -188,7 +187,10 @@ impl FoodService {
                 validate_serving_draft(s)?;
             }
         }
-        self.foods.update_custom(owner, id, &patch).await
+        let servings = patch.servings.clone();
+        self.foods
+            .update_custom_with_servings(owner, id, &patch, servings)
+            .await
     }
 
     #[tracing::instrument(skip(self))]
