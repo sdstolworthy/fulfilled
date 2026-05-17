@@ -1,5 +1,7 @@
 import 'package:decimal/decimal.dart';
 
+import 'serving.dart';
+
 /// Frozen nutrition snapshot living on a `LogEntry`. Mirrors the flat
 /// fields on `LogEntry` in the OpenAPI schema (`calories_kcal`,
 /// `protein_g`, `carbs_g`, `fat_g`, `fiber_g`, `sugar_g`, `sodium_mg`,
@@ -51,6 +53,24 @@ class NutritionSnapshot {
         sodiumMg: sodiumMg ?? this.sodiumMg,
         saturatedFatG: saturatedFatG ?? this.saturatedFatG,
       );
+
+  /// Build a snapshot from a [Serving] scaled by [quantity]. The
+  /// `serving.<nutrient> × quantity` rule is the Ask-10 invariant for
+  /// the log-entry math; concentrating it here keeps the rule out of
+  /// the repository (audit finding #7).
+  factory NutritionSnapshot.fromServing(Serving serving, Decimal quantity) {
+    Decimal? scale(Decimal? v) => v == null ? null : v * quantity;
+    return NutritionSnapshot(
+      caloriesKcal: serving.kcal * quantity,
+      proteinG: scale(serving.proteinG),
+      carbsG: scale(serving.carbsG),
+      fatG: scale(serving.fatG),
+      fiberG: scale(serving.fiberG),
+      sugarG: scale(serving.sugarG),
+      sodiumMg: scale(serving.sodiumMg),
+      saturatedFatG: scale(serving.saturatedFatG),
+    );
+  }
 
   factory NutritionSnapshot.fromJson(Map<String, dynamic> json) {
     Decimal? dec(String key) {

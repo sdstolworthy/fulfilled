@@ -1,7 +1,9 @@
 import 'package:decimal/decimal.dart';
 
+import 'food.dart';
 import 'meal.dart';
 import 'nutrition.dart';
+import 'serving.dart';
 import 'unit.dart';
 
 /// One row in the food log. Mirrors `LogEntry` from the OpenAPI schema
@@ -97,6 +99,45 @@ class LogEntry {
   /// Convenience getter — calorie count, the only frozen number the
   /// day view actually displays per row.
   Decimal get kcal => nutritionSnapshot.caloriesKcal;
+
+  /// Build a [LogEntry] whose frozen [nutritionSnapshot] is computed
+  /// from `serving.<nutrient> × quantity`. Per Ask 10 the math no
+  /// longer routes through per-100g — the serving carries its own
+  /// nutrition (audit finding #7).
+  ///
+  /// `enteredAmount` defaults to `serving.amount * quantity` expressed
+  /// in the serving's own unit; callers that need to preserve the
+  /// user-typed amount/unit (the log-entry sheet's same-family unit
+  /// switch) should `.copyWith(enteredAmount: …, enteredUnit: …)` the
+  /// returned entry.
+  factory LogEntry.snapshotFor({
+    required String id,
+    required Food food,
+    required Serving serving,
+    required DateTime consumedOn,
+    required Meal meal,
+    required Decimal quantity,
+    required DateTime createdAt,
+    String? note,
+  }) {
+    final snapshot = NutritionSnapshot.fromServing(serving, quantity);
+    return LogEntry(
+      id: id,
+      foodId: food.id,
+      foodName: food.name,
+      servingId: serving.id,
+      servingName: serving.name,
+      consumedOn: consumedOn,
+      meal: meal,
+      quantity: quantity,
+      enteredAmount: serving.amount * quantity,
+      enteredUnit: serving.unit,
+      nutritionSnapshot: snapshot,
+      note: note,
+      createdAt: createdAt,
+      updatedAt: createdAt,
+    );
+  }
 
   factory LogEntry.fromJson(Map<String, dynamic> json) {
     Decimal dec(String key) =>

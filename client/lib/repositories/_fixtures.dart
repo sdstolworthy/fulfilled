@@ -17,7 +17,6 @@ import '../domain/food.dart';
 import '../domain/goal.dart';
 import '../domain/log_entry.dart';
 import '../domain/meal.dart';
-import '../domain/nutrition.dart';
 import '../domain/serving.dart';
 import '../domain/unit.dart';
 import '../domain/user.dart';
@@ -1211,8 +1210,10 @@ int _hourForMeal(Meal m) {
 }
 
 /// Build a [LogEntry] with the frozen nutrition snapshot computed from
-/// `serving.<nutrient> × quantity`. Per Ask 10 the math no longer
-/// routes through per-100g — the serving carries its own nutrition.
+/// `serving.<nutrient> × quantity`. The math lives on
+/// [LogEntry.snapshotFor] (audit finding #7); this thin wrapper is
+/// kept so the in-file seed data and `_fixture_log_entries` builders
+/// stay readable.
 LogEntry computeLogEntry({
   required String id,
   required Food food,
@@ -1222,43 +1223,17 @@ LogEntry computeLogEntry({
   required Decimal quantity,
   required DateTime createdAt,
   String? note,
-}) {
-  Decimal? scale(Decimal? v) => v == null ? null : v * quantity;
-
-  final kcal = serving.kcal * quantity;
-  final snapshot = NutritionSnapshot(
-    caloriesKcal: kcal,
-    proteinG: scale(serving.proteinG),
-    carbsG: scale(serving.carbsG),
-    fatG: scale(serving.fatG),
-    fiberG: scale(serving.fiberG),
-    sugarG: scale(serving.sugarG),
-    sodiumMg: scale(serving.sodiumMg),
-    saturatedFatG: scale(serving.saturatedFatG),
-  );
-
-  // `entered_amount` defaults to `serving.amount * quantity`, expressed
-  // in the serving's own unit. The log-entry sheet will override this
-  // when the user picked a different same-family unit at entry time.
-  final enteredAmount = serving.amount * quantity;
-
-  return LogEntry(
-    id: id,
-    foodId: food.id,
-    foodName: food.name,
-    servingId: serving.id,
-    servingName: serving.name,
-    consumedOn: consumedOn,
-    meal: meal,
-    quantity: quantity,
-    enteredAmount: enteredAmount,
-    enteredUnit: serving.unit,
-    nutritionSnapshot: snapshot,
-    note: note,
-    createdAt: createdAt,
-    updatedAt: createdAt,
-  );
-}
+}) =>
+    LogEntry.snapshotFor(
+      id: id,
+      food: food,
+      serving: serving,
+      consumedOn: consumedOn,
+      meal: meal,
+      quantity: quantity,
+      createdAt: createdAt,
+      note: note,
+    );
 
 // ─── Day summary builder ─────────────────────────────────────────────────
 
