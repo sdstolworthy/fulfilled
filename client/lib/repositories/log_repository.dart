@@ -328,39 +328,6 @@ class LogRepository {
     return created;
   }
 
-  Future<int> weeklyLogDayCount({DateTime? now}) async {
-    final clockNow = now ?? DateTime.now();
-    final weekStart = _mondayOfWeek(clockNow);
-    final weekEndInclusive = weekStart.add(const Duration(days: 6));
-    if (_useFixtures) {
-      final days = <String>{};
-      for (final e in _store) {
-        if (e.consumedOn.isBefore(weekStart)) continue;
-        if (e.consumedOn.isAfter(weekEndInclusive)) continue;
-        days.add(_isoDate(e.consumedOn));
-      }
-      return days.length;
-    }
-
-    final res = await _api.dio.get<Map<String, dynamic>>(
-      '/log',
-      queryParameters: <String, dynamic>{
-        'from': _isoDate(weekStart),
-        'to': _isoDate(weekEndInclusive),
-        'limit': 500,
-      },
-    );
-    final results = ((res.data ?? const <String, dynamic>{})['results']
-            as List<dynamic>? ??
-        const <dynamic>[])
-        .cast<Map<String, dynamic>>();
-    final days = <String>{};
-    for (final raw in results) {
-      final day = raw['consumed_on'] as String?;
-      if (day != null) days.add(day);
-    }
-    return days.length;
-  }
 
   /// Decode a wire `LogEntry` and denormalise `foodName` / `servingName`
   /// from the local food catalog. The new wire shape carries
@@ -389,10 +356,6 @@ class LogRepository {
     );
   }
 
-  DateTime _mondayOfWeek(DateTime now) {
-    final daysSinceMonday = now.weekday - 1;
-    return DateTime(now.year, now.month, now.day - daysSinceMonday);
-  }
 
   /// Per-instance reset for fixture-mode tests.
   void resetInstanceForTesting() {

@@ -32,19 +32,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fulfilled/domain/day_summary.dart';
-import 'package:fulfilled/domain/log_entry.dart';
 import 'package:fulfilled/domain/meal.dart';
 import 'package:fulfilled/providers/log_providers.dart';
-import 'package:fulfilled/repositories/_fixtures.dart';
-import 'package:fulfilled/repositories/_mock_latency.dart';
-import 'package:fulfilled/repositories/food_repository.dart';
-import 'package:fulfilled/repositories/goal_repository.dart';
-import 'package:fulfilled/repositories/log_repository.dart';
 import 'package:fulfilled/theme/theme_data.dart';
 import 'package:fulfilled/theme/tokens/colors.dart';
 import 'package:fulfilled/widgets/ring_summary_card.dart';
-
-import '../repositories/_harness.dart';
 
 // ─── Widget test harness ────────────────────────────────────────────────
 
@@ -95,128 +87,10 @@ Finder _pillText() => find.byWidgetPredicate(
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  group('weeklyLogDayCount — repository fold', () {
-    // The seed populates daysAgo 0..6 (see `_fixtures.dart`'s `byDay`
-    // map: keys 0..6 each carry at least one `_LogSeed`). With the
-    // clock pinned to Wednesday 2026-05-13, the local Mon-Sun week is
-    // 2026-05-11..2026-05-17, so daysAgo 0 (Wed), 1 (Tue), and 2 (Mon)
-    // land in-week and daysAgo 3..6 land in the prior week → 3 days.
-    // With the clock pinned to Sunday 2026-05-17, all seven seeded
-    // daysAgo values land in the same Mon-Sun window → 7 days.
-
-    setUp(() {
-      setMockLatencyForTesting();
-    });
-
-    tearDown(() {
-      teardownRepositoriesForTest();
-    });
-
-    test('returns 3 when 3 of the past 7 days have entries', () async {
-      // Pin BEFORE rebuilding the seed so the seed's `_daysAgo` math
-      // resolves against this Wednesday.
-      setMockClockForTesting(() => DateTime(2026, 5, 13, 12));
-      FoodRepository.resetForTesting();
-      GoalRepository.resetForTesting();
-      LogRepository.resetForTesting();
-      final api = buildTestApiClient();
-      final repo = LogRepository(
-        api: api,
-        foodRepository: FoodRepository(api),
-        goalRepository: GoalRepository(api),
-      );
-
-      // Sanity: pin's weekday matches our spec (Wednesday = 3).
-      expect(DateTime(2026, 5, 13).weekday, DateTime.wednesday);
-
-      final count = await repo.weeklyLogDayCount();
-      expect(count, 3,
-          reason:
-              'With "today" = Wed 2026-05-13 (week starts Mon 2026-05-11), '
-              'seed daysAgo 0/1/2 (Wed/Tue/Mon) are in-week and 3..6 are '
-              'in the prior week → 3 distinct in-week days.');
-    });
-
-    test('returns 7 when every day this week has entries', () async {
-      setMockClockForTesting(() => DateTime(2026, 5, 17, 12));
-      FoodRepository.resetForTesting();
-      GoalRepository.resetForTesting();
-      LogRepository.resetForTesting();
-      final api = buildTestApiClient();
-      final repo = LogRepository(
-        api: api,
-        foodRepository: FoodRepository(api),
-        goalRepository: GoalRepository(api),
-      );
-
-      expect(DateTime(2026, 5, 17).weekday, DateTime.sunday);
-
-      final count = await repo.weeklyLogDayCount();
-      expect(count, 7,
-          reason:
-              'With "today" = Sun 2026-05-17 (week starts Mon 2026-05-11), '
-              'seed daysAgo 0..6 cover Sun/Sat/Fri/Thu/Wed/Tue/Mon — every '
-              'day of the local week is logged.');
-    });
-
-    test('creating a log entry on a previously-empty day re-ticks the '
-        'count (invalidation wired)', () async {
-      // Pin to Wednesday 2026-05-13. Baseline count = 3 (Mon/Tue/Wed).
-      // Then create a new entry on Sunday 2026-05-17 (in-week, no seed)
-      // and assert the count bumps to 4. This is the underlying
-      // mechanism the call-site `ref.invalidate(weeklyLogDaysProvider)`
-      // exposes to the UI: the repo's state changed, so the next
-      // provider read returns the new count.
-      setMockClockForTesting(() => DateTime(2026, 5, 13, 12));
-      FoodRepository.resetForTesting();
-      GoalRepository.resetForTesting();
-      LogRepository.resetForTesting();
-      final api = buildTestApiClient();
-      final foods = FoodRepository(api);
-      final repo = LogRepository(
-        api: api,
-        foodRepository: foods,
-        goalRepository: GoalRepository(api),
-      );
-
-      // Baseline.
-      expect(await repo.weeklyLogDayCount(), 3);
-
-      // Use a known seed food + serving so `create` doesn't reject the
-      // payload. The test cares about the post-create count, not the
-      // food row identity.
-      final food = foods.lookup('f_oatmeal_rolled');
-      expect(food, isNotNull, reason: 'seed catalog must include oatmeal');
-      final serving = food!.servings.firstWhere(
-        (s) => s.id == 'sv_oats_half_cup',
-      );
-
-      // Sunday in the current local week — no seed entries land here
-      // (seed covers daysAgo 0..6 = Wed..Thu prev week with pin).
-      final sundayThisWeek = DateTime(2026, 5, 17);
-
-      await repo.create(LogCreate(
-        foodId: food.id,
-        servingId: serving.id,
-        consumedOn: sundayThisWeek,
-        meal: Meal.dinner,
-        quantity: Decimal.one,
-        enteredAmount: serving.amount,
-        enteredUnit: serving.unit,
-      ));
-
-      // The provider's next read picks up the new day — this is what
-      // `ref.invalidate(weeklyLogDaysProvider)` schedules at the
-      // mutation call-site (per `LogRepository.create`'s @invalidates
-      // block). Count is now 4 = Mon + Tue + Wed + Sun.
-      expect(await repo.weeklyLogDayCount(), 4,
-          reason:
-              'Creating an entry on a previously-empty in-week day must '
-              'bump the count. `LogRepository.create` lists '
-              'weeklyLogDaysProvider in @invalidates; the call-site '
-              'invalidation triggers the re-read this test exercises.');
-    });
-  });
+  // The repository fold group used to test `LogRepository.weeklyLogDayCount`.
+  // The provider has been re-shaped to derive from `logEntriesProvider`
+  // instead of round-tripping the repo, so the method and its tests
+  // are gone. The pill render group below still pins the widget.
 
   group('_WeekProgressPill — render', () {
     testWidgets('pill text reads "This week · 3/7 days logged" at count = 3',

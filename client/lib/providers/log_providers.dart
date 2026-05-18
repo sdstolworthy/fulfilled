@@ -123,21 +123,38 @@ class CopyDayPreviewKey {
 /// `"This week · N/7 days logged"` for 1..6 in `ink2`; renders in
 /// `accent` at 7.
 ///
-/// **Invalidation.** Every `LogRepository` mutator (`create`, `update`,
-/// `delete`, `copyDay`, `adoptOptimistic`) lists this provider in its
-/// `@invalidates` block — log entries appearing or disappearing can
-/// shift the week-day count. Call sites invalidate per T-18.
+/// **Pure derivation.** Watches `logEntriesProvider(day).future`
+/// for each of Mon..Sun and counts the days whose list is
+/// non-empty. Log mutations invalidate the per-day family entry
+/// (`ref.invalidate(logEntriesProvider(date))` in the create /
+/// update / delete sheets); this provider sees the invalidation
+/// because it `ref.watch`es each entry. No hand-maintained
+/// `@invalidates` contract — the dependency arrow is explicit.
 ///
-/// **Local-now dependency.** `weeklyLogDayCount` reads
-/// `DateTime.now()` at request time, so a long-lived provider would
-/// stale across midnight. In practice the foreground-resume path that
-/// invalidates `daySummaryProvider` will be extended (v1.1) to
-/// invalidate this provider too. For v1 the pill re-ticks on every
-/// mutation, which dominates user-perceived freshness.
-final weeklyLogDaysProvider = FutureProvider<int>((ref) {
-  final repo = ref.watch(logRepositoryProvider);
-  return repo.weeklyLogDayCount();
+/// **Local-now dependency.** The Mon–Sun window is computed off
+/// `DateTime.now()` at build time, so the provider can stale across
+/// midnight. A foreground-resume invalidate is the v1.1 plan;
+/// today's pill re-ticks on every log mutation, which dominates
+/// user-perceived freshness.
+final weeklyLogDaysProvider = FutureProvider<int>((ref) async {
+  final now = DateTime.now();
+  final weekStart = _mondayOf(now);
+  var count = 0;
+  for (var i = 0; i < 7; i++) {
+    final day = weekStart.add(Duration(days: i));
+    final dayKey = DateTime(day.year, day.month, day.day);
+    final entries = await ref.watch(logEntriesProvider(dayKey).future);
+    if (entries.isNotEmpty) count += 1;
+  }
+  return count;
 });
+
+/// Monday-of-week for the local-calendar [now]. Matches the
+/// (`weekday == 1` ⇒ Monday) ISO convention `DateTime` uses.
+DateTime _mondayOf(DateTime now) {
+  final daysSinceMonday = now.weekday - 1;
+  return DateTime(now.year, now.month, now.day - daysSinceMonday);
+}
 
 /// Drives the live "N entries · M kcal" line in `CopyDaySheet`. The
 /// family is re-keyed on every source-date scrub or chip toggle; the

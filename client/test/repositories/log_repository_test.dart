@@ -503,43 +503,10 @@ void main() {
     });
   });
 
-  group('weeklyLogDayCount — GET /log over Mon..Sun', () {
-    test('queries Mon..Sun and counts distinct consumed_on values', () async {
-      // 2026-05-17 is a Sunday; Monday of that week is 2026-05-11.
-      Map<String, dynamic>? capturedQuery;
-      final h = _build((req) {
-        capturedQuery = Map<String, dynamic>.from(req.queryParameters);
-        return jsonResponse(200, <String, dynamic>{
-          'results': <Map<String, dynamic>>[
-            _entryBody(id: 'a', consumedOn: '2026-05-11'),
-            _entryBody(id: 'b', consumedOn: '2026-05-11'),
-            _entryBody(id: 'c', consumedOn: '2026-05-13'),
-            _entryBody(id: 'd', consumedOn: '2026-05-17'),
-          ],
-          'total': 4,
-          'limit': 500,
-          'offset': 0,
-        });
-      });
-      final count =
-          await h.repo.weeklyLogDayCount(now: DateTime(2026, 5, 17, 12));
-      expect(count, equals(3));
-      expect(capturedQuery!['from'], equals('2026-05-11'));
-      expect(capturedQuery!['to'], equals('2026-05-17'));
-    });
-
-    test('returns 0 when the week is empty', () async {
-      final h = _build((_) => jsonResponse(200, <String, dynamic>{
-            'results': const <dynamic>[],
-            'total': 0,
-            'limit': 500,
-            'offset': 0,
-          }));
-      final count =
-          await h.repo.weeklyLogDayCount(now: DateTime(2026, 5, 17, 12));
-      expect(count, equals(0));
-    });
-  });
+  // The previous `weeklyLogDayCount` group tested a repo method that
+  // composed a Mon–Sun /log query. `weeklyLogDaysProvider` now derives
+  // from `logEntriesProvider` for each day instead of hitting the
+  // repo, so the method (and the tests against it) are gone.
 
   group('isPendingSync', () {
     test('returns false when constructed without an outbox', () {
