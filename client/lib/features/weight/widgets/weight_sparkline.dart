@@ -824,11 +824,18 @@ class _ScrubGestureWrapState extends State<_ScrubGestureWrap>
 
     // Mount the overlay painter only when a scrub is active *or* the
     // fade is still running (so the reverse() tail still paints).
+    //
+    // Perf (Flutter doc — "Performance optimizations" on `AnimatedBuilder`):
+    // the chart subtree is independent of the fade animation, so we pass
+    // it as the `child` argument. The builder receives the same widget
+    // each frame without rebuilding it, and the framework can elide the
+    // subtree's rebuild during the 120 ms fade tween.
     final overlay = AnimatedBuilder(
       key: const Key('scrub-tooltip'),
       animation: _fade,
-      builder: (_, __) {
-        if (_scrubX == null || _fade.value == 0.0) return widget.child;
+      child: widget.child,
+      builder: (_, child) {
+        if (_scrubX == null || _fade.value == 0.0) return child!;
         return CustomPaint(
           foregroundPainter: _ScrubOverlayPainter(
             scrubX: _scrubX!,
@@ -837,7 +844,7 @@ class _ScrubGestureWrapState extends State<_ScrubGestureWrap>
             unit: widget.unit,
             colors: widget.colors,
           ),
-          child: widget.child,
+          child: child,
         );
       },
     );
