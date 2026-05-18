@@ -82,7 +82,7 @@ class SearchResultRow extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     children: <Widget>[
                       _HighlightedName(name: food.name, query: query),
-                      SizedBox(height: 2),
+                      const SizedBox(height: 2),
                       Text(
                         _metaLine(food, defaultServing),
                         style: context.text.metaNumeric.copyWith(
@@ -107,7 +107,7 @@ class SearchResultRow extends StatelessWidget {
                         fontWeight: FontWeight.w600,
                       ),
                     ),
-                    SizedBox(height: 2),
+                    const SizedBox(height: 2),
                     Text(
                       per,
                       style: context.text.meta.copyWith(

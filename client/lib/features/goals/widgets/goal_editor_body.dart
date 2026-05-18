@@ -58,14 +58,14 @@ class GoalEditorBody extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
-        _SectionLabel(text: 'Direction'),
+        const _SectionLabel(text: 'Direction'),
         SizedBox(height: tokens.space.x2),
         _DirectionSegmented(
           value: direction,
           onChanged: onDirectionChange,
         ),
         SizedBox(height: tokens.space.x5),
-        _SectionLabel(text: 'Weekly rate'),
+        const _SectionLabel(text: 'Weekly rate'),
         SizedBox(height: tokens.space.x2),
         _RateSlider(
           value: rateKgPerWeek,

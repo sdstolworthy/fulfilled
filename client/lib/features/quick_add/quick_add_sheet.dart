@@ -530,7 +530,7 @@ class _QuickAddSheetBodyState extends ConsumerState<QuickAddSheetBody> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: <Widget>[
-                  _SectionLabel(text: 'CALORIES'),
+                  const _SectionLabel(text: 'CALORIES'),
                   SizedBox(height: space.x2),
                   QuantityStepper(
                     key: const Key('quick_add_kcal_field'),
@@ -545,14 +545,14 @@ class _QuickAddSheetBodyState extends ConsumerState<QuickAddSheetBody> {
                     onChanged: (next) => setState(() => _kcal = next),
                   ),
                   SizedBox(height: space.x4 + 2),
-                  _SectionLabel(text: 'MEAL'),
+                  const _SectionLabel(text: 'MEAL'),
                   SizedBox(height: space.x2),
                   MealChipPicker(
                     value: _meal,
                     onChanged: (m) => setState(() => _meal = m),
                   ),
                   SizedBox(height: space.x4 + 2),
-                  _SectionLabel(text: 'DATE'),
+                  const _SectionLabel(text: 'DATE'),
                   SizedBox(height: space.x2),
                   _DateRow(date: _date, onTap: _pickDate),
                   SizedBox(height: space.x4 + 2),

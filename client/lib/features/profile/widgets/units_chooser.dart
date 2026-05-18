@@ -249,7 +249,7 @@ class _UnitsChooserBodyState extends ConsumerState<_UnitsChooserBody> {
           child: Text('Units', style: context.text.title),
         ),
         // Weight section.
-        _SectionLabel('Weight'),
+        const _SectionLabel('Weight'),
         for (final unit in WeightUnit.values)
           Padding(
             padding: EdgeInsets.symmetric(
@@ -266,7 +266,7 @@ class _UnitsChooserBodyState extends ConsumerState<_UnitsChooserBody> {
           ),
         SizedBox(height: space.x2),
         // Height section.
-        _SectionLabel('Height'),
+        const _SectionLabel('Height'),
         for (final unit in HeightUnit.values)
           Padding(
             padding: EdgeInsets.symmetric(

@@ -127,7 +127,7 @@ Future<void> _openLogWeightSheet(BuildContext context) async {
       ),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 480),
-        child: LogWeightSheet(currentRange: range, asDialog: true),
+        child: const LogWeightSheet(currentRange: range, asDialog: true),
       ),
     ),
   );

@@ -83,14 +83,14 @@ class QuickAddChips extends StatelessWidget {
           ),
           SizedBox(height: context.space.x3 + 2),
           if (recentChips.isNotEmpty) ...<Widget>[
-            _SectionHeader(label: 'Recent'),
+            const _SectionHeader(label: 'Recent'),
             SizedBox(height: context.space.x2),
             _ChipWrap(foods: recentChips, onTap: onTapFood),
           ],
           if (recentChips.isNotEmpty && frequentChips.isNotEmpty)
             SizedBox(height: context.space.x3 + 2),
           if (frequentChips.isNotEmpty) ...<Widget>[
-            _SectionHeader(label: 'Frequent'),
+            const _SectionHeader(label: 'Frequent'),
             SizedBox(height: context.space.x2),
             _ChipWrap(foods: frequentChips, onTap: onTapFood),
           ],

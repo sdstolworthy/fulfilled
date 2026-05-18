@@ -39,7 +39,7 @@ class BasicsSection extends ConsumerWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        _SectionHeader(label: 'Basics'),
+        const _SectionHeader(label: 'Basics'),
         SizedBox(height: space.x3),
         LabeledField(
           label: 'Name',

@@ -621,7 +621,7 @@ class _LogEntrySheetBodyState extends ConsumerState<LogEntrySheetBody> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: <Widget>[
-                  _SectionLabel(text: 'SERVING'),
+                  const _SectionLabel(text: 'SERVING'),
                   SizedBox(height: space.x2),
                   _ServingSelect(
                     food: widget.food,
@@ -630,7 +630,7 @@ class _LogEntrySheetBodyState extends ConsumerState<LogEntrySheetBody> {
                     onChanged: (s) => setState(() => _serving = s),
                   ),
                   SizedBox(height: space.x4 + 2),
-                  _SectionLabel(text: 'AMOUNT'),
+                  const _SectionLabel(text: 'AMOUNT'),
                   SizedBox(height: space.x2),
                   // Per Ask 10 the user picks an amount in any unit
                   // that shares a family with the serving. The stepper
@@ -649,21 +649,21 @@ class _LogEntrySheetBodyState extends ConsumerState<LogEntrySheetBody> {
                   SizedBox(height: space.x2),
                   const QuickMultiplierChips(),
                   SizedBox(height: space.x4 + 2),
-                  _SectionLabel(text: 'MEAL'),
+                  const _SectionLabel(text: 'MEAL'),
                   SizedBox(height: space.x2),
                   MealChipPicker(
                     value: _meal,
                     onChanged: (m) => setState(() => _meal = m),
                   ),
                   SizedBox(height: space.x4 + 2),
-                  _SectionLabel(text: 'DATE'),
+                  const _SectionLabel(text: 'DATE'),
                   SizedBox(height: space.x2),
                   _DateRow(
                     date: _date,
                     onTap: _pickDate,
                   ),
                   SizedBox(height: space.x4 + 2),
-                  _SectionLabel(text: 'NOTE (OPTIONAL)'),
+                  const _SectionLabel(text: 'NOTE (OPTIONAL)'),
                   SizedBox(height: space.x2),
                   _NoteField(controller: _noteCtrl),
                   SizedBox(height: space.x4 + 2),

@@ -90,7 +90,7 @@ class GoalsScreen extends ConsumerWidget {
                 SizedBox(height: context.space.x3),
                 _HeroArea(active: active),
                 SizedBox(height: context.space.x5),
-                _SectionHeader('History'),
+                const _SectionHeader('History'),
                 SizedBox(height: context.space.x2 + context.space.x05),
                 _HistoryArea(all: all, active: active),
                 SizedBox(height: context.space.x6),

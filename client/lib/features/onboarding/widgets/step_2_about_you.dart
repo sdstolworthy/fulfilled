@@ -65,7 +65,7 @@ class Step2AboutYou extends ConsumerWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
-        _FieldLabel('Sex'),
+        const _FieldLabel('Sex'),
         SizedBox(height: context.space.x2),
         SegmentedSelect<Sex>(
           options: const <Sex>[Sex.male, Sex.female, Sex.other],
@@ -74,19 +74,19 @@ class Step2AboutYou extends ConsumerWidget {
           onChanged: notifier.setSex,
         ),
         SizedBox(height: context.space.x3),
-        _FieldLabel('Birth date'),
+        const _FieldLabel('Birth date'),
         SizedBox(height: context.space.x2),
         _BirthDateField(
           value: draft.birthDate,
           onChanged: notifier.setBirthDate,
         ),
         SizedBox(height: context.space.x3),
-        _FieldLabel('Units'),
+        const _FieldLabel('Units'),
         SizedBox(height: context.space.x2),
         Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
-            _SubLabel('Weight'),
+            const _SubLabel('Weight'),
             SizedBox(height: context.space.x1),
             SegmentedSelect<WeightUnit>(
               key: const Key('onboarding-weight-unit-chooser'),
@@ -100,7 +100,7 @@ class Step2AboutYou extends ConsumerWidget {
               onChanged: notifier.setWeightUnit,
             ),
             SizedBox(height: context.space.x2),
-            _SubLabel('Height'),
+            const _SubLabel('Height'),
             SizedBox(height: context.space.x1),
             SegmentedSelect<HeightUnit>(
               key: const Key('onboarding-height-unit-chooser'),
@@ -122,7 +122,7 @@ class Step2AboutYou extends ConsumerWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: <Widget>[
-                  _FieldLabel('Height'),
+                  const _FieldLabel('Height'),
                   SizedBox(height: context.space.x2),
                   HeightStepper(
                     key: const Key('onboarding-height-stepper'),
@@ -139,7 +139,7 @@ class Step2AboutYou extends ConsumerWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: <Widget>[
-                  _FieldLabel('Weight'),
+                  const _FieldLabel('Weight'),
                   SizedBox(height: context.space.x2),
                   WeightStepper(
                     key: const Key('onboarding-weight-stepper'),
@@ -155,7 +155,7 @@ class Step2AboutYou extends ConsumerWidget {
           ],
         ),
         SizedBox(height: context.space.x4),
-        _FieldLabel('Activity level'),
+        const _FieldLabel('Activity level'),
         SizedBox(height: context.space.x2),
         _ActivityList(
           selected: draft.activityLevel,

@@ -79,7 +79,7 @@ final foodSearchProvider =
   ref.onDispose(() {
     timer.cancel();
     if (!completer.isCompleted) {
-      completer.completeError(_DebounceCancelled());
+      completer.completeError(const _DebounceCancelled());
     }
   });
 

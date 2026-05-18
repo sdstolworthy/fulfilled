@@ -45,9 +45,9 @@ class Step1Welcome extends StatelessWidget {
         SizedBox(height: context.space.x8),
         ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 320),
-          child: Column(
+          child: const Column(
             crossAxisAlignment: CrossAxisAlignment.start,
-            children: const <Widget>[
+            children: <Widget>[
               _FeatureRow(
                 icon: Icons.search,
                 label: 'Search 2M+ foods or scan a barcode',

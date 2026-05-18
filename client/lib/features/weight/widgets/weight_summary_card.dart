@@ -435,7 +435,7 @@ class _SummarySkeleton extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Row(
+        const Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
@@ -448,8 +448,8 @@ class _SummarySkeleton extends StatelessWidget {
         SizedBox(height: context.space.x3),
         Divider(height: 1, color: context.colors.line2),
         SizedBox(height: context.space.x3),
-        Row(
-          children: const <Widget>[
+        const Row(
+          children: <Widget>[
             Expanded(child: _SkeletonStat()),
             Expanded(child: _SkeletonStat()),
             Expanded(child: _SkeletonStat()),

@@ -358,7 +358,7 @@ class _ChipsSection extends ConsumerWidget {
       // T-13: don't replace populated content with a spinner. Loading
       // here means we have no chip data yet — render an empty
       // placeholder of the same height so the page doesn't jump.
-      loading: () => SizedBox(height: 72, width: double.infinity),
+      loading: () => const SizedBox(height: 72, width: double.infinity),
       error: (_, __) => const SizedBox.shrink(),
       data: (foods) => QuickChipRow(
         title: title,
@@ -457,7 +457,7 @@ class _ResultsSection extends ConsumerWidget {
           },
           data: (rows) {
             if (rows.isEmpty) {
-              return EmptyState(
+              return const EmptyState(
                 icon: Icons.search_off,
                 title: 'No matches',
                 body: 'Try a different name.',
