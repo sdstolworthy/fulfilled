@@ -97,3 +97,132 @@ final foodSearchProvider =
 class _DebounceCancelled implements Exception {
   const _DebounceCancelled();
 }
+
+/// Page size shared between [foodSearchProvider] (first page) and
+/// [foodSearchPaginationProvider] (subsequent pages). 25 matches the
+/// `limit:` default on `FoodRepository.search`.
+const int kFoodSearchPageSize = 25;
+
+/// Additional pages of results for a given search query. The first
+/// page lives in [foodSearchProvider]; this notifier owns every page
+/// after that. The widget concatenates `firstPage + extraItems` when
+/// rendering the list.
+///
+/// Pagination uses offset-based paging against `/foods/search`. A page
+/// that returns fewer rows than [kFoodSearchPageSize] means we've hit
+/// the end of the result set, and [hasMore] flips to `false`.
+///
+/// The notifier is keyed by the *trimmed* query so a leading/trailing
+/// whitespace edit doesn't allocate a fresh paginator. New queries
+/// start with an empty extra list because Riverpod's family
+/// re-instantiates the notifier per key.
+class FoodSearchPaginationNotifier
+    extends StateNotifier<FoodSearchPaginationState> {
+  FoodSearchPaginationNotifier({
+    required this.query,
+    required this.ref,
+  }) : super(FoodSearchPaginationState.initial);
+
+  final String query;
+  final Ref ref;
+
+  /// Call once the first page has landed in [foodSearchProvider]. The
+  /// pagination state mirrors "did the first page hit the page-size
+  /// ceiling" — if it didn't, no more pages exist and load-more taps
+  /// short-circuit. Idempotent within a given query key.
+  void seedFromFirstPage(int firstPageLength) {
+    final hasMore = firstPageLength >= kFoodSearchPageSize;
+    if (state.hasMore == hasMore && state.seeded) return;
+    state = state.copyWith(hasMore: hasMore, seeded: true);
+  }
+
+  /// Fetch the next page. [currentTotal] is the count of rows already
+  /// displayed (first page + any previously appended extras) and is
+  /// used as the offset. No-op when a fetch is already in flight or
+  /// when the prior page told us there's nothing more to load.
+  Future<void> loadMore({required int currentTotal}) async {
+    if (state.isLoadingMore || !state.hasMore) return;
+    final trimmed = query.trim();
+    if (trimmed.isEmpty) return;
+
+    state = state.copyWith(isLoadingMore: true);
+    try {
+      final repo = ref.read(foodRepositoryProvider);
+      final next = await repo.search(
+        trimmed,
+        limit: kFoodSearchPageSize,
+        offset: currentTotal,
+      );
+      // Guard against late returns after the notifier is disposed
+      // (typing kept going; the family rebuilt under a new key).
+      if (!mounted) return;
+      state = state.copyWith(
+        extra: <Food>[...state.extra, ...next],
+        hasMore: next.length >= kFoodSearchPageSize,
+        isLoadingMore: false,
+      );
+    } catch (_) {
+      if (!mounted) return;
+      // Swallow — the user can scroll again to retry. The page count
+      // and `hasMore` are unchanged so a retry hits the same offset.
+      state = state.copyWith(isLoadingMore: false);
+    }
+  }
+}
+
+class FoodSearchPaginationState {
+  const FoodSearchPaginationState({
+    required this.extra,
+    required this.hasMore,
+    required this.isLoadingMore,
+    required this.seeded,
+  });
+
+  /// Pages beyond the first. Empty until [FoodSearchPaginationNotifier.loadMore]
+  /// resolves successfully at least once.
+  final List<Food> extra;
+
+  /// `true` while we believe more results exist on the server.
+  /// Flipped to `false` when a page returns fewer rows than
+  /// [kFoodSearchPageSize], or once `seedFromFirstPage` reports a
+  /// short first page.
+  final bool hasMore;
+
+  /// `true` while a `loadMore()` is in flight. The widget renders a
+  /// trailing spinner row while this is true.
+  final bool isLoadingMore;
+
+  /// `true` once [FoodSearchPaginationNotifier.seedFromFirstPage] has
+  /// been called for this query key. Distinguishes "we haven't seen
+  /// the first page yet" (default `hasMore: true`) from "first page
+  /// reported short" (`hasMore: false`).
+  final bool seeded;
+
+  static const FoodSearchPaginationState initial = FoodSearchPaginationState(
+    extra: <Food>[],
+    hasMore: true,
+    isLoadingMore: false,
+    seeded: false,
+  );
+
+  FoodSearchPaginationState copyWith({
+    List<Food>? extra,
+    bool? hasMore,
+    bool? isLoadingMore,
+    bool? seeded,
+  }) =>
+      FoodSearchPaginationState(
+        extra: extra ?? this.extra,
+        hasMore: hasMore ?? this.hasMore,
+        isLoadingMore: isLoadingMore ?? this.isLoadingMore,
+        seeded: seeded ?? this.seeded,
+      );
+}
+
+final foodSearchPaginationProvider = StateNotifierProvider.family<
+    FoodSearchPaginationNotifier,
+    FoodSearchPaginationState,
+    String>(
+  (ref, query) =>
+      FoodSearchPaginationNotifier(query: query, ref: ref),
+);

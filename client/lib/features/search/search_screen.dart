@@ -93,19 +93,51 @@ class SearchScreenBody extends ConsumerStatefulWidget {
 
 class _SearchScreenBodyState extends ConsumerState<SearchScreenBody> {
   late final TextEditingController _controller;
+  late final ScrollController _scrollController;
   String _query = '';
+
+  /// Pixels from `maxScrollExtent` at which we start prefetching the
+  /// next page. ~3 rows of slack so the spinner appears before the
+  /// user actually hits the bottom edge.
+  static const double _loadMorePrefetchPx = 240;
 
   @override
   void initState() {
     super.initState();
     _query = widget.initialQuery?.trim() ?? '';
     _controller = TextEditingController(text: _query);
+    _scrollController = ScrollController()..addListener(_onScroll);
   }
 
   @override
   void dispose() {
+    _scrollController
+      ..removeListener(_onScroll)
+      ..dispose();
     _controller.dispose();
     super.dispose();
+  }
+
+  /// Trigger a `loadMore()` on the active query's paginator when the
+  /// list nears its bottom. The notifier short-circuits redundant
+  /// calls, so a noisy stream of scroll callbacks is safe.
+  void _onScroll() {
+    if (!_scrollController.hasClients) return;
+    final position = _scrollController.position;
+    if (position.pixels < position.maxScrollExtent - _loadMorePrefetchPx) {
+      return;
+    }
+    final trimmed = _query.trim();
+    if (trimmed.isEmpty) return;
+    final firstPage =
+        ref.read(foodSearchProvider(trimmed)).asData?.value ?? const <Food>[];
+    if (firstPage.isEmpty) return;
+    final pageState = ref.read(foodSearchPaginationProvider(trimmed));
+    if (!pageState.hasMore || pageState.isLoadingMore) return;
+    final currentTotal = firstPage.length + pageState.extra.length;
+    ref
+        .read(foodSearchPaginationProvider(trimmed).notifier)
+        .loadMore(currentTotal: currentTotal);
   }
 
   void _onQueryChanged(String value) {
@@ -151,6 +183,7 @@ class _SearchScreenBodyState extends ConsumerState<SearchScreenBody> {
             ),
             Expanded(
               child: ListView(
+                controller: _scrollController,
                 physics: const AlwaysScrollableScrollPhysics(),
                 padding: EdgeInsets.only(bottom: context.space.x8),
                 children: <Widget>[
@@ -421,6 +454,18 @@ class _ResultsSection extends ConsumerWidget {
       return const SizedBox.shrink();
     }
     final results = ref.watch(foodSearchProvider(query));
+    final pagination = ref.watch(foodSearchPaginationProvider(query));
+    // Seed the paginator the first time the first page lands. We do it
+    // in a post-frame callback because `seedFromFirstPage` mutates the
+    // paginator's state, and `build()` must stay side-effect-free.
+    results.whenData((rows) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!context.mounted) return;
+        ref
+            .read(foodSearchPaginationProvider(query).notifier)
+            .seedFromFirstPage(rows.length);
+      });
+    });
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
@@ -443,7 +488,8 @@ class _ResultsSection extends ConsumerWidget {
               ),
               Text(
                 results.maybeWhen(
-                  data: (rows) => _countLabel(rows.length),
+                  data: (rows) =>
+                      _countLabel(rows.length + pagination.extra.length),
                   orElse: () => '',
                 ),
                 style: context.text.metaNumeric.copyWith(
@@ -493,8 +539,9 @@ class _ResultsSection extends ConsumerWidget {
             }
             return _ResultsList(
               query: query,
-              rows: rows,
+              rows: <Food>[...rows, ...pagination.extra],
               mealHint: mealHint,
+              isLoadingMore: pagination.isLoadingMore,
             );
           },
         ),
@@ -511,6 +558,7 @@ class _ResultsList extends StatelessWidget {
     required this.query,
     required this.rows,
     this.mealHint,
+    this.isLoadingMore = false,
   });
 
   final String query;
@@ -520,6 +568,10 @@ class _ResultsList extends StatelessWidget {
   /// food-detail route can seed the log-entry sheet's default meal.
   /// Null preserves the route's stock behaviour (no query param).
   final Meal? mealHint;
+
+  /// `true` while the next page is being fetched. Renders a trailing
+  /// progress indicator row so the user knows more rows are arriving.
+  final bool isLoadingMore;
 
   @override
   Widget build(BuildContext context) {
@@ -542,7 +594,7 @@ class _ResultsList extends StatelessWidget {
                 _detailPathWithMealHint(rows[i].id, mealHint),
               ),
             ),
-            if (i < rows.length - 1)
+            if (i < rows.length - 1 || isLoadingMore)
               Divider(
                 height: 1,
                 thickness: 1,
@@ -551,6 +603,20 @@ class _ResultsList extends StatelessWidget {
                 endIndent: 0,
               ),
           ],
+          if (isLoadingMore)
+            Padding(
+              padding: EdgeInsets.symmetric(vertical: context.space.x4),
+              child: Center(
+                child: SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: context.colors.ink3,
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );
