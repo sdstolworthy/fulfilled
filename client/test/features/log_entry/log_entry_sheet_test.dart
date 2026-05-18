@@ -302,6 +302,11 @@ void main() {
         addTearDown(tester.view.resetPhysicalSize);
         addTearDown(tester.view.resetDevicePixelRatio);
 
+        // Compact-create now goes through the same synchronous
+        // `LogRepository.create` path the expanded form uses, so the
+        // capturing repo needs a stub to return.
+        repo.stubCreateReturn = _stubLogEntry(DateTime.now());
+
         final router = _routerWithSheet(
           sheet: () => LogEntrySheetBody(
             food: _testFood(),
@@ -322,14 +327,14 @@ void main() {
         expect(router.routerDelegate.currentConfiguration.uri.path,
             equals('/foods/f_test'));
 
-        // Save. Compact-create writes to the outbox + invalidates +
-        // `context.go(pathForDay(today))`.
+        // Save. Compact-create awaits `LogRepository.create`, then
+        // invalidates + `context.go(pathForDay(today))`.
         await tester.tap(find.byKey(const Key('log_entry_save_button')));
         // Need a couple of pumps for the awaits inside _onCreatePressed
-        // to resolve (outbox enqueue + the post-await `context.go`).
-        // We avoid `pumpAndSettle` here because the SnackBar's 4-second
-        // dwell timer keeps the binding "settling" longer than the
-        // suite's patience budget.
+        // to resolve (repo.create + the post-await `context.go`).
+        // We avoid `pumpAndSettle` here because the SnackBar's dwell
+        // timer keeps the binding "settling" longer than the suite's
+        // patience budget.
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 50));
 
@@ -357,6 +362,8 @@ void main() {
         final m = yesterday.month.toString().padLeft(2, '0');
         final d = yesterday.day.toString().padLeft(2, '0');
         final expectedPath = '/today/$y-$m-$d';
+
+        repo.stubCreateReturn = _stubLogEntry(yesterday);
 
         final router = _routerWithSheet(
           sheet: () => LogEntrySheetBody(
@@ -401,25 +408,8 @@ void main() {
         addTearDown(tester.view.resetDevicePixelRatio);
 
         // Configure the repo so the direct `LogRepository.create` path
-        // succeeds (expanded uses the repo, not the outbox).
-        repo.stubCreateReturn = LogEntry(
-          id: 'le_server_0',
-          foodId: 'f_test',
-          foodName: 'Test food',
-          servingId: 'sv_100g',
-          servingName: '100 g',
-          consumedOn: DateTime.now(),
-          meal: Meal.lunch,
-          quantity: Decimal.one,
-          enteredAmount: Decimal.fromInt(100),
-          enteredUnit: Unit.g,
-          nutritionSnapshot: NutritionSnapshot(
-            caloriesKcal: Decimal.fromInt(100),
-          ),
-          note: null,
-          createdAt: DateTime.now(),
-          updatedAt: DateTime.now(),
-        );
+        // succeeds (sync POST on all form factors).
+        repo.stubCreateReturn = _stubLogEntry(DateTime.now());
 
         // Use the production `showLogEntrySheet` here so the dialog
         // overlay is the real one. We can't just pump
@@ -635,6 +625,28 @@ Widget _routerHarness({
 /// and returns a configurable stub entry. We sidestep the real mock
 /// catalog (which trips on `f_test` not being in the seed) by
 /// overriding `create` and `update` directly.
+/// Build a server-side stub `LogEntry` for tests that exercise the
+/// post-save router. The fields are deliberately generic — assertions
+/// in these tests are about the route, not the entry shape.
+LogEntry _stubLogEntry(DateTime consumedOn) => LogEntry(
+      id: 'le_server_0',
+      foodId: 'f_test',
+      foodName: 'Test food',
+      servingId: 'sv_100g',
+      servingName: '100 g',
+      consumedOn: consumedOn,
+      meal: Meal.lunch,
+      quantity: Decimal.one,
+      enteredAmount: Decimal.fromInt(100),
+      enteredUnit: Unit.g,
+      nutritionSnapshot: NutritionSnapshot(
+        caloriesKcal: Decimal.fromInt(100),
+      ),
+      note: null,
+      createdAt: DateTime.now(),
+      updatedAt: DateTime.now(),
+    );
+
 class _RouterCapturingRepository extends LogRepository {
   _RouterCapturingRepository({
     required super.api,

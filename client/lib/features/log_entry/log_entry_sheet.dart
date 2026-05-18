@@ -44,9 +44,9 @@ final quantityProvider = StateProvider<Decimal>((ref) => Decimal.one);
 /// resulting `LogEntry?` — `null` if the user dismissed without saving.
 ///
 /// **Modes.**
-/// - `existing == null` → create mode (today's behaviour). On compact,
-///   the returned `LogEntry` is an **optimistic** value constructed from
-///   the form state; the real entry is created when the outbox flushes.
+/// - `existing == null` → create mode. Submit awaits
+///   `LogRepository.create` on every form factor; the returned
+///   `LogEntry` is the server response.
 /// - `existing != null` → edit mode. The form pre-seeds from the entry.
 ///   The header gets an "(editing)" suffix; the CTA reads "Save changes".
 ///   Submit routes through `LogRepository.update` on every form factor
@@ -439,51 +439,19 @@ class _LogEntrySheetBodyState extends ConsumerState<LogEntrySheetBody> {
     setState(() => _submitting = true);
     final logCreate = _buildLogCreate();
     // Fire the test seam first so callers can observe the constructed
-    // payload regardless of which branch (outbox / direct) runs.
+    // payload.
     widget.onSubmit(logCreate);
 
     final messenger = ScaffoldMessenger.maybeOf(context);
     final formFactor = FormFactor.of(context);
 
-    if (formFactor.isCompact) {
-      // Outbox path. Enqueue, surface the syncing SnackBar, invalidate
-      // provider families, then route-to-effect. The outbox notifier
-      // flushes asynchronously; day-summary updates when the server
-      // response lands. The optimistic row is rendered on Today via
-      // the outbox provider's own optimistic merge — no extra wiring
-      // needed for it to appear post-save.
-      try {
-        await ref
-            .read(logOutboxProvider.notifier)
-            .enqueue(payload: logCreate.toJson());
-        messenger?.showSnackBar(
-          const SnackBar(content: Text('Logged — syncing')),
-        );
-        if (!mounted) return;
-        // Invalidate provider families so any optimistic merge re-runs.
-        // Safe to invalidate here; the outbox notifier owns the
-        // persisted state.
-        ref
-          ..invalidate(daySummaryProvider(_date))
-          ..invalidate(logEntriesProvider(_date))
-          ..invalidate(recentFoodsProvider)
-          ..invalidate(frequentFoodsProvider);
-        // T-24 Case 2: route-to-effect. `go` replaces the stack to the
-        // day-view; the sheet's own route disappears as a side effect
-        // on compact (DraggableScrollableSheet is in the same stack).
-        context.go(pathForDay(_date));
-      } catch (e) {
-        if (!mounted) return;
-        setState(() => _submitting = false);
-        messenger?.showSnackBar(
-          SnackBar(content: Text('Could not queue log: $e')),
-        );
-      }
-      return;
-    }
-
-    // Medium / expanded: direct repository call. Surface failures
-    // inline (T-11) — SnackBar, sheet stays open with input intact.
+    // Sync POST on every form factor. The compact branch used to enqueue
+    // via the outbox and redirect optimistically — that path silently
+    // swallowed server-side failures (the redirect happened before the
+    // drain ran, and the failed-outbox UI surface isn't visible on the
+    // day view). For now we wait on the server, surface failures inline,
+    // and only navigate on success. Offline queueing can come back as a
+    // dedicated layer once the happy path is reliable end-to-end.
     try {
       final entry = await ref.read(logRepositoryProvider).create(logCreate);
       if (!mounted) return;
@@ -492,14 +460,25 @@ class _LogEntrySheetBodyState extends ConsumerState<LogEntrySheetBody> {
         ..invalidate(logEntriesProvider(_date))
         ..invalidate(recentFoodsProvider)
         ..invalidate(frequentFoodsProvider);
-      // T-24 Case 2 with dialog correction: pop the dialog first, then
-      // `go` to the day view. Order matters — without the pop the new
-      // page renders under the orphaned dialog frame (architect §6.3 /
-      // PM acceptance §2.2). The `context.mounted` check between is
-      // defence-in-depth in case the BuildContext is disposed during pop.
-      Navigator.of(context).pop<LogEntry?>(entry);
-      if (!context.mounted) return;
-      context.go(pathForDay(_date));
+      messenger?.showSnackBar(
+        const SnackBar(
+          content: Text('Logged'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      if (formFactor.isCompact) {
+        // The bottom-sheet is a route in the navigator stack; `go`
+        // replaces the stack and the sheet route disappears with it.
+        context.go(pathForDay(_date));
+      } else {
+        // Medium/expanded uses `showDialog`, which puts the dialog on
+        // top of the current page. We must pop it explicitly before
+        // `go` so the new page doesn't render under an orphan frame
+        // (architect §6.3 / PM acceptance §2.2).
+        Navigator.of(context).pop<LogEntry?>(entry);
+        if (!context.mounted) return;
+        context.go(pathForDay(_date));
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() => _submitting = false);
