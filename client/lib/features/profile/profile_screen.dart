@@ -10,7 +10,9 @@ import '../../domain/units/length.dart';
 import '../../domain/units/weight.dart';
 import '../../domain/user.dart';
 import '../../providers/food_providers.dart';
+import '../../providers/goal_providers.dart';
 import '../../providers/profile_providers.dart';
+import '../../repositories/goal_repository.dart';
 import '../../routing/routes.dart';
 import '../../theme/context_extensions.dart';
 import '../../widgets/empty_state.dart';
@@ -202,6 +204,18 @@ class _ProfileBody extends ConsumerWidget {
           ],
         ),
 
+        // Goal card. Single row routes to the Goals screen, where the
+        // user can review the active goal, edit it, or start a new
+        // one. Without this surface, compact users have no way to
+        // change their kcal/macro targets from the profile page
+        // (sidebar entry exists only on expanded widths).
+        SettingsCard(
+          title: 'Goal',
+          rows: <Widget>[
+            _GoalRow(),
+          ],
+        ),
+
         // Preferences section. PM Risk 5: Appearance row is **NOT**
         // rendered, not even disabled. v1 ships without the toggle.
         SettingsCard(
@@ -304,6 +318,32 @@ class _ProfileBody extends ConsumerWidget {
 // ---------------------------------------------------------------------------
 // Identity row
 // ---------------------------------------------------------------------------
+
+/// Goal row inside the Profile "Goal" card. The trailing value
+/// summarises the active goal (daily kcal target) so the user sees
+/// at a glance what's in effect; tap pushes `/goals`, which hosts
+/// the New / Edit flows. Loading shows an em-dash; no-goal shows
+/// "Set" and routes the same way so a tap lands the user on the
+/// new-goal CTA. Errors degrade to "—" silently — the goals screen
+/// surfaces the real error on arrival.
+class _GoalRow extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final async = ref.watch(activeGoalProvider);
+    final value = async.when(
+      data: (g) => '${g.dailyCalorieTarget} kcal / day',
+      error: (e, _) => e is GoalNotFoundError ? 'Set' : '—',
+      loading: () => '—',
+    );
+    return SettingsRow(
+      icon: Icons.flag_outlined,
+      label: 'Daily calorie target',
+      value: value,
+      semanticsLabel: 'Daily calorie target $value. Tap to edit.',
+      onTap: () => context.push(Routes.goalsPath),
+    );
+  }
+}
 
 class _IdentityRow extends StatelessWidget {
   const _IdentityRow({required this.user});
