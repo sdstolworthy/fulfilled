@@ -192,6 +192,22 @@ class _NewGoalFormState extends ConsumerState<_NewGoalForm> {
         onRetry: () => ref.invalidate(meProvider),
       ),
       data: (user) {
+        // If the profile is missing one of the inputs the kcal
+        // estimator needs (sex / birthDate / height / weight /
+        // activity), show the prereq surface instead of greying
+        // out the editor. The picker each row opens invalidates
+        // `meProvider`, which causes this `data:` branch to rebuild
+        // with one fewer missing field — and once the list is
+        // empty, the editor takes its place.
+        if (missingGoalPrereqFields(user).isNotEmpty) {
+          return SingleChildScrollView(
+            padding: EdgeInsets.symmetric(
+              horizontal: tokens.space.x5,
+              vertical: tokens.space.x4,
+            ),
+            child: GoalProfilePrereqs(user: user),
+          );
+        }
         final estimate = _estimateFor(user);
 
         return SingleChildScrollView(
@@ -202,10 +218,6 @@ class _NewGoalFormState extends ConsumerState<_NewGoalForm> {
           child: GoalEditorBody(
             direction: _direction,
             rateKgPerWeek: _rate,
-            // A `null` estimate means the profile is loaded but missing
-            // one or more required fields (sex / birthDate / heightCm /
-            // currentWeightKg / activityLevel). Render the skeleton and
-            // disable save — the user has to complete their profile first.
             previewKcal: estimate?.dailyTargetKcal,
             targetWeightKg:
                 _targetWeightForSection(currentKg: user.currentWeightKg),

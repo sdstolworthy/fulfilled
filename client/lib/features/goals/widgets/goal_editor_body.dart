@@ -6,11 +6,18 @@ import '../../../domain/decimal_format.dart';
 import '../../../domain/enums.dart';
 import '../../../domain/units/energy.dart';
 import '../../../domain/units/weight.dart';
+import '../../../domain/user.dart';
 import '../../../providers/profile_providers.dart';
 import '../../../theme/context_extensions.dart';
 import '../../../widgets/number_text.dart';
 import '../../../widgets/skeleton.dart';
 import '../../../widgets/weight_stepper.dart';
+import '../../profile/widgets/activity_level_picker.dart';
+import '../../profile/widgets/birth_date_picker.dart';
+import '../../profile/widgets/current_weight_sheet.dart';
+import '../../profile/widgets/height_stepper_sheet.dart';
+import '../../profile/widgets/settings_row.dart';
+import '../../profile/widgets/sex_picker.dart';
 
 /// Shared form body for the New / Edit goal flows.
 ///
@@ -360,6 +367,140 @@ class _PreviewBlock extends StatelessWidget {
         return 'Estimated daily intake for this weekly gain rate.';
       case GoalDirection.maintain:
         return 'Estimated daily intake to hold steady.';
+    }
+  }
+}
+
+/// Returns the profile fields the kcal estimator needs but the user
+/// has not set yet. The order is intentional: it matches the Profile
+/// screen's Body card so the user sees the same shape they're used
+/// to. Empty list = profile is ready to drive a goal.
+List<GoalPrereqField> missingGoalPrereqFields(User user) {
+  return <GoalPrereqField>[
+    if (user.sex == null) GoalPrereqField.sex,
+    if (user.birthDate == null) GoalPrereqField.birthDate,
+    if (user.heightCm == null) GoalPrereqField.height,
+    if (user.currentWeightKg == null) GoalPrereqField.weight,
+    if (user.activityLevel == null) GoalPrereqField.activity,
+  ];
+}
+
+/// Profile fields the kcal estimator depends on. Exposed at the
+/// library level so [_NewGoalForm] / [_EditGoalForm] can pre-check
+/// `missingGoalPrereqFields(user).isEmpty` before rendering the
+/// editor instead of the prereq surface.
+enum GoalPrereqField { sex, birthDate, height, weight, activity }
+
+/// Renders when the user opens the goal editor without a complete
+/// profile. Instead of greying out the editor (which hides *why*
+/// nothing works), this surface tells the user exactly which fields
+/// are still needed and lets them set each one inline. Tapping a row
+/// opens the same sheet the Profile screen uses; the picker
+/// invalidates `meProvider` on commit so the prereq surface rebuilds
+/// and either renders one fewer row, or — once the last field is
+/// set — swaps back to the editor.
+class GoalProfilePrereqs extends ConsumerWidget {
+  const GoalProfilePrereqs({required this.user, super.key});
+
+  final User user;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final tokens = context.tokens;
+    final missing = missingGoalPrereqFields(user);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        Text(
+          'Finish your profile to set a goal',
+          style: context.text.title.copyWith(fontSize: 18),
+        ),
+        SizedBox(height: tokens.space.x2),
+        Text(
+          'We use these to compute your daily calorie target. '
+          'Tap a row to fill it in — your goal opens as soon as '
+          'everything is set.',
+          style: context.text.body.copyWith(color: context.colors.ink2),
+        ),
+        SizedBox(height: tokens.space.x4),
+        Container(
+          decoration: BoxDecoration(
+            color: context.colors.surface,
+            border: Border.all(color: context.colors.line),
+            borderRadius: BorderRadius.circular(tokens.radius.r2),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              for (var i = 0; i < missing.length; i++) ...<Widget>[
+                _prereqRow(context, ref, missing[i]),
+                if (i < missing.length - 1)
+                  Divider(
+                    height: 1,
+                    thickness: 1,
+                    color: context.colors.line2,
+                    indent: tokens.space.x4 + 30 + tokens.space.x3,
+                    endIndent: 0,
+                  ),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _prereqRow(
+    BuildContext context,
+    WidgetRef ref,
+    GoalPrereqField field,
+  ) {
+    switch (field) {
+      case GoalPrereqField.sex:
+        return SettingsRow(
+          icon: Icons.person_outline,
+          label: 'Sex',
+          value: 'Set',
+          onTap: () => showSexPicker(context, initial: user.sex),
+        );
+      case GoalPrereqField.birthDate:
+        return SettingsRow(
+          icon: Icons.calendar_today_outlined,
+          label: 'Birth date',
+          value: 'Set',
+          onTap: () =>
+              showBirthDatePicker(context, ref, initial: user.birthDate),
+        );
+      case GoalPrereqField.height:
+        return SettingsRow(
+          icon: Icons.height,
+          label: 'Height',
+          value: 'Set',
+          onTap: () =>
+              showHeightStepperSheet(context, initial: user.heightCm),
+        );
+      case GoalPrereqField.weight:
+        return SettingsRow(
+          icon: Icons.monitor_weight_outlined,
+          label: 'Current weight',
+          value: 'Set',
+          onTap: () => showCurrentWeightSheet(
+            context,
+            initial: user.currentWeightKg,
+          ),
+        );
+      case GoalPrereqField.activity:
+        return SettingsRow(
+          icon: Icons.directions_run,
+          label: 'Activity',
+          value: 'Set',
+          onTap: () => showActivityLevelPicker(
+            context,
+            initial: user.activityLevel,
+          ),
+        );
     }
   }
 }
