@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -26,6 +28,13 @@ class OidcExchangeError extends OidcExchangeResult {
   final String message;
 }
 
+/// Hard ceiling on the whole exchange flow (POST + token persist).
+/// Dio already has per-request `connectTimeout`/`receiveTimeout` on
+/// the order of seconds, but `signIn` also awaits a `SecureStorage`
+/// write that has no built-in timeout — and we'd rather surface an
+/// error than leave the "Completing sign-in…" body up indefinitely.
+const Duration kOidcExchangeTimeout = Duration(seconds: 20);
+
 /// `POST /auth/oidc/exchange {code}` → opaque bearer → store via
 /// `authTokenProvider.signIn`. Shared between the web `LoginScreen`'s
 /// inline handler (consumes `?oidc_code=…` off `Uri.base`) and the
@@ -37,6 +46,20 @@ Future<OidcExchangeResult> runOidcExchange({
   required WidgetRef ref,
   required String handoff,
 }) async {
+  try {
+    return await _runOidcExchangeInner(ref, handoff)
+        .timeout(kOidcExchangeTimeout);
+  } on TimeoutException {
+    return OidcExchangeResult.error(
+      'Sign-in timed out. Please try again.',
+    );
+  }
+}
+
+Future<OidcExchangeResult> _runOidcExchangeInner(
+  WidgetRef ref,
+  String handoff,
+) async {
   try {
     final dio = ref.read(apiClientProvider).dio;
     final res = await dio.post<dynamic>(

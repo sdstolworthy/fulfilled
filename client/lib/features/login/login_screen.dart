@@ -106,6 +106,22 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         // GoRouter writes the `/today` location.
         OidcNavigator.instance.stripQueryParam('oidc_code');
         context.go(Routes.todayPath);
+        // Watchdog: if `context.go` didn't tear the screen down by
+        // the next second, the navigation got swallowed (router
+        // redirect bounced us back, `meProvider` errored, etc.).
+        // Surface an error rather than leaving the "Completing
+        // sign-in…" body up indefinitely — at least the user can
+        // act on it. Cleanup of `_exchanging` is implicit in
+        // setting `_exchangeError`.
+        Future<void>.delayed(const Duration(seconds: 1), () {
+          if (!mounted) return;
+          setState(() {
+            _exchanging = false;
+            _exchangeError =
+                'Sign-in completed but the app didn’t redirect. '
+                'Try refreshing the page.';
+          });
+        });
       case OidcExchangeError(:final message):
         setState(() {
           _exchanging = false;
