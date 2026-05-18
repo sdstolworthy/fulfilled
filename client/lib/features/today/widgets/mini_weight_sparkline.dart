@@ -68,14 +68,20 @@ class MiniWeightSparkline extends StatelessWidget {
           else ...<Widget>[
             _Header(points: points, unit: unit),
             SizedBox(height: context.space.x2),
+            // Perf (Flutter doc — "Performance considerations" on
+            // CustomPaint): isolate the cubic-path painter so a scroll
+            // of the parent right-rail column or a sibling card rebuild
+            // doesn't force the chart to re-rasterise.
             SizedBox(
               height: 64,
-              child: CustomPaint(
-                painter: _SparklinePainter(
-                  points: points,
-                  lineColor: colors.accent,
-                  fillTop: colors.accent.withValues(alpha: 0.18),
-                  fillBottom: colors.accent.withValues(alpha: 0.0),
+              child: RepaintBoundary(
+                child: CustomPaint(
+                  painter: _SparklinePainter(
+                    points: points,
+                    lineColor: colors.accent,
+                    fillTop: colors.accent.withValues(alpha: 0.18),
+                    fillBottom: colors.accent.withValues(alpha: 0.0),
+                  ),
                 ),
               ),
             ),
