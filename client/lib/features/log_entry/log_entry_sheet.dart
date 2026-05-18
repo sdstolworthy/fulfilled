@@ -488,6 +488,72 @@ class _LogEntrySheetBodyState extends ConsumerState<LogEntrySheetBody> {
     }
   }
 
+  /// Edit-mode trash affordance. Confirms with an `AlertDialog`,
+  /// then issues `DELETE /log/:id`, invalidates the dependent
+  /// providers, and routes to the day view the entry was tagged to
+  /// (T-24 Case 2 — same shape as edit/create on save). Failure
+  /// surfaces inline (T-11): SnackBar, sheet stays open.
+  Future<void> _onDeletePressed() async {
+    if (_submitting) return;
+    final ex = widget.existing;
+    if (ex == null) return;
+    final navigator = Navigator.of(context);
+    final messenger = ScaffoldMessenger.maybeOf(context);
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete entry?'),
+        content: Text(
+          'Remove this ${widget.food.name} entry from your log? '
+          'This can\'t be undone.',
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            key: const Key('log_entry_delete_confirm'),
+            style: TextButton.styleFrom(
+              foregroundColor: context.colors.dangerOver,
+            ),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    if (!mounted) return;
+
+    setState(() => _submitting = true);
+    try {
+      await ref.read(logRepositoryProvider).delete(ex.id);
+      if (!mounted) return;
+      ref
+        ..invalidate(daySummaryProvider(ex.consumedOn))
+        ..invalidate(logEntriesProvider(ex.consumedOn))
+        ..invalidate(recentFoodsProvider)
+        ..invalidate(frequentFoodsProvider);
+      messenger?.showSnackBar(
+        const SnackBar(
+          content: Text('Entry deleted'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+      navigator.maybePop<LogEntry?>();
+      if (!context.mounted) return;
+      context.go(pathForDay(ex.consumedOn));
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _submitting = false);
+      messenger?.showSnackBar(
+        SnackBar(content: Text('Could not delete entry: $e')),
+      );
+    }
+  }
+
   /// T-24 Case 2 — route-to-effect.
   ///
   /// The natural home of a just-edited log entry is the day view for
@@ -595,7 +661,11 @@ class _LogEntrySheetBodyState extends ConsumerState<LogEntrySheetBody> {
                 ),
               ),
             ),
-          _Header(food: widget.food, editing: _isEditing),
+          _Header(
+            food: widget.food,
+            editing: _isEditing,
+            onDelete: _isEditing ? _onDeletePressed : null,
+          ),
           Expanded(
             child: SingleChildScrollView(
               controller: widget.scrollController,
@@ -681,13 +751,22 @@ class _LogEntrySheetBodyState extends ConsumerState<LogEntrySheetBody> {
 }
 
 class _Header extends StatelessWidget {
-  const _Header({required this.food, this.editing = false});
+  const _Header({
+    required this.food,
+    this.editing = false,
+    this.onDelete,
+  });
   final Food food;
 
   /// In edit mode the header appends a small `(editing)` suffix in
   /// `text.meta` / `ink2` style below the food name. Architect §2.3 —
   /// no new tokens, no `IconButton36`, just one extra `Text`.
   final bool editing;
+
+  /// Tapped on the trash affordance. Null hides the icon (create mode,
+  /// or edit mode with deletion gated off — currently always provided
+  /// in edit mode).
+  final VoidCallback? onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -735,6 +814,32 @@ class _Header extends StatelessWidget {
             ),
           ),
           SizedBox(width: space.x3),
+          if (onDelete != null) ...<Widget>[
+            Semantics(
+              button: true,
+              label: 'Delete entry',
+              child: InkResponse(
+                key: const Key('log_entry_header_delete'),
+                onTap: onDelete,
+                radius: 24,
+                child: Container(
+                  width: 30,
+                  height: 30,
+                  decoration: BoxDecoration(
+                    color: colors.line2,
+                    shape: BoxShape.circle,
+                  ),
+                  alignment: Alignment.center,
+                  child: Icon(
+                    Icons.delete_outline,
+                    size: 16,
+                    color: colors.dangerOver,
+                  ),
+                ),
+              ),
+            ),
+            SizedBox(width: space.x2),
+          ],
           Semantics(
             button: true,
             label: 'Close',
