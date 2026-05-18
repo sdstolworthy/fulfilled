@@ -8,7 +8,6 @@ import '../../../providers/repository_providers.dart';
 import '../../../providers/weight_providers.dart';
 import '../../../theme/context_extensions.dart';
 import '../../../widgets/weight_stepper.dart';
-import '../../goals/recompute_active_goal.dart';
 import 'editor_footer.dart';
 import 'editor_host.dart';
 
@@ -87,9 +86,6 @@ class _CurrentWeightSheetState extends ConsumerState<CurrentWeightSheet> {
         ..invalidate(meProvider)
         ..invalidate(weightSeriesProvider)
         ..invalidate(weightHistoryProvider);
-      // Current weight feeds `estimateCalories`; resync the active
-      // goal so the kcal target tracks the user's actual weight.
-      await recomputeActiveGoalAfterProfileChange(ref);
       if (mounted) Navigator.of(context).pop();
     } catch (_) {
       if (mounted) {

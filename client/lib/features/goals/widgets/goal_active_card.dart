@@ -1,10 +1,12 @@
 import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../domain/enums.dart';
 import '../../../domain/goal.dart';
 import '../../../domain/units/energy.dart';
 import '../../../domain/units/macros.dart';
+import '../../../providers/goal_providers.dart';
 import '../../../theme/context_extensions.dart';
 import '../../../widgets/primary_button.dart';
 
@@ -31,7 +33,7 @@ import '../../../widgets/primary_button.dart';
 /// "deliberate restart" affordance that should read as quieter than
 /// the edit path. Previously both buttons read as primary-styled and
 /// the user paused to disambiguate.
-class GoalActiveCard extends StatelessWidget {
+class GoalActiveCard extends ConsumerWidget {
   const GoalActiveCard({
     required this.goal,
     required this.onEditCurrent,
@@ -44,12 +46,18 @@ class GoalActiveCard extends StatelessWidget {
   final VoidCallback onNewGoal;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final colors = context.colors;
     final tokens = context.tokens;
     final mutedTeal = colors.mutedTealOnDark;
 
-    final kcalTarget = goal.dailyCalorieTarget;
+    // Prefer the derived live target so changing activity / weight /
+    // etc. on the profile page reflects here on next paint. Fall
+    // back to the stored snapshot when the derived value isn't
+    // available (profile incomplete, or upstream still hydrating).
+    final effective = ref.watch(effectiveActiveGoalTargetsProvider);
+    final kcalTarget =
+        effective?.dailyTargetKcal ?? goal.dailyCalorieTarget;
     final kcalLabel = kcalTarget == null
         ? '—'
         : formatKcal(Decimal.fromInt(kcalTarget));

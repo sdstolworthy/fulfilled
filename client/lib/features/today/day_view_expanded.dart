@@ -8,6 +8,7 @@ import 'package:fulfilled/widgets/meal_section.dart';
 import 'package:fulfilled/widgets/primary_button.dart';
 import 'package:fulfilled/widgets/ring_summary_card.dart';
 
+import '../../domain/calories/estimate.dart';
 import '../../domain/day_summary.dart';
 import '../../domain/enums.dart';
 import '../../domain/food.dart';
@@ -15,6 +16,7 @@ import '../../domain/log_entry.dart';
 import '../../domain/meal.dart';
 import '../../domain/weight.dart';
 import '../../providers/food_providers.dart';
+import '../../providers/goal_providers.dart';
 import '../../providers/log_providers.dart';
 import '../../providers/profile_providers.dart';
 import '../../providers/repository_providers.dart';
@@ -58,6 +60,13 @@ class DayViewExpanded extends ConsumerWidget {
     final frequentsAsync = ref.watch(frequentFoodsProvider);
     final weightAsync = ref.watch(weightSeriesProvider(WeightRange.oneMonth));
     final weightUnit = ref.watch(weightUnitProvider);
+    // For today's date the ring's kcal/macro targets are *derived*
+    // from the live profile + active-goal intent; the BE-returned
+    // stored values are a snapshot and drift after profile edits.
+    // Past days keep the BE value (per-day historical snapshot).
+    final effective = isLocalNowDay(date)
+        ? ref.watch(effectiveActiveGoalTargetsProvider)
+        : null;
 
     // The outer `ShellRoute` already wraps this widget in `AppScaffold`
     // (which is what renders the sidebar nav on expanded). Wrapping again
@@ -163,6 +172,7 @@ class DayViewExpanded extends ConsumerWidget {
                     width: 360,
                     child: _RightRail(
                       summaryAsync: summaryAsync,
+                      effective: effective,
                       recentsAsync: recentsAsync,
                       frequentsAsync: frequentsAsync,
                       weightAsync: weightAsync,
@@ -367,6 +377,7 @@ class _GridShell extends StatelessWidget {
 class _RightRail extends StatelessWidget {
   const _RightRail({
     required this.summaryAsync,
+    required this.effective,
     required this.recentsAsync,
     required this.frequentsAsync,
     required this.weightAsync,
@@ -374,6 +385,12 @@ class _RightRail extends StatelessWidget {
   });
 
   final AsyncValue<DaySummary> summaryAsync;
+
+  /// Live derived kcal + macro targets for today, or null on past
+  /// days / when an upstream input is missing. Passed in from the
+  /// parent so the rail itself stays a stateless leaf.
+  final CalorieEstimate? effective;
+
   final AsyncValue<List<Food>> recentsAsync;
   final AsyncValue<List<Food>> frequentsAsync;
   final AsyncValue<List<WeightSeriesPoint>> weightAsync;
@@ -385,7 +402,10 @@ class _RightRail extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
         summaryAsync.when(
-          data: (s) => RingSummaryCard(summary: s, compact: false),
+          data: (s) => RingSummaryCard(
+            summary: overrideDaySummaryWithEffective(s, effective),
+            compact: false,
+          ),
           loading: () => const TodaySkeleton(
             height: 296,
             semanticsLabel: 'Loading summary',

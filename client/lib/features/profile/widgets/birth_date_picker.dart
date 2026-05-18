@@ -4,7 +4,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../domain/user.dart';
 import '../../../providers/profile_providers.dart';
 import '../../../providers/repository_providers.dart';
-import '../../goals/recompute_active_goal.dart';
 
 /// Birth date editor. Uses Material's built-in `showDatePicker` rather
 /// than rolling our own — the system picker is keyboard- and a11y-
@@ -49,7 +48,6 @@ Future<void> showBirthDatePicker(
     final repo = ref.read(profileRepositoryProvider);
     await repo.update(UserPatch(birthDate: picked));
     ref.invalidate(meProvider);
-    await recomputeActiveGoalAfterProfileChange(ref);
   } catch (_) {
     // Surface inline via SnackBar — the picker is gone by now, so a
     // SnackBar is the legal channel (T-11 reserves AlertDialog for

@@ -14,6 +14,7 @@ import '../../domain/food.dart';
 import '../../domain/log_entry.dart';
 import '../../domain/meal.dart';
 import '../../providers/food_providers.dart';
+import '../../providers/goal_providers.dart';
 import '../../providers/log_providers.dart';
 import '../../providers/repository_providers.dart';
 import '../../routing/routes.dart';
@@ -49,6 +50,15 @@ class DayViewCompact extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final summaryAsync = ref.watch(daySummaryProvider(date));
     final entriesAsync = ref.watch(logEntriesProvider(date));
+    // For *today*, the kcal target shown in the ring is derived from
+    // the current profile + goal intent — not the stored snapshot on
+    // the goal record (which can drift after a profile edit until
+    // the user re-saves the goal). For past days we trust the BE's
+    // value: it's the closest thing we have to a per-day historical
+    // snapshot of the target the user was logging against.
+    final effective = isLocalNowDay(date)
+        ? ref.watch(effectiveActiveGoalTargetsProvider)
+        : null;
 
     // The outer `ShellRoute` already wraps this widget in `AppScaffold`,
     // so we render a transparent inner `Scaffold` here purely to attach
@@ -87,7 +97,10 @@ class DayViewCompact extends ConsumerWidget {
                   context.space.x3 + 2,
                 ),
                 child: summaryAsync.when(
-                  data: (s) => RingSummaryCard(summary: s, compact: true),
+                  data: (s) => RingSummaryCard(
+                    summary: overrideDaySummaryWithEffective(s, effective),
+                    compact: true,
+                  ),
                   loading: () => const TodaySkeleton(
                     height: 196,
                     semanticsLabel: 'Loading today summary',

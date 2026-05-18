@@ -334,8 +334,16 @@ class _GoalRow extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final async = ref.watch(activeGoalProvider);
+    // Prefer the live derived target — it tracks profile edits
+    // without waiting for the user to re-save the goal. Fall back
+    // to the stored snapshot only when the derived value can't be
+    // computed yet (e.g., profile still hydrating).
+    final effective = ref.watch(effectiveActiveGoalTargetsProvider);
     final value = async.when(
-      data: (g) => '${g.dailyCalorieTarget} kcal / day',
+      data: (g) {
+        final kcal = effective?.dailyTargetKcal ?? g.dailyCalorieTarget;
+        return kcal == null ? 'Set' : '$kcal kcal / day';
+      },
       error: (e, _) => e is GoalNotFoundError ? 'Set' : '—',
       loading: () => '—',
     );
