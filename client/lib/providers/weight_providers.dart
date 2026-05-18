@@ -1,3 +1,4 @@
+import 'package:decimal/decimal.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../domain/enums.dart';
@@ -31,4 +32,26 @@ final weightSeriesProvider =
 final weightHistoryProvider = FutureProvider<List<WeightEntry>>((ref) {
   final repo = ref.watch(weightRepositoryProvider);
   return repo.history();
+});
+
+/// Latest logged weight in canonical kg, or null when the user has
+/// never logged a weight.
+///
+/// **Why this lives in `providers/` instead of on `User`.** "Current
+/// weight" is a pure derivation of the weight feed; baking it onto
+/// the `User` wire record forces a `meProvider` invalidate from
+/// every weight write (cross-tier coupling). Reading through this
+/// provider keeps the dependency arrow pointing one way: weight
+/// writes invalidate weight providers; profile widgets re-derive
+/// via `ref.watch` on the next paint.
+///
+/// Consumers: profile identity row, current-weight sheet seed,
+/// goal editor's calorie-estimator inputs, target-weight stepper
+/// seed, prereq-fields check.
+final currentWeightKgProvider = FutureProvider<Decimal?>((ref) async {
+  final entries = await ref.watch(weightHistoryProvider.future);
+  if (entries.isEmpty) return null;
+  // `weightHistoryProvider` returns newest-first, so index 0 is
+  // the latest log.
+  return entries.first.weightKg;
 });

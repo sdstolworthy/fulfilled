@@ -51,13 +51,21 @@ WeightEntry _entry(double kg, {int daysAgo = 0}) {
   );
 }
 
-User _user({Decimal? currentWeightKg, WeightUnit weightUnit = WeightUnit.kg}) {
+// `currentWeightKg` no longer lives on User — it's derived via
+// `currentWeightKgProvider`. The parameter is retained so the
+// quarantined call sites still compile; it has no effect on the
+// returned fixture and the test will need rebaselining around the
+// derived provider before it can be unskipped.
+User _user({
+  // ignore: avoid_unused_constructor_parameters, unused_element_parameter
+  Decimal? currentWeightKg,
+  WeightUnit weightUnit = WeightUnit.kg,
+}) {
   final now = _today();
   return User(
     id: 'u_test',
     createdAt: now,
     updatedAt: now,
-    currentWeightKg: currentWeightKg,
     weightUnit: weightUnit,
   );
 }

@@ -11,6 +11,7 @@ import '../../../providers/goal_providers.dart';
 import '../../../providers/log_providers.dart';
 import '../../../providers/profile_providers.dart';
 import '../../../providers/repository_providers.dart';
+import '../../../providers/weight_providers.dart';
 import '../../../theme/context_extensions.dart';
 import '../../../widgets/empty_state.dart';
 import '../../../widgets/primary_button.dart';
@@ -164,6 +165,12 @@ class _NewGoalFormState extends ConsumerState<_NewGoalForm> {
     // formula is identical to edit-goal's; only the seed inputs differ
     // (a brand-new goal starts at lose / 0.5 kg/wk).
     final meAsync = ref.watch(meProvider);
+    // Current weight is derived from the weight feed (it isn't a
+    // field on `User`). Read it through the dedicated provider so a
+    // weight log propagates here automatically. The estimator
+    // accepts `null` and reports "missing input" the same way it
+    // would for any other unset profile field.
+    final currentKg = ref.watch(currentWeightKgProvider).valueOrNull;
 
     return meAsync.when(
       loading: () => SingleChildScrollView(
@@ -199,7 +206,8 @@ class _NewGoalFormState extends ConsumerState<_NewGoalForm> {
         // `meProvider`, which causes this `data:` branch to rebuild
         // with one fewer missing field — and once the list is
         // empty, the editor takes its place.
-        if (missingGoalPrereqFields(user).isNotEmpty) {
+        if (missingGoalPrereqFields(user, currentWeightKg: currentKg)
+            .isNotEmpty) {
           return SingleChildScrollView(
             padding: EdgeInsets.symmetric(
               horizontal: tokens.space.x5,
@@ -208,7 +216,7 @@ class _NewGoalFormState extends ConsumerState<_NewGoalForm> {
             child: GoalProfilePrereqs(user: user),
           );
         }
-        final estimate = _estimateFor(user);
+        final estimate = _estimateFor(user, currentKg);
 
         return SingleChildScrollView(
           padding: EdgeInsets.symmetric(
@@ -219,8 +227,7 @@ class _NewGoalFormState extends ConsumerState<_NewGoalForm> {
             direction: _direction,
             rateKgPerWeek: _rate,
             previewKcal: estimate?.dailyTargetKcal,
-            targetWeightKg:
-                _targetWeightForSection(currentKg: user.currentWeightKg),
+            targetWeightKg: _targetWeightForSection(currentKg: currentKg),
             onTargetWeightChange: (v) => setState(() => _targetWeightKg = v),
             onDirectionChange: (d) => setState(() => _direction = d),
             onRateChange: (r) => setState(() => _rate = r),
@@ -245,14 +252,15 @@ class _NewGoalFormState extends ConsumerState<_NewGoalForm> {
   }
 
   /// Build the [CalorieEstimate] for the current form state + user
-  /// profile. Returns `null` when the profile is missing a required
-  /// field, matching [estimateCalories]'s contract.
-  CalorieEstimate? _estimateFor(User user) {
+  /// profile + the latest logged weight. Returns `null` when any
+  /// required input is missing, matching [estimateCalories]'s
+  /// contract.
+  CalorieEstimate? _estimateFor(User user, Decimal? currentKg) {
     return estimateCalories(
       sex: user.sex,
       birthDate: user.birthDate,
       heightCm: user.heightCm,
-      weightKg: user.currentWeightKg,
+      weightKg: currentKg,
       activityLevel: user.activityLevel,
       direction: _direction,
       rateKgPerWeek: _rate,

@@ -2,15 +2,18 @@ import 'package:decimal/decimal.dart';
 
 import 'enums.dart';
 
-/// The authenticated user. Mirrors `User` from the OpenAPI schema, plus
-/// a few presentation aliases that screen briefs reference by name.
+/// The authenticated user. Mirrors `User` from the OpenAPI schema.
 ///
-/// `currentWeightKg` is **not** on the wire — it's derived by the
-/// repository from the most recent `WeightEntry` so screen 08's identity
-/// row and onboarding step 2's pre-fill have a single source.
-///
-/// `customFoodCount` is **not** on the wire — derived from the user's
-/// custom-foods list. Screen 08's "My foods · N" row reads it directly.
+/// **Derived fields live in providers, not here.** "Current weight"
+/// (latest `WeightEntry.weightKg`) and "custom food count" used to
+/// hang off this record so screens could read them as one shape.
+/// That meant every weight write or food write had to invalidate
+/// `meProvider` to keep the snapshot fresh — a cross-tier
+/// dependency that exists only to refill values that are pure
+/// derivations of other providers. They now live in
+/// `currentWeightKgProvider` (lib/providers/weight_providers.dart)
+/// and `customFoodCountProvider` (lib/providers/food_providers.dart)
+/// respectively; widgets `ref.watch` them directly.
 class User {
   const User({
     required this.id,
@@ -21,9 +24,7 @@ class User {
     this.sex,
     this.birthDate,
     this.heightCm,
-    this.currentWeightKg,
     this.activityLevel,
-    this.customFoodCount = 0,
     this.weightUnit = WeightUnit.kg,
     this.heightUnit = HeightUnit.cm,
   });
@@ -34,9 +35,7 @@ class User {
   final Sex? sex;
   final DateTime? birthDate;
   final Decimal? heightCm;
-  final Decimal? currentWeightKg;
   final ActivityLevel? activityLevel;
-  final int customFoodCount;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -54,9 +53,7 @@ class User {
     Sex? sex,
     DateTime? birthDate,
     Decimal? heightCm,
-    Decimal? currentWeightKg,
     ActivityLevel? activityLevel,
-    int? customFoodCount,
     DateTime? createdAt,
     DateTime? updatedAt,
     WeightUnit? weightUnit,
@@ -69,9 +66,7 @@ class User {
         sex: sex ?? this.sex,
         birthDate: birthDate ?? this.birthDate,
         heightCm: heightCm ?? this.heightCm,
-        currentWeightKg: currentWeightKg ?? this.currentWeightKg,
         activityLevel: activityLevel ?? this.activityLevel,
-        customFoodCount: customFoodCount ?? this.customFoodCount,
         createdAt: createdAt ?? this.createdAt,
         updatedAt: updatedAt ?? this.updatedAt,
         weightUnit: weightUnit ?? this.weightUnit,
@@ -93,11 +88,9 @@ class User {
           ? null
           : DateTime.parse(json['birth_date'] as String),
       heightCm: dec('height_cm'),
-      currentWeightKg: dec('current_weight_kg'),
       activityLevel: json['activity_level'] == null
           ? null
           : ActivityLevel.fromWire(json['activity_level'] as String),
-      customFoodCount: (json['custom_food_count'] as num?)?.toInt() ?? 0,
       createdAt: DateTime.parse(json['created_at'] as String),
       updatedAt: DateTime.parse(json['updated_at'] as String),
       // Pre-backend window: tolerate a missing `weight_unit` key and
@@ -124,9 +117,7 @@ class User {
           'birth_date':
               '${birthDate!.year.toString().padLeft(4, '0')}-${birthDate!.month.toString().padLeft(2, '0')}-${birthDate!.day.toString().padLeft(2, '0')}',
         if (heightCm != null) 'height_cm': heightCm.toString(),
-        if (currentWeightKg != null) 'current_weight_kg': currentWeightKg.toString(),
         if (activityLevel != null) 'activity_level': activityLevel!.wire,
-        'custom_food_count': customFoodCount,
         'created_at': createdAt.toIso8601String(),
         'updated_at': updatedAt.toIso8601String(),
         'weight_unit': weightUnit.wire,
@@ -143,9 +134,7 @@ class User {
           other.sex == sex &&
           other.birthDate == birthDate &&
           other.heightCm == heightCm &&
-          other.currentWeightKg == currentWeightKg &&
           other.activityLevel == activityLevel &&
-          other.customFoodCount == customFoodCount &&
           other.createdAt == createdAt &&
           other.updatedAt == updatedAt &&
           other.weightUnit == weightUnit &&
@@ -159,9 +148,7 @@ class User {
         sex,
         birthDate,
         heightCm,
-        currentWeightKg,
         activityLevel,
-        customFoodCount,
         createdAt,
         updatedAt,
         weightUnit,

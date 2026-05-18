@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../domain/calories/estimate.dart';
 import '../domain/enums.dart';
 import 'profile_providers.dart';
+import 'weight_providers.dart';
 
 /// Calorie-derivation providers. Today's "Burned" row binds here.
 ///
@@ -39,6 +40,11 @@ import 'profile_providers.dart';
 /// silently (don't surface).
 final caloriesBurnedTodayProvider = FutureProvider<Decimal>((ref) async {
   final user = await ref.watch(meProvider.future);
+  // Current weight is a derivation of the weight feed, not a field
+  // on `User`. Awaiting the weight provider's future keeps this
+  // computation purely declarative — a weight log invalidates
+  // `weightHistoryProvider` and this provider recomputes.
+  final currentKg = await ref.watch(currentWeightKgProvider.future);
 
   // `estimateCalories` is the single seam for BMR / TDEE math. We pass
   // `direction: maintain` + `rateKgPerWeek: 0` so no goal-rate delta
@@ -47,7 +53,7 @@ final caloriesBurnedTodayProvider = FutureProvider<Decimal>((ref) async {
     sex: user.sex,
     birthDate: user.birthDate,
     heightCm: user.heightCm,
-    weightKg: user.currentWeightKg,
+    weightKg: currentKg,
     activityLevel: user.activityLevel,
     direction: GoalDirection.maintain,
     rateKgPerWeek: Decimal.zero,

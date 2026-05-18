@@ -45,9 +45,7 @@ User _user() => User(
       sex: Sex.male,
       birthDate: DateTime(1991, 8, 12),
       heightCm: Decimal.fromInt(180),
-      currentWeightKg: Decimal.parse('75.0'),
       activityLevel: ActivityLevel.moderate,
-      customFoodCount: 0,
       createdAt: DateTime(2026, 1, 1),
       updatedAt: DateTime(2026, 5, 15),
     );

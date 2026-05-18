@@ -43,9 +43,7 @@ User _mockUser({
     sex: sex,
     birthDate: DateTime(1991, 8, 12),
     heightCm: Decimal.fromInt(182),
-    currentWeightKg: Decimal.parse('79.4'),
     activityLevel: activityLevel,
-    customFoodCount: 14,
     createdAt: DateTime(2026, 1, 1),
     updatedAt: DateTime(2026, 5, 15),
   );

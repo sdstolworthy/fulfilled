@@ -10,6 +10,7 @@ import 'package:fulfilled/domain/meal.dart';
 import 'package:fulfilled/domain/user.dart';
 import 'package:fulfilled/providers/calorie_providers.dart';
 import 'package:fulfilled/providers/profile_providers.dart';
+import 'package:fulfilled/providers/weight_providers.dart';
 import 'package:fulfilled/theme/theme_data.dart';
 import 'package:fulfilled/widgets/ring_summary_card.dart';
 import 'package:fulfilled/widgets/skeleton.dart';
@@ -44,7 +45,6 @@ User _seedUser() => User(
       sex: Sex.male,
       birthDate: DateTime(1993, 4, 12),
       heightCm: Decimal.parse('178'),
-      currentWeightKg: Decimal.parse('79.4'),
       activityLevel: ActivityLevel.moderate,
       createdAt: DateTime(2026, 1, 1),
       updatedAt: DateTime(2026, 1, 1),
@@ -80,6 +80,8 @@ void main() {
         _harness(
           overrides: <Override>[
             meProvider.overrideWith((_) async => _seedUser()),
+            currentWeightKgProvider
+                .overrideWith((_) async => Decimal.parse('79.4')),
           ],
         ),
       );
@@ -111,10 +113,19 @@ void main() {
         if (!never.isCompleted) never.complete(_seedUser());
       });
 
+      final neverDecimal = Completer<Decimal?>();
+      addTearDown(() {
+        if (!neverDecimal.isCompleted) {
+          neverDecimal.complete(Decimal.parse('79.4'));
+        }
+      });
+
       await tester.pumpWidget(
         _harness(
           overrides: <Override>[
             meProvider.overrideWith((_) => never.future),
+            currentWeightKgProvider
+                .overrideWith((_) => neverDecimal.future),
           ],
         ),
       );
@@ -145,6 +156,7 @@ void main() {
         _harness(
           overrides: <Override>[
             meProvider.overrideWith((_) async => freshUser),
+            currentWeightKgProvider.overrideWith((_) async => null),
           ],
         ),
       );

@@ -96,36 +96,22 @@ class _LogWeightSheetState extends ConsumerState<LogWeightSheet> {
     unawaited(_resolveSeed());
   }
 
-  /// Resolve the initial seed per the F5 fall-through chain. Each step
-  /// is wrapped in try/catch so an erroring provider falls through to
-  /// the next branch instead of leaving the stepper unseeded.
+  /// Resolve the initial seed: latest history entry if any, else
+  /// a paranoid default. The earlier chain had a second branch that
+  /// fell back to `User.currentWeightKg`; that field has been
+  /// removed in favour of `currentWeightKgProvider`, which itself
+  /// reads `weightHistoryProvider` — so it would resolve to the
+  /// same value as step 1 and is redundant.
   Future<void> _resolveSeed() async {
     Decimal? seed;
-
-    // 1. Newest history entry, if the provider resolves with a
-    //    non-empty list.
     try {
       final history = await ref.read(weightHistoryProvider.future);
       if (history.isNotEmpty) {
         seed = history.first.weightKg;
       }
     } catch (_) {
-      // Provider in error; fall through to step 2.
+      // Provider in error; fall through to the default.
     }
-
-    // 2. `User.currentWeightKg`, if present.
-    if (seed == null) {
-      try {
-        final me = await ref.read(meProvider.future);
-        if (me.currentWeightKg != null) {
-          seed = me.currentWeightKg;
-        }
-      } catch (_) {
-        // Provider in error; fall through to step 3.
-      }
-    }
-
-    // 3. Paranoid default — same value the pre-F5 code used.
     seed ??= Decimal.parse('70');
 
     if (!mounted) return;
@@ -174,7 +160,10 @@ class _LogWeightSheetState extends ConsumerState<LogWeightSheet> {
         ref.invalidate(weightSeriesProvider(r));
       }
       ref.invalidate(weightHistoryProvider);
-      ref.invalidate(meProvider);
+      // No cross-tier invalidate of `meProvider`: "current weight"
+      // is now derived from the weight feed via
+      // `currentWeightKgProvider`, which watches
+      // `weightHistoryProvider` and recomputes on its own.
 
       if (!mounted) return;
       // Read the active unit at toast time so the message reflects what

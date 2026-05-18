@@ -10,9 +10,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fulfilled/data/api_client.dart';
 import 'package:fulfilled/domain/enums.dart';
 import 'package:fulfilled/domain/user.dart';
-import 'package:fulfilled/repositories/food_repository.dart';
 import 'package:fulfilled/repositories/profile_repository.dart';
-import 'package:fulfilled/repositories/weight_repository.dart';
 
 import '../data/fake_dio_adapter.dart';
 import '../repositories/_harness.dart';
@@ -230,11 +228,7 @@ void main() {
       final dio = Dio(BaseOptions(baseUrl: 'https://test.example/api/v1'))
         ..httpClientAdapter = adapter;
       final api = ApiClient(dio, baseUrl: 'https://test.example/api/v1');
-      repo = ProfileRepository(
-        api: api,
-        weightRepository: WeightRepository(api),
-        foodRepository: FoodRepository(api),
-      );
+      repo = ProfileRepository(api: api);
     });
 
     tearDown(teardownRepositoriesForTest);

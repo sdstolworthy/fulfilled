@@ -5,6 +5,7 @@ import 'package:fulfilled/domain/enums.dart';
 import 'package:fulfilled/domain/user.dart';
 import 'package:fulfilled/providers/calorie_providers.dart';
 import 'package:fulfilled/providers/profile_providers.dart';
+import 'package:fulfilled/providers/weight_providers.dart';
 
 /// Unit tests for [caloriesBurnedTodayProvider] (T-020 / B8).
 ///
@@ -17,7 +18,6 @@ User _user({
   Sex? sex = Sex.male,
   DateTime? birthDate,
   Decimal? heightCm,
-  Decimal? weightKg,
   ActivityLevel? activityLevel = ActivityLevel.sedentary,
 }) {
   return User(
@@ -25,7 +25,6 @@ User _user({
     sex: sex,
     birthDate: birthDate,
     heightCm: heightCm,
-    currentWeightKg: weightKg,
     activityLevel: activityLevel,
     createdAt: DateTime(2026, 1, 1),
     updatedAt: DateTime(2026, 1, 1),
@@ -51,10 +50,11 @@ void main() {
                 sex: Sex.male,
                 birthDate: DateTime(1995, 1, 1),
                 heightCm: Decimal.parse('180'),
-                weightKg: Decimal.parse('80'),
                 activityLevel: ActivityLevel.sedentary,
               ),
             ),
+            currentWeightKgProvider
+                .overrideWith((_) async => Decimal.parse('80')),
           ],
         );
         addTearDown(container.dispose);
@@ -80,14 +80,19 @@ void main() {
                 sex: Sex.female,
                 birthDate: DateTime(1998, 5, 16),
                 heightCm: Decimal.parse('165'),
-                weightKg: Decimal.parse('60'),
                 activityLevel: ActivityLevel.active,
               ),
             );
+        Override weightOverride() => currentWeightKgProvider
+            .overrideWith((_) async => Decimal.parse('60'));
 
-        final a = ProviderContainer(overrides: <Override>[profileOverride()]);
+        final a = ProviderContainer(
+          overrides: <Override>[profileOverride(), weightOverride()],
+        );
         addTearDown(a.dispose);
-        final b = ProviderContainer(overrides: <Override>[profileOverride()]);
+        final b = ProviderContainer(
+          overrides: <Override>[profileOverride(), weightOverride()],
+        );
         addTearDown(b.dispose);
 
         final ra = await a.read(caloriesBurnedTodayProvider.future);
@@ -110,10 +115,10 @@ void main() {
                 sex: null,
                 birthDate: null,
                 heightCm: null,
-                weightKg: null,
                 activityLevel: null,
               ),
             ),
+            currentWeightKgProvider.overrideWith((_) async => null),
           ],
         );
         addTearDown(container.dispose);
@@ -138,10 +143,11 @@ void main() {
                 sex: Sex.female,
                 birthDate: DateTime(1980, 1, 1),
                 heightCm: Decimal.parse('150'),
-                weightKg: Decimal.parse('45'),
                 activityLevel: ActivityLevel.sedentary,
               ),
             ),
+            currentWeightKgProvider
+                .overrideWith((_) async => Decimal.parse('45')),
           ],
         );
         addTearDown(container.dispose);

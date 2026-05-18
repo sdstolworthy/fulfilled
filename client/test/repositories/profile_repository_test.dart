@@ -8,9 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fulfilled/data/api_client.dart';
 import 'package:fulfilled/domain/enums.dart';
 import 'package:fulfilled/domain/user.dart';
-import 'package:fulfilled/repositories/food_repository.dart';
 import 'package:fulfilled/repositories/profile_repository.dart';
-import 'package:fulfilled/repositories/weight_repository.dart';
 
 import '../data/fake_dio_adapter.dart';
 import '_harness.dart';
@@ -45,16 +43,7 @@ Map<String, dynamic> _emptyWeightsPage() => <String, dynamic>{
   final dio = Dio(BaseOptions(baseUrl: 'https://test.example/api/v1'))
     ..httpClientAdapter = adapter;
   final api = ApiClient(dio, baseUrl: 'https://test.example/api/v1');
-  final repo = ProfileRepository(
-    api: api,
-    weightRepository: WeightRepository(api),
-    // Use the fixture-mode food repo here so `me()`'s
-    // `customFoodCount` derivation reads from the in-memory seed
-    // without needing the test to mock `/foods/mine`. The tests in
-    // this file specifically exercise `/me` decoding; food behavior
-    // is incidental to them.
-    foodRepository: FoodRepository(api, useFixtures: true),
-  );
+  final repo = ProfileRepository(api: api);
   return (repo: repo, adapter: adapter);
 }
 
@@ -106,30 +95,11 @@ void main() {
     expect(user.heightUnit, equals(HeightUnit.ftIn));
   });
 
-  test('me() derives currentWeightKg from the latest weight entry',
-      () async {
-    final h = _build((req) {
-      if (req.path == '/me') return jsonResponse(200, _meBody());
-      if (req.path == '/weights') {
-        return jsonResponse(200, <String, dynamic>{
-          'results': <dynamic>[
-            <String, dynamic>{
-              'id': 'w_latest',
-              'recorded_on': '2026-05-15',
-              'weight_kg': '79.4',
-              'created_at': '2026-05-15T07:30:00.000Z',
-            },
-          ],
-          'total': 1,
-          'limit': 1,
-          'offset': 0,
-        });
-      }
-      return emptyResponse(404);
-    });
-    final user = await h.repo.me();
-    expect(user.currentWeightKg.toString(), equals('79.4'));
-  });
+  // `me() derives currentWeightKg from the latest weight entry` —
+  // superseded by the derived-provider refactor. `currentWeightKg` now
+  // lives on `currentWeightKgProvider`, not on the `User` envelope; the
+  // /weights round-trip is exercised in `currentWeightKgProvider`'s
+  // own provider test instead.
 
   test('update(UserPatch) PATCHes /me and returns the decoded User',
       () async {

@@ -59,7 +59,6 @@ User _seedUser() => User(
       sex: Sex.male,
       birthDate: DateTime(1993, 4, 12),
       heightCm: Decimal.parse('178'),
-      currentWeightKg: Decimal.parse('79.4'),
       activityLevel: ActivityLevel.moderate,
       createdAt: DateTime(2026, 1, 1),
       updatedAt: DateTime(2026, 1, 1),

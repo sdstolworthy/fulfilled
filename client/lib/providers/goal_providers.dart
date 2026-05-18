@@ -6,6 +6,7 @@ import '../domain/day_summary.dart';
 import '../domain/goal.dart';
 import 'profile_providers.dart';
 import 'repository_providers.dart';
+import 'weight_providers.dart';
 
 /// Goal-domain providers. Screen 07's hero card binds to
 /// [activeGoalProvider]; the history list binds to [goalsProvider].
@@ -65,12 +66,13 @@ final effectiveActiveGoalTargetsProvider =
     Provider<CalorieEstimate?>((ref) {
   final user = ref.watch(meProvider).valueOrNull;
   final goal = ref.watch(activeGoalProvider).valueOrNull;
+  final currentKg = ref.watch(currentWeightKgProvider).valueOrNull;
   if (user == null || goal == null) return null;
   return estimateCalories(
     sex: user.sex,
     birthDate: user.birthDate,
     heightCm: user.heightCm,
-    weightKg: user.currentWeightKg,
+    weightKg: currentKg,
     activityLevel: user.activityLevel,
     direction: goal.direction,
     rateKgPerWeek: goal.rateKgPerWeek ?? Decimal.zero,

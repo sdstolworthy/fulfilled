@@ -13,6 +13,7 @@ import '../../domain/user.dart';
 import '../../providers/food_providers.dart';
 import '../../providers/goal_providers.dart';
 import '../../providers/profile_providers.dart';
+import '../../providers/weight_providers.dart';
 import '../../repositories/goal_repository.dart';
 import '../../routing/routes.dart';
 import '../goals/widgets/edit_goal_sheet.dart';
@@ -99,7 +100,7 @@ class ProfileScreen extends ConsumerWidget {
         user: user,
         customFoodCount: countAsync.maybeWhen(
           data: (n) => n,
-          orElse: () => user.customFoodCount,
+          orElse: () => 0,
         ),
       ),
     );
@@ -120,6 +121,10 @@ class _ProfileBody extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final colors = context.colors;
     final space = context.space;
+    // Current weight is derived from the weight feed, not the user
+    // record. Read it through the dedicated provider so weight
+    // writes propagate without a `meProvider` invalidate.
+    final currentKg = ref.watch(currentWeightKgProvider).valueOrNull;
 
     return ListView(
       padding: EdgeInsets.only(
@@ -184,13 +189,12 @@ class _ProfileBody extends ConsumerWidget {
             SettingsRow(
               icon: Icons.monitor_weight_outlined,
               label: 'Current weight',
-              value: user.currentWeightKg == null
+              value: currentKg == null
                   ? 'Set'
-                  : formatWeightWithUnit(
-                      user.currentWeightKg!, user.weightUnit),
+                  : formatWeightWithUnit(currentKg, user.weightUnit),
               onTap: () => showCurrentWeightSheet(
                 context,
-                initial: user.currentWeightKg,
+                initial: currentKg,
               ),
             ),
             SettingsRow(

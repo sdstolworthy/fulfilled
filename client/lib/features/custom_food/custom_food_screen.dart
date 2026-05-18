@@ -8,7 +8,6 @@ import '../../domain/food.dart';
 import '../../domain/food_patch.dart';
 import '../../providers/draft_providers.dart';
 import '../../providers/food_providers.dart';
-import '../../providers/profile_providers.dart';
 import '../../providers/repository_providers.dart';
 import '../../theme/context_extensions.dart';
 import 'widgets/basics_section.dart';
@@ -206,7 +205,10 @@ class _CustomFoodScreenState extends ConsumerState<CustomFoodScreen> {
       final food = await repo.createCustom(payload);
 
       ref.read(customFoodDraftProvider.notifier).reset();
-      ref.invalidate(meProvider);
+      // `customFoodCountProvider` is the source for the profile's
+      // "My foods · N" row — invalidate it directly. No
+      // cross-tier `meProvider` invalidate is required now that
+      // `User` no longer carries `customFoodCount`.
       ref.invalidate(customFoodCountProvider);
       ref.invalidate(foodDetailProvider(food.id));
 
@@ -252,7 +254,6 @@ class _CustomFoodScreenState extends ConsumerState<CustomFoodScreen> {
       ref.invalidate(foodDetailProvider(updated.id));
       ref.invalidate(myFoodsProvider);
       ref.invalidate(customFoodCountProvider);
-      ref.invalidate(meProvider);
 
       ref.read(customFoodDraftProvider.notifier).reset();
 

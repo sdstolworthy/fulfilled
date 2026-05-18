@@ -83,11 +83,5 @@ final logRepositoryProvider = Provider<LogRepository>((ref) {
 
 final profileRepositoryProvider = Provider<ProfileRepository>((ref) {
   final api = ref.watch(apiClientProvider);
-  final weights = ref.watch(weightRepositoryProvider);
-  final foods = ref.watch(foodRepositoryProvider);
-  return ProfileRepository(
-    api: api,
-    weightRepository: weights,
-    foodRepository: foods,
-  );
+  return ProfileRepository(api: api);
 });

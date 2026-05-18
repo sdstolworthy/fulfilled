@@ -8,6 +8,7 @@ import '../../../domain/units/energy.dart';
 import '../../../domain/units/weight.dart';
 import '../../../domain/user.dart';
 import '../../../providers/profile_providers.dart';
+import '../../../providers/weight_providers.dart';
 import '../../../theme/context_extensions.dart';
 import '../../../widgets/number_text.dart';
 import '../../../widgets/skeleton.dart';
@@ -375,12 +376,19 @@ class _PreviewBlock extends StatelessWidget {
 /// has not set yet. The order is intentional: it matches the Profile
 /// screen's Body card so the user sees the same shape they're used
 /// to. Empty list = profile is ready to drive a goal.
-List<GoalPrereqField> missingGoalPrereqFields(User user) {
+///
+/// `currentWeightKg` is **not** a field on `User`; it's derived from
+/// the latest weight log via `currentWeightKgProvider`. Callers
+/// pass the resolved value in.
+List<GoalPrereqField> missingGoalPrereqFields(
+  User user, {
+  required Decimal? currentWeightKg,
+}) {
   return <GoalPrereqField>[
     if (user.sex == null) GoalPrereqField.sex,
     if (user.birthDate == null) GoalPrereqField.birthDate,
     if (user.heightCm == null) GoalPrereqField.height,
-    if (user.currentWeightKg == null) GoalPrereqField.weight,
+    if (currentWeightKg == null) GoalPrereqField.weight,
     if (user.activityLevel == null) GoalPrereqField.activity,
   ];
 }
@@ -407,7 +415,9 @@ class GoalProfilePrereqs extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final tokens = context.tokens;
-    final missing = missingGoalPrereqFields(user);
+    final currentKg = ref.watch(currentWeightKgProvider).valueOrNull;
+    final missing =
+        missingGoalPrereqFields(user, currentWeightKg: currentKg);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
@@ -486,10 +496,11 @@ class GoalProfilePrereqs extends ConsumerWidget {
           icon: Icons.monitor_weight_outlined,
           label: 'Current weight',
           value: 'Set',
-          onTap: () => showCurrentWeightSheet(
-            context,
-            initial: user.currentWeightKg,
-          ),
+          // The "Current weight" picker derives its seed from the
+          // weight feed, not from the user record — leave `initial`
+          // null so the sheet falls back to its own default. Once
+          // the user logs a weight the prereq row vanishes anyway.
+          onTap: () => showCurrentWeightSheet(context, initial: null),
         );
       case GoalPrereqField.activity:
         return SettingsRow(
