@@ -30,6 +30,7 @@ import '../../data/auth_config.dart';
 import '../../data/auth_token.dart';
 import '../../data/login_errors.dart';
 import '../../providers/api_base_url_provider.dart';
+import '../../providers/profile_providers.dart';
 import 'health_probe.dart';
 import 'url_normalize.dart';
 
@@ -272,6 +273,14 @@ class LoginController extends StateNotifier<LoginFormState> {
       // On success, re-persist baseUrl (idempotent) + lastUsername.
       // The re-write is fine — Hive's `put` is overwrite-or-create.
       await _persistConfig(normalized, state.username);
+      // Force `meProvider` to refetch with the freshly-installed
+      // bearer. Without this its pre-login `AsyncError` (from the
+      // boot-time `GET /me` 401) lingers and the router's
+      // onboarding gate keeps reading `me.value == null`, which
+      // either races the post-submit `context.go(/today)` call or
+      // leaves the redirect stuck. Mirrors the OIDC path's
+      // post-signIn invalidation in `oidc_exchange.dart`.
+      _ref.invalidate(meProvider);
       return true;
     } finally {
       state = state.copyWith(submitting: false);
