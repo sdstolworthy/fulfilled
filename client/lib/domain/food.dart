@@ -31,6 +31,10 @@ class Food {
     this.lastLoggedAt,
     this.logCount,
     this.lastServingId,
+    this.lastServingLabel,
+    this.lastServingAmount,
+    this.lastServingUnit,
+    this.lastServingKcal,
   }) : createdAt = createdAt ?? DateTime.now();
 
   final String id;
@@ -75,10 +79,23 @@ class Food {
   /// distinct-days, not a sliding window. See note on [lastLoggedAt].
   final int? logCount;
 
-  /// Serving id used on the caller's most-recent log entry for this food.
-  /// `null` when the serving was deleted (FK `ON DELETE SET NULL`) or the
-  /// caller has never logged this food. See note on [lastLoggedAt].
+  /// Preview of the serving the caller last used to log this food.
+  /// Wire shape mirrors `default_serving` — flat fields here so the
+  /// row widget can render "Logged Tue · 4× · 1 slice (296 kcal)"
+  /// without dereferencing a nested object. All four fields are
+  /// `null` together: either the caller has never logged the food
+  /// or the serving was deleted (FK `ON DELETE SET NULL`).
+  /// See note on [lastLoggedAt].
   final String? lastServingId;
+  final String? lastServingLabel;
+  final Decimal? lastServingAmount;
+  final Unit? lastServingUnit;
+
+  /// kcal for [lastServingId] — the caller-specific calorie number
+  /// the search row should display when `wasLoggedByCaller`. Sourced
+  /// from the BE's `last_serving.kcal`, which is a JOIN to the
+  /// current `servings.kcal` (not a snapshot at log time).
+  final Decimal? lastServingKcal;
 
   /// True iff the caller has previously logged this food at least once.
   /// Mirrors [FoodSearchHit.isPreviouslyLogged]; drives the "YOUR FOODS"
@@ -123,6 +140,10 @@ class Food {
     DateTime? lastLoggedAt,
     int? logCount,
     String? lastServingId,
+    String? lastServingLabel,
+    Decimal? lastServingAmount,
+    Unit? lastServingUnit,
+    Decimal? lastServingKcal,
   }) =>
       Food(
         id: id ?? this.id,
@@ -139,11 +160,19 @@ class Food {
         lastLoggedAt: lastLoggedAt ?? this.lastLoggedAt,
         logCount: logCount ?? this.logCount,
         lastServingId: lastServingId ?? this.lastServingId,
+        lastServingLabel: lastServingLabel ?? this.lastServingLabel,
+        lastServingAmount: lastServingAmount ?? this.lastServingAmount,
+        lastServingUnit: lastServingUnit ?? this.lastServingUnit,
+        lastServingKcal: lastServingKcal ?? this.lastServingKcal,
       );
 
   factory Food.fromJson(Map<String, dynamic> json) {
     final source = FoodSource.fromWire(json['source'] as String);
     final createdAtRaw = json['created_at'];
+    Decimal? dec(Object? v) =>
+        v == null ? null : Decimal.parse(v.toString());
+    final lastServing = json['last_serving'] as Map<String, dynamic>?;
+    final lastServingUnitWire = lastServing?['unit'] as String?;
     return Food(
       id: json['id'] as String,
       name: json['name'] as String,
@@ -167,7 +196,12 @@ class Food {
           ? null
           : DateTime.parse(json['last_logged_at'] as String),
       logCount: (json['log_count'] as num?)?.toInt(),
-      lastServingId: json['last_serving_id'] as String?,
+      lastServingId: lastServing?['id'] as String?,
+      lastServingLabel: lastServing?['label'] as String?,
+      lastServingAmount: dec(lastServing?['amount']),
+      lastServingUnit:
+          lastServingUnitWire == null ? null : Unit.fromWire(lastServingUnitWire),
+      lastServingKcal: dec(lastServing?['kcal']),
     );
   }
 
@@ -188,7 +222,15 @@ class Food {
               '${lastLoggedAt!.month.toString().padLeft(2, '0')}-'
               '${lastLoggedAt!.day.toString().padLeft(2, '0')}',
         if (logCount != null) 'log_count': logCount,
-        if (lastServingId != null) 'last_serving_id': lastServingId,
+        if (lastServingId != null)
+          'last_serving': <String, dynamic>{
+            'id': lastServingId,
+            if (lastServingLabel != null) 'label': lastServingLabel,
+            if (lastServingAmount != null)
+              'amount': lastServingAmount.toString(),
+            if (lastServingUnit != null) 'unit': lastServingUnit!.wire,
+            if (lastServingKcal != null) 'kcal': lastServingKcal.toString(),
+          },
       };
 
   @override
@@ -208,7 +250,11 @@ class Food {
           other.createdAt == createdAt &&
           other.lastLoggedAt == lastLoggedAt &&
           other.logCount == logCount &&
-          other.lastServingId == lastServingId;
+          other.lastServingId == lastServingId &&
+          other.lastServingLabel == lastServingLabel &&
+          other.lastServingAmount == lastServingAmount &&
+          other.lastServingUnit == lastServingUnit &&
+          other.lastServingKcal == lastServingKcal;
 
   @override
   int get hashCode => Object.hash(
@@ -226,6 +272,12 @@ class Food {
         lastLoggedAt,
         logCount,
         lastServingId,
+        Object.hash(
+          lastServingLabel,
+          lastServingAmount,
+          lastServingUnit,
+          lastServingKcal,
+        ),
       );
 }
 
@@ -252,6 +304,10 @@ class FoodSearchHit {
     this.lastLoggedAt,
     this.logCount,
     this.lastServingId,
+    this.lastServingLabel,
+    this.lastServingAmount,
+    this.lastServingUnit,
+    this.lastServingKcal,
   });
 
   final String id;
@@ -281,10 +337,22 @@ class FoodSearchHit {
   /// defensively and treat `null` and `0` identically.
   final int? logCount;
 
-  /// Serving id used on the caller's most-recent log entry for this food.
-  /// `null` when the serving was deleted (FK `ON DELETE SET NULL`) or
-  /// the caller has never logged this food.
+  /// Preview of the serving the caller last used to log this food.
+  /// Wire shape mirrors `default_serving` — flat fields here so the
+  /// row widget can render "Logged Tue · 4× · 1 slice (296 kcal)"
+  /// without a `/foods/:id` round-trip. All four fields are `null`
+  /// together: either the caller has never logged the food or the
+  /// serving was deleted (FK `ON DELETE SET NULL`).
   final String? lastServingId;
+  final String? lastServingLabel;
+  final Decimal? lastServingAmount;
+  final Unit? lastServingUnit;
+
+  /// kcal for the caller's last-used serving. The row widget should
+  /// prefer this over [caloriesPerServing] when [isPreviouslyLogged],
+  /// since that's the calorie number the caller saw on their last
+  /// log entry.
+  final Decimal? lastServingKcal;
 
   /// True iff the caller has previously logged this food at least once.
   /// Drives the "YOUR FOODS" section split + sub-line in `SearchResultRow`
@@ -309,6 +377,10 @@ class FoodSearchHit {
     DateTime? lastLoggedAt,
     int? logCount,
     String? lastServingId,
+    String? lastServingLabel,
+    Decimal? lastServingAmount,
+    Unit? lastServingUnit,
+    Decimal? lastServingKcal,
   }) =>
       FoodSearchHit(
         id: id ?? this.id,
@@ -324,6 +396,10 @@ class FoodSearchHit {
         lastLoggedAt: lastLoggedAt ?? this.lastLoggedAt,
         logCount: logCount ?? this.logCount,
         lastServingId: lastServingId ?? this.lastServingId,
+        lastServingLabel: lastServingLabel ?? this.lastServingLabel,
+        lastServingAmount: lastServingAmount ?? this.lastServingAmount,
+        lastServingUnit: lastServingUnit ?? this.lastServingUnit,
+        lastServingKcal: lastServingKcal ?? this.lastServingKcal,
       );
 
   /// Project a hit from a full [Food]. The mock repository uses this so
@@ -349,6 +425,8 @@ class FoodSearchHit {
         v == null ? null : Decimal.parse(v.toString());
     final defServing = json['default_serving'] as Map<String, dynamic>?;
     final unitWire = defServing?['unit'] as String?;
+    final lastServing = json['last_serving'] as Map<String, dynamic>?;
+    final lastServingUnitWire = lastServing?['unit'] as String?;
     return FoodSearchHit(
       id: json['id'] as String,
       name: json['name'] as String,
@@ -369,7 +447,12 @@ class FoodSearchHit {
           ? null
           : DateTime.parse(json['last_logged_at'] as String),
       logCount: (json['log_count'] as num?)?.toInt(),
-      lastServingId: json['last_serving_id'] as String?,
+      lastServingId: lastServing?['id'] as String?,
+      lastServingLabel: lastServing?['label'] as String?,
+      lastServingAmount: dec(lastServing?['amount']),
+      lastServingUnit:
+          lastServingUnitWire == null ? null : Unit.fromWire(lastServingUnitWire),
+      lastServingKcal: dec(lastServing?['kcal']),
     );
   }
 
@@ -395,7 +478,15 @@ class FoodSearchHit {
               '${lastLoggedAt!.month.toString().padLeft(2, '0')}-'
               '${lastLoggedAt!.day.toString().padLeft(2, '0')}',
         if (logCount != null) 'log_count': logCount,
-        if (lastServingId != null) 'last_serving_id': lastServingId,
+        if (lastServingId != null)
+          'last_serving': <String, dynamic>{
+            'id': lastServingId,
+            if (lastServingLabel != null) 'label': lastServingLabel,
+            if (lastServingAmount != null)
+              'amount': lastServingAmount.toString(),
+            if (lastServingUnit != null) 'unit': lastServingUnit!.wire,
+            if (lastServingKcal != null) 'kcal': lastServingKcal.toString(),
+          },
       };
 
   @override
@@ -414,7 +505,11 @@ class FoodSearchHit {
           other.caloriesPerServing == caloriesPerServing &&
           other.lastLoggedAt == lastLoggedAt &&
           other.logCount == logCount &&
-          other.lastServingId == lastServingId;
+          other.lastServingId == lastServingId &&
+          other.lastServingLabel == lastServingLabel &&
+          other.lastServingAmount == lastServingAmount &&
+          other.lastServingUnit == lastServingUnit &&
+          other.lastServingKcal == lastServingKcal;
 
   @override
   int get hashCode => Object.hash(
@@ -431,6 +526,12 @@ class FoodSearchHit {
         lastLoggedAt,
         logCount,
         lastServingId,
+        Object.hash(
+          lastServingLabel,
+          lastServingAmount,
+          lastServingUnit,
+          lastServingKcal,
+        ),
       );
 }
 

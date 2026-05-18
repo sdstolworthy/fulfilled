@@ -568,7 +568,26 @@ class FoodRepository {
           ? null
           : DateTime.parse(json['last_logged_at'] as String),
       logCount: (json['log_count'] as num?)?.toInt(),
-      lastServingId: json['last_serving_id'] as String?,
+      // F5 last-serving preview — flattened from the nested
+      // `last_serving` object so the `Food` exposes the same
+      // `lastServingKcal` / `lastServingLabel` fields the search row
+      // reads directly.
+      lastServingId: (json['last_serving'] as Map<String, dynamic>?)?['id'] as String?,
+      lastServingLabel:
+          (json['last_serving'] as Map<String, dynamic>?)?['label'] as String?,
+      lastServingAmount: () {
+        final raw = (json['last_serving'] as Map<String, dynamic>?)?['amount'];
+        return raw == null ? null : Decimal.parse(raw.toString());
+      }(),
+      lastServingUnit: () {
+        final raw =
+            (json['last_serving'] as Map<String, dynamic>?)?['unit'] as String?;
+        return raw == null ? null : Unit.fromWire(raw);
+      }(),
+      lastServingKcal: () {
+        final raw = (json['last_serving'] as Map<String, dynamic>?)?['kcal'];
+        return raw == null ? null : Decimal.parse(raw.toString());
+      }(),
     );
   }
 }

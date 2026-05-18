@@ -1480,15 +1480,18 @@ components:
             when never logged. Always present (non-nullable) — all
             `/foods/*` routes are auth-gated so the field is always
             meaningful.
-        last_serving_id:
+        last_serving:
           oneOf:
-            - { type: string, format: uuid }
+            - $ref: "#/components/schemas/ServingPreview"
             - type: "null"
           description: |
-            `serving_id` from the caller's most recent log entry for
-            this food. `null` when never logged or when the referenced
-            serving has since been deleted (the FK is
-            `ON DELETE SET NULL` on `food_log_entries`).
+            Full preview of the serving the caller last used to log
+            this food — `{id, label?, amount, unit, kcal}`, identical
+            shape to `default_serving`. `null` when never logged or
+            when the referenced serving has since been deleted (FK is
+            `ON DELETE SET NULL` on `food_log_entries`). Carries the
+            caller-specific kcal so the search row can render that
+            value without a `/foods/:id` round-trip.
 
     Paginated:
       type: object

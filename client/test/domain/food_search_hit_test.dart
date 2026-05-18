@@ -79,7 +79,13 @@ void main() {
         ..._baseHit(),
         'last_logged_at': '2026-05-14',
         'log_count': 4,
-        'last_serving_id': 'sv_last',
+        'last_serving': <String, dynamic>{
+          'id': 'sv_last',
+          'label': '1 slice',
+          'amount': '1',
+          'unit': 'serving',
+          'kcal': '296',
+        },
       });
       expect(hit.lastLoggedAt, isNotNull);
       expect(hit.lastLoggedAt!.year, 2026);
@@ -90,6 +96,8 @@ void main() {
       expect(hit.lastLoggedAt!.isUtc, isFalse);
       expect(hit.logCount, 4);
       expect(hit.lastServingId, 'sv_last');
+      expect(hit.lastServingLabel, '1 slice');
+      expect(hit.lastServingKcal.toString(), '296');
       expect(hit.isPreviouslyLogged, isTrue);
     });
 
@@ -100,6 +108,7 @@ void main() {
       expect(hit.lastLoggedAt, isNull);
       expect(hit.logCount, isNull);
       expect(hit.lastServingId, isNull);
+      expect(hit.lastServingKcal, isNull);
       expect(hit.isPreviouslyLogged, isFalse);
     });
 
@@ -108,11 +117,12 @@ void main() {
         ..._baseHit(),
         'last_logged_at': null,
         'log_count': null,
-        'last_serving_id': null,
+        'last_serving': null,
       });
       expect(hit.lastLoggedAt, isNull);
       expect(hit.logCount, isNull);
       expect(hit.lastServingId, isNull);
+      expect(hit.lastServingKcal, isNull);
       expect(hit.isPreviouslyLogged, isFalse);
     });
 
@@ -133,13 +143,22 @@ void main() {
         ..._baseHit(topLevelKcal: '180'),
         'last_logged_at': '2026-05-14',
         'log_count': 7,
-        'last_serving_id': 'sv_last',
+        'last_serving': <String, dynamic>{
+          'id': 'sv_last',
+          'label': '1 slice',
+          'amount': '1',
+          'unit': 'serving',
+          'kcal': '296',
+        },
       };
       final hit = FoodSearchHit.fromJson(json);
       final round = hit.toJson();
       expect(round['last_logged_at'], '2026-05-14');
       expect(round['log_count'], 7);
-      expect(round['last_serving_id'], 'sv_last');
+      final ls = round['last_serving'] as Map<String, dynamic>;
+      expect(ls['id'], 'sv_last');
+      expect(ls['label'], '1 slice');
+      expect(ls['kcal'], '296');
       // Decoding the re-encoded payload yields an equal `FoodSearchHit`.
       expect(FoodSearchHit.fromJson(round), hit);
     });

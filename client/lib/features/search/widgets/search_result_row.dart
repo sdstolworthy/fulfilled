@@ -43,10 +43,22 @@ class SearchResultRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final defaultServing = _defaultServing(food);
-    final kcal = food.caloriesPerDefaultServing;
-    final per = defaultServing == null
+    // For previously-logged rows, surface the kcal + label of the serving
+    // the caller last used — that's the calorie number they saw on their
+    // last log entry, not the catalog default. Falls back to the default
+    // serving when the caller has never logged this food, or when the BE
+    // didn't ship `last_serving` (defensive: e.g. against an older bundle
+    // racing a newer server).
+    final preferLast =
+        food.wasLoggedByCaller && food.lastServingKcal != null;
+    final kcal =
+        preferLast ? food.lastServingKcal : food.caloriesPerDefaultServing;
+    final perLabelSource = preferLast
+        ? food.lastServingLabel
+        : defaultServing?.name;
+    final per = perLabelSource == null
         ? 'per serving'
-        : 'per ${_perLabel(defaultServing.name)}';
+        : 'per ${_perLabel(perLabelSource)}';
 
     // T-20: composed row label — `name, serving, N kilocalories`. Children
     // are excluded so a screen reader announces the row once with the

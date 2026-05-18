@@ -207,10 +207,13 @@ struct FoodSearchHitResponse {
     /// never logged. **Non-nullable** — all `/foods/*` routes are
     /// `require_auth`-gated so "we didn't enrich" doesn't exist.
     log_count: i32,
-    /// `serving_id` from the caller's most recent log entry for this
-    /// food. `null` when never logged or when the serving has since
-    /// been deleted (the FK is `ON DELETE SET NULL`).
-    last_serving_id: Option<Uuid>,
+    /// Full preview of the serving the caller last used to log this
+    /// food — `{id, label?, amount, unit, kcal}`, identical shape to
+    /// `default_serving`. `null` when never logged or when the serving
+    /// has since been deleted (FK is `ON DELETE SET NULL`). Carries
+    /// `kcal` so the search row can render the caller-specific calorie
+    /// count without a `/foods/:id` round-trip.
+    last_serving: Option<ServingPreviewResponse>,
 }
 
 impl From<FoodSearchHitWithSignals> for FoodSearchHitResponse {
@@ -219,8 +222,12 @@ impl From<FoodSearchHitWithSignals> for FoodSearchHitResponse {
         // Derive the top-level kcal from the default serving BEFORE
         // moving `h.default_serving` into the response.
         let calories_per_serving = h.default_serving.as_ref().map(|s| s.kcal);
-        let (last_logged_at, log_count, last_serving_id) = match w.signals {
-            Some(s) => (s.last_logged_at, s.log_count, s.last_serving_id),
+        let (last_logged_at, log_count, last_serving) = match w.signals {
+            Some(s) => (
+                s.last_logged_at,
+                s.log_count,
+                s.last_serving.map(Into::into),
+            ),
             None => (None, 0, None),
         };
         Self {
@@ -233,7 +240,7 @@ impl From<FoodSearchHitWithSignals> for FoodSearchHitResponse {
             calories_per_serving,
             last_logged_at,
             log_count,
-            last_serving_id,
+            last_serving,
         }
     }
 }

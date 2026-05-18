@@ -151,7 +151,7 @@ pub struct FoodSearchHit {
     pub default_serving: Option<ServingPreview>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ServingPreview {
     pub id: Uuid,
     pub label: Option<String>,
@@ -166,7 +166,7 @@ pub struct ServingPreview {
 /// Lives in `domain` rather than `service` so it can be referenced by
 /// the [`FoodSearchHitWithSignals`] wrapper without creating a
 /// service→domain→service import cycle.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct UserFoodSummary {
     /// Lifetime `COUNT(*)` of the caller's `food_log_entries` rows for
     /// this food. Never a window — the future denorm table stores this
@@ -174,10 +174,13 @@ pub struct UserFoodSummary {
     pub log_count: i32,
     /// Most-recent `consumed_on` among those entries.
     pub last_logged_at: Option<NaiveDate>,
-    /// `serving_id` from the most-recent entry. `None` when the serving
-    /// was deleted (the FK is `ON DELETE SET NULL` on the log row) or
-    /// the food has never been logged.
-    pub last_serving_id: Option<Uuid>,
+    /// Full preview of the serving used on the most-recent entry —
+    /// `id` + `label` + `amount` + `unit` + `kcal`. `None` when the
+    /// serving was deleted (the FK is `ON DELETE SET NULL` on the log
+    /// row) or the food has never been logged. Carries kcal so the
+    /// search row can render "Logged Tue · 4× · 1 slice (296 kcal)"
+    /// without re-fetching `/foods/:id`.
+    pub last_serving: Option<ServingPreview>,
 }
 
 /// Service-layer composition: a search hit paired with optional

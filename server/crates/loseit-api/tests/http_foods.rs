@@ -89,9 +89,11 @@ where
     let weights: Arc<dyn WeightRepository> = Arc::new(InMemoryWeightRepository::new());
     let goals: Arc<dyn GoalRepository> = Arc::new(InMemoryGoalRepository::new());
     let foods: Arc<dyn FoodRepository> = foods_concrete;
+    let summary_reader: Arc<dyn loseit_core::service::UserFoodSummaryReader> = Arc::new(
+        InMemoryUserFoodSummaryReader::new(logs_concrete.clone())
+            .with_servings(servings_concrete.clone()),
+    );
     let servings: Arc<dyn ServingRepository> = servings_concrete;
-    let summary_reader: Arc<dyn loseit_core::service::UserFoodSummaryReader> =
-        Arc::new(InMemoryUserFoodSummaryReader::new(logs_concrete.clone()));
     let logs: Arc<dyn LogRepository> = logs_concrete;
     let authn: Arc<dyn Authenticator> =
         Arc::new(FakeAuthenticator::new(TEST_TOKEN, test_identity()));
@@ -1308,14 +1310,19 @@ async fn food_detail_kind_quick_add_for_sentinel() {
 // F5-T2: per-user log-signal enrichment on /foods/* list routes.
 //
 // The wire shape adds three new fields to every `FoodSearchHit`:
-//   * last_logged_at:  Option<NaiveDate>  ("YYYY-MM-DD" or null)
-//   * log_count:       i32                (non-nullable; 0 when unlogged)
-//   * last_serving_id: Option<Uuid>
+//   * last_logged_at: Option<NaiveDate>          ("YYYY-MM-DD" or null)
+//   * log_count:      i32                        (non-nullable; 0 when unlogged)
+//   * last_serving:   Option<ServingPreview>     ({id,label?,amount,unit,kcal} or null)
+//
+// `last_serving` mirrors `default_serving` — carries kcal so the FE
+// search row can render the caller-specific calorie count without a
+// `/foods/:id` round-trip.
 //
 // Every test here builds an app via `build_test_app_with`, which wires an
-// `InMemoryUserFoodSummaryReader` over the same `InMemoryLogRepository`
-// the seeders push log entries into. The shape returned by the HTTP
-// layer therefore tracks the seeded data without any extra wiring.
+// `InMemoryUserFoodSummaryReader` (`.with_servings(servings_concrete)`)
+// over the same `InMemoryLogRepository` the seeders push log entries
+// into. The shape returned by the HTTP layer therefore tracks the
+// seeded data without any extra wiring.
 // ===========================================================================
 
 use chrono::NaiveDate;
@@ -1401,9 +1408,26 @@ async fn test_search_enrichment_for_logged_food() {
         Some("2026-05-14"),
         "last_logged_at must be YYYY-MM-DD",
     );
+    let last = &hit["last_serving"];
     assert!(
-        hit["last_serving_id"].is_string(),
-        "last_serving_id must be a UUID string when serving is present",
+        last.is_object(),
+        "last_serving must be a ServingPreview object when serving is present",
+    );
+    assert!(
+        last["id"].is_string(),
+        "last_serving.id must be a UUID string",
+    );
+    assert!(
+        last["kcal"].is_string(),
+        "last_serving.kcal must be a Decimal-as-string (FE expects same shape as default_serving.kcal)",
+    );
+    assert!(
+        last["amount"].is_string(),
+        "last_serving.amount must be a Decimal-as-string",
+    );
+    assert!(
+        last["unit"].is_string(),
+        "last_serving.unit must be a wire-format unit string",
     );
 }
 
@@ -1437,8 +1461,8 @@ async fn test_search_enrichment_for_unlogged_food() {
         "last_logged_at must be null for unlogged foods",
     );
     assert!(
-        hit["last_serving_id"].is_null(),
-        "last_serving_id must be null for unlogged foods",
+        hit["last_serving"].is_null(),
+        "last_serving must be null for unlogged foods",
     );
 }
 
@@ -1466,7 +1490,7 @@ async fn test_mine_enrichment_for_owned_but_unlogged_food() {
 
     assert_eq!(hit["log_count"], 0);
     assert!(hit["last_logged_at"].is_null());
-    assert!(hit["last_serving_id"].is_null());
+    assert!(hit["last_serving"].is_null());
 }
 
 #[tokio::test]
@@ -1544,7 +1568,7 @@ async fn test_frequent_enrichment_returns_log_count() {
 async fn test_enrichment_handles_deleted_serving() {
     // Log entry with serving_id = None (mirrors what happens in production
     // when the FK is `ON DELETE SET NULL` after a serving deletion).
-    // last_logged_at and log_count must still surface; last_serving_id
+    // last_logged_at and log_count must still surface; last_serving
     // is null.
     let (app, _alice) = build_test_app_with(move |foods, _s, logs, alice| {
         let foods = foods.clone();
@@ -1577,8 +1601,8 @@ async fn test_enrichment_handles_deleted_serving() {
     assert_eq!(hit["log_count"], 1);
     assert_eq!(hit["last_logged_at"].as_str(), Some("2026-05-09"));
     assert!(
-        hit["last_serving_id"].is_null(),
-        "deleted serving means last_serving_id == null",
+        hit["last_serving"].is_null(),
+        "deleted serving (or none on the entry) means last_serving == null",
     );
 }
 
@@ -1618,7 +1642,7 @@ async fn test_enrichment_isolated_per_user() {
 
     assert_eq!(hit["log_count"], 0, "alice must not see bob's logs");
     assert!(hit["last_logged_at"].is_null());
-    assert!(hit["last_serving_id"].is_null());
+    assert!(hit["last_serving"].is_null());
 }
 
 #[tokio::test]

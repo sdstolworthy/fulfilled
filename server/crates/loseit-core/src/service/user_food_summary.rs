@@ -173,7 +173,7 @@ mod tests {
             UserFoodSummary {
                 log_count: 3,
                 last_logged_at: Some(date),
-                last_serving_id: None,
+                last_serving: None,
             },
         );
         let reader = StubReader::new(preloaded);
