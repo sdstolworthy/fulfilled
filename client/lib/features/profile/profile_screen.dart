@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 
 import '../../data/auth_token.dart';
 import '../../domain/enums.dart';
+import '../../domain/goal.dart';
 import '../../domain/units/length.dart';
 import '../../domain/units/weight.dart';
 import '../../domain/user.dart';
@@ -14,6 +15,8 @@ import '../../providers/goal_providers.dart';
 import '../../providers/profile_providers.dart';
 import '../../repositories/goal_repository.dart';
 import '../../routing/routes.dart';
+import '../goals/widgets/edit_goal_sheet.dart';
+import '../goals/widgets/new_goal_dialog.dart';
 import '../../theme/context_extensions.dart';
 import '../../widgets/empty_state.dart';
 import '../../widgets/primary_button.dart';
@@ -321,11 +324,12 @@ class _ProfileBody extends ConsumerWidget {
 
 /// Goal row inside the Profile "Goal" card. The trailing value
 /// summarises the active goal (daily kcal target) so the user sees
-/// at a glance what's in effect; tap pushes `/goals`, which hosts
-/// the New / Edit flows. Loading shows an em-dash; no-goal shows
-/// "Set" and routes the same way so a tap lands the user on the
-/// new-goal CTA. Errors degrade to "—" silently — the goals screen
-/// surfaces the real error on arrival.
+/// at a glance what's in effect; tap opens the editor directly
+/// (`openEditGoal` when an active goal exists, `openNewGoal`
+/// otherwise) so the profile flow doesn't bounce the user through
+/// the bare Goals screen first. Loading shows an em-dash and
+/// disables the tap; errors other than `GoalNotFoundError` route
+/// to `/goals` where the dedicated error surface lives.
 class _GoalRow extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -340,8 +344,27 @@ class _GoalRow extends ConsumerWidget {
       label: 'Daily calorie target',
       value: value,
       semanticsLabel: 'Daily calorie target $value. Tap to edit.',
-      onTap: () => context.push(Routes.goalsPath),
+      onTap: () => _openEditor(context, ref, async),
     );
+  }
+
+  Future<void> _openEditor(
+    BuildContext context,
+    WidgetRef ref,
+    AsyncValue<Goal> async,
+  ) async {
+    final active = async.valueOrNull;
+    if (active != null) {
+      await openEditGoal(context, active: active);
+      return;
+    }
+    if (async.error is GoalNotFoundError) {
+      await openNewGoal(context);
+      return;
+    }
+    // Loading or unexpected error — fall through to the dedicated
+    // screen so it can render its own loading skeleton / error body.
+    if (context.mounted) context.push(Routes.goalsPath);
   }
 }
 
