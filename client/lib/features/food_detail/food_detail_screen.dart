@@ -7,6 +7,7 @@ import 'package:fulfilled/widgets/primary_button.dart';
 import 'package:fulfilled/widgets/serving_list.dart';
 import 'package:fulfilled/widgets/skeleton.dart';
 
+import '../../data/friendly_error.dart';
 import '../../domain/enums.dart';
 import '../../domain/food.dart';
 import '../../features/log_entry/log_entry_sheet.dart';
@@ -14,6 +15,7 @@ import '../../form_factor/form_factor.dart';
 import '../../providers/food_providers.dart';
 import '../../repositories/food_repository.dart';
 import '../../theme/context_extensions.dart';
+import '../../widgets/snackbar_throttle.dart';
 import 'widgets/food_detail_hero.dart';
 import 'widgets/food_summary_card.dart';
 import 'widgets/nutrition_table.dart';
@@ -72,15 +74,23 @@ class FoodDetailScreen extends ConsumerWidget {
     // inline empty-state, so the user sees the failure even if they were
     // looking away from the body. The error-state EmptyState is the
     // persistent half; the snackbar is the attention half.
+    //
+    // F2 — the message routes through [FriendlyError.from] so a
+    // `DioException`'s debug string (`DioException [bad response]:
+    // ... RequestOptions { ... }`) never reaches the UI. `FoodNotFoundError`
+    // short-circuits early — the inline `_DetailError` owns that case.
+    // The throttle keeps a flaky-network burst from stacking snackbars.
     ref.listen<AsyncValue<Food>>(foodDetailProvider(foodId), (prev, next) {
       if (next.hasError && (prev == null || !prev.hasError)) {
         if (next.error is FoodNotFoundError) return;
-        final messenger = ScaffoldMessenger.maybeOf(context);
-        messenger?.showSnackBar(
+        final friendly = FriendlyError.from(next.error!);
+        SnackbarThrottle.show(
+          context,
           SnackBar(
-            content: Text("Couldn't load food: ${next.error}"),
+            content: Text(friendly.title),
             duration: const Duration(seconds: 3),
           ),
+          key: 'food-detail-load-failure',
         );
       }
     });

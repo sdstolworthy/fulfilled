@@ -196,13 +196,15 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       ),
 
       // Outside the shell — full-page contexts. No nav chrome.
-      GoRoute(
-        name: Routes.foodDetailName,
-        path: Routes.foodDetailPath,
-        builder: (_, state) => FoodDetailScreen(
-          foodId: state.pathParameters['foodId']!,
-        ),
-      ),
+      //
+      // Order matters: specific paths declared before the catch-all
+      // `:foodId` pattern. go_router 14.x walks `routes:` top-down and
+      // the first match wins, so `/foods/new` (and every other reserved
+      // verb under `/foods/*`) must register before `/foods/:foodId`
+      // or it collapses into the detail route with `foodId: "new"`.
+      // (Architect F2 — the negative-lookahead regex approach was
+      // rejected because go_router 14.x can't parse it; reordering is
+      // the supported fallback.)
       GoRoute(
         name: Routes.foodNewName,
         path: Routes.foodNewPath,
@@ -232,6 +234,15 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         name: Routes.foodEditName,
         path: Routes.foodEditPath,
         builder: (_, state) => _FoodEditResolveScreen(
+          foodId: state.pathParameters['foodId']!,
+        ),
+      ),
+      // Catch-all `:foodId` — MUST stay last in this block. Adding a new
+      // sibling under `/foods/*`? Declare it above this route.
+      GoRoute(
+        name: Routes.foodDetailName,
+        path: Routes.foodDetailPath,
+        builder: (_, state) => FoodDetailScreen(
           foodId: state.pathParameters['foodId']!,
         ),
       ),
