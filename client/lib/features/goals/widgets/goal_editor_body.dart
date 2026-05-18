@@ -1,9 +1,12 @@
 import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../domain/decimal_format.dart';
 import '../../../domain/enums.dart';
 import '../../../domain/units/energy.dart';
+import '../../../domain/units/weight.dart';
+import '../../../providers/profile_providers.dart';
 import '../../../theme/context_extensions.dart';
 import '../../../widgets/number_text.dart';
 import '../../../widgets/skeleton.dart';
@@ -169,26 +172,53 @@ class _DirectionSegmented extends StatelessWidget {
   }
 }
 
-class _RateSlider extends StatelessWidget {
+class _RateSlider extends ConsumerWidget {
   const _RateSlider({
     required this.value,
     required this.enabled,
     required this.onChanged,
   });
+
+  /// Canonical kg/week, **always**. The slider converts in/out of the
+  /// active display unit so the parent's math (and the wire) stay in
+  /// kg regardless of what the user sees.
   final Decimal value;
   final bool enabled;
   final ValueChanged<Decimal> onChanged;
 
+  /// Display caps per unit. kg uses the original 0–1.0 kg/wk range
+  /// (20 × 0.05 steps); lb and st both render in lb/wk at 0–2.0
+  /// (20 × 0.1 steps, ~equivalent granularity). st users see lb here
+  /// because weekly weight-change rates in stones are too coarse to
+  /// be useful — bathroom-scale convention matches lb.
+  static const double _kgMax = 1.0;
+  static const double _lbMax = 2.0;
+  static const int _divisions = 20;
+
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final tokens = context.tokens;
-    final asDouble = value.toDouble().clamp(0.0, 1.0);
-    // Rate display: two fraction digits, half-to-even — PM §10 #9 via
-    // `formatRate`. The slider's underlying value is a `Decimal` so we
-    // route through the helper rather than `double.toStringAsFixed` (which
-    // rounds half-away-from-zero and disagrees with the rest of the app).
-    final rateLabel = formatRate(value);
-    final label = enabled ? '$rateLabel kg / week' : 'No weekly change';
+    final unit = ref.watch(weightUnitProvider);
+    // st collapses to lb for display — see `_lbMax` doc.
+    final displayUnit =
+        unit == WeightUnit.kg ? WeightUnit.kg : WeightUnit.lb;
+    final maxInUnit =
+        displayUnit == WeightUnit.kg ? _kgMax : _lbMax;
+    final unitSuffix = displayUnit.shortLabel;
+
+    // Convert canonical kg → display unit.
+    final displayValue = displayUnit == WeightUnit.kg
+        ? value
+        : (value * Decimal.parse('2.2046226218'));
+    final asDouble = displayValue.toDouble().clamp(0.0, maxInUnit);
+
+    final rateLabel = formatRate(displayValue);
+    final label = enabled
+        ? '$rateLabel $unitSuffix / week'
+        : 'No weekly change';
+    final maxLabel = displayUnit == WeightUnit.kg
+        ? '1.0 kg/wk'
+        : '2.0 lb/wk';
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -203,16 +233,27 @@ class _RateSlider extends StatelessWidget {
         Slider(
           key: const ValueKey('goals.rate_slider'),
           min: 0.0,
-          max: 1.0,
-          divisions: 20,
+          max: maxInUnit,
+          divisions: _divisions,
           value: asDouble,
           activeColor: context.colors.accent,
           inactiveColor: context.colors.line,
-          label: '$rateLabel kg/wk',
+          label: '$rateLabel $unitSuffix/wk',
           onChanged: enabled
-              ? (v) => onChanged(
-                    Decimal.parse(v.toStringAsFixed(2)),
-                  )
+              ? (v) {
+                  // Emit canonical kg. For kg we round to 2 decimal
+                  // places to match the legacy precision; for lb we
+                  // round the typed value to 1 decimal place first
+                  // (matches the slider step), then convert via the
+                  // public `parseWeightToKg` so the conversion stays
+                  // in the single seam.
+                  if (displayUnit == WeightUnit.kg) {
+                    onChanged(Decimal.parse(v.toStringAsFixed(2)));
+                  } else {
+                    final lbRounded = v.toStringAsFixed(1);
+                    onChanged(parseWeightToKg(lbRounded, WeightUnit.lb));
+                  }
+                }
               : null,
         ),
         Row(
@@ -223,7 +264,7 @@ class _RateSlider extends StatelessWidget {
               style: context.text.meta.copyWith(color: context.colors.ink3),
             ),
             Text(
-              '1.0 kg/wk',
+              maxLabel,
               style: context.text.meta.copyWith(color: context.colors.ink3),
             ),
           ],
