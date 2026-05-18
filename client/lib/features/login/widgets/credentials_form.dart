@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
+import '../../../routing/routes.dart';
 import '../../../theme/context_extensions.dart';
 import '../login_controller.dart';
 
@@ -123,6 +125,20 @@ class _CredentialsFormState extends ConsumerState<CredentialsForm> {
               autofillHints: const <String>[AutofillHints.password],
               textInputAction: TextInputAction.done,
               onChanged: controller.setPassword,
+              // Enter on the password field submits the form, matching
+              // the LoginButton's tap path (controller.submit + go to
+              // /today on success). Without this the keyboard's done
+              // affordance just dismisses focus and the user has to
+              // scroll/tap to actually sign in. `submitting` short-
+              // circuits a double-submit if Enter fires twice while
+              // the credential POST is already in flight.
+              onSubmitted: (_) async {
+                if (submitting) return;
+                final ok = await controller.submit();
+                if (ok && context.mounted) {
+                  context.go(Routes.todayPath);
+                }
+              },
               decoration: InputDecoration(
                 labelText: 'Password',
                 helperText: hasCredsError ? credentialsError : null,
