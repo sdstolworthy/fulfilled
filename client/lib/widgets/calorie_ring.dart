@@ -76,27 +76,37 @@ class CalorieRing extends StatelessWidget {
         child: Stack(
           alignment: Alignment.center,
           children: <Widget>[
-            TweenAnimationBuilder<double>(
-              tween: Tween<double>(begin: 0, end: progress),
-              duration: arcDuration,
-              curve: Curves.easeInOut,
-              builder: (context, value, _) {
-                return AnimatedSwitcher(
-                  duration: colorFadeDuration,
-                  switchInCurve: Curves.easeOutCubic,
-                  switchOutCurve: Curves.easeOutCubic,
-                  child: CustomPaint(
-                    key: ValueKey<Color>(arcColor),
-                    size: Size.square(size),
-                    painter: _RingPainter(
-                      progress: value,
-                      arcColor: arcColor,
-                      trackColor: colors.line2,
-                      strokeWidth: strokeWidth,
+            // Perf (Flutter doc — "Performance considerations" on
+            // CustomPaint): the ring's `TweenAnimationBuilder` repaints
+            // 60 fps for the 600 ms arc sweep. Wrapping the painter in
+            // a `RepaintBoundary` isolates it from the surrounding
+            // surface (the day-view scrollable, the macro bars below)
+            // so a scroll or list-row rebuild upstream doesn't force
+            // the arc to repaint, and the arc's per-frame invalidation
+            // doesn't bubble back out.
+            RepaintBoundary(
+              child: TweenAnimationBuilder<double>(
+                tween: Tween<double>(begin: 0, end: progress),
+                duration: arcDuration,
+                curve: Curves.easeInOut,
+                builder: (context, value, _) {
+                  return AnimatedSwitcher(
+                    duration: colorFadeDuration,
+                    switchInCurve: Curves.easeOutCubic,
+                    switchOutCurve: Curves.easeOutCubic,
+                    child: CustomPaint(
+                      key: ValueKey<Color>(arcColor),
+                      size: Size.square(size),
+                      painter: _RingPainter(
+                        progress: value,
+                        arcColor: arcColor,
+                        trackColor: colors.line2,
+                        strokeWidth: strokeWidth,
+                      ),
                     ),
-                  ),
-                );
-              },
+                  );
+                },
+              ),
             ),
             Column(
               mainAxisSize: MainAxisSize.min,
