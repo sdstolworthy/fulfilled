@@ -482,8 +482,8 @@ class _ResultsSection extends ConsumerWidget {
               Expanded(
                 child: Text(
                   'RESULTS',
-                  style: context.text.eyebrow
-                      .copyWith(color: context.colors.ink3),
+                  style:
+                      context.text.eyebrow.copyWith(color: context.colors.ink3),
                 ),
               ),
               Text(
@@ -523,8 +523,7 @@ class _ResultsSection extends ConsumerWidget {
                 width: 200,
                 child: PrimaryButton(
                   label: 'Retry',
-                  onPressed: () =>
-                      ref.invalidate(foodSearchProvider(query)),
+                  onPressed: () => ref.invalidate(foodSearchProvider(query)),
                 ),
               ),
             );
@@ -549,8 +548,7 @@ class _ResultsSection extends ConsumerWidget {
     );
   }
 
-  String _countLabel(int n) =>
-      n == 1 ? '1 food' : '$n foods';
+  String _countLabel(int n) => n == 1 ? '1 food' : '$n foods';
 }
 
 class _ResultsList extends StatelessWidget {
@@ -575,50 +573,233 @@ class _ResultsList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      margin: EdgeInsets.only(top: context.space.x1),
-      decoration: BoxDecoration(
-        color: context.colors.surface,
-        border: Border(
-          top: BorderSide(color: context.colors.line),
-          bottom: BorderSide(color: context.colors.line),
+    // F5-T4 — partition into "YOUR FOODS" (logged) + "ALL FOODS" (cold).
+    // Sort the logged bucket by `lastLoggedAt desc`, breaking ties by
+    // `logCount desc` and then `id asc` (uuid string compare is stable +
+    // total). The cold bucket keeps the BE search-rank order. A new
+    // logged row arriving on a later page jumps to the top of "YOUR
+    // FOODS" after the next sort — mildly jarring but rare; see FE
+    // plan §6.
+    final logged = <Food>[];
+    final cold = <Food>[];
+    for (final f in rows) {
+      if (f.wasLoggedByCaller) {
+        logged.add(f);
+      } else {
+        cold.add(f);
+      }
+    }
+    logged.sort((a, b) {
+      final cmp = b.lastLoggedAt!.compareTo(a.lastLoggedAt!);
+      if (cmp != 0) return cmp;
+      final logCmp = (b.logCount ?? 0).compareTo(a.logCount ?? 0);
+      if (logCmp != 0) return logCmp;
+      return a.id.compareTo(b.id);
+    });
+
+    // Collapse rules:
+    //   logged.isEmpty && cold.isNotEmpty → just the cold list, no
+    //     section headers (visually identical to pre-F5).
+    //   logged.isNotEmpty && cold.isEmpty → only "YOUR FOODS" section.
+    //   both non-empty → both sections, both headers.
+    //
+    // Pagination spinner sits at the bottom of whichever section is
+    // last on screen (the cold one when present, otherwise the logged
+    // one). It does NOT move into the YOUR FOODS section when both are
+    // rendered — the user is paginating the catalog, not their personal
+    // history.
+    final loggedEmpty = logged.isEmpty;
+    final coldEmpty = cold.isEmpty;
+    if (loggedEmpty) {
+      // Flat list — matches pre-F5 rendering exactly.
+      return _SectionContainer(
+        child: _RowListColumn(
+          rows: cold,
+          query: query,
+          mealHint: mealHint,
+          isLoadingMore: isLoadingMore,
         ),
-      ),
-      child: Column(
-        children: <Widget>[
-          for (var i = 0; i < rows.length; i++) ...<Widget>[
-            SearchResultRow(
-              food: rows[i],
-              query: query,
-              onTap: () => context.push(
-                _detailPathWithMealHint(rows[i].id, mealHint),
-              ),
+      );
+    }
+    if (coldEmpty) {
+      // Only "YOUR FOODS" — header serves as the explainer for the sub-
+      // line copy on the rows.
+      return _SectionContainer(
+        headerLabel: 'YOUR FOODS',
+        headerCount: logged.length,
+        child: _RowListColumn(
+          rows: logged,
+          query: query,
+          mealHint: mealHint,
+          isLoadingMore: isLoadingMore,
+        ),
+      );
+    }
+    // Both sections render.
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        _SectionContainer(
+          headerLabel: 'YOUR FOODS',
+          headerCount: logged.length,
+          child: _RowListColumn(
+            rows: logged,
+            query: query,
+            mealHint: mealHint,
+            // Spinner lives at the bottom of "ALL FOODS" when both
+            // sections are present (FE plan §6).
+            isLoadingMore: false,
+          ),
+        ),
+        _SectionContainer(
+          headerLabel: 'ALL FOODS',
+          headerCount: cold.length,
+          child: _RowListColumn(
+            rows: cold,
+            query: query,
+            mealHint: mealHint,
+            isLoadingMore: isLoadingMore,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// F5-T4 — wraps a section (optional header + bordered surface body) so
+/// the partition logic above stays declarative. The container border +
+/// surface bg mirror the pre-F5 single-section chrome.
+class _SectionContainer extends StatelessWidget {
+  const _SectionContainer({
+    required this.child,
+    this.headerLabel,
+    this.headerCount,
+  });
+
+  final Widget child;
+  final String? headerLabel;
+  final int? headerCount;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: <Widget>[
+        if (headerLabel != null)
+          _SearchSectionHeader(label: headerLabel!, count: headerCount),
+        Container(
+          margin: EdgeInsets.only(top: context.space.x1),
+          decoration: BoxDecoration(
+            color: context.colors.surface,
+            border: Border(
+              top: BorderSide(color: context.colors.line),
+              bottom: BorderSide(color: context.colors.line),
             ),
-            if (i < rows.length - 1 || isLoadingMore)
-              Divider(
-                height: 1,
-                thickness: 1,
-                color: context.colors.line2,
-                indent: context.space.x5,
-                endIndent: 0,
-              ),
-          ],
-          if (isLoadingMore)
-            Padding(
-              padding: EdgeInsets.symmetric(vertical: context.space.x4),
-              child: Center(
-                child: SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    color: context.colors.ink3,
-                  ),
-                ),
+          ),
+          child: child,
+        ),
+      ],
+    );
+  }
+}
+
+/// F5-T4 — local section header for the "YOUR FOODS" / "ALL FOODS"
+/// split. Mirrors the existing eyebrow + count badge in
+/// `_ResultsSection` so the visual language is consistent.
+///
+/// TODO: lift _SearchSectionHeader to shared (post-F5) — `quick_add_chips.dart`
+/// has a near-identical `_SectionHeader`; the lift refactor is deliberately
+/// out of F5 scope per the PM brief.
+class _SearchSectionHeader extends StatelessWidget {
+  const _SearchSectionHeader({required this.label, required this.count});
+
+  final String label;
+  final int? count;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        context.space.x5,
+        context.space.x4 - 2,
+        context.space.x5,
+        context.space.x2,
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: <Widget>[
+          Expanded(
+            child: Text(
+              label,
+              style: context.text.eyebrow.copyWith(color: context.colors.ink3),
+            ),
+          ),
+          if (count != null)
+            Text(
+              '($count)',
+              style: context.text.metaNumeric.copyWith(
+                color: context.colors.ink3,
+                fontSize: 12,
               ),
             ),
         ],
       ),
+    );
+  }
+}
+
+/// F5-T4 — inner column of `SearchResultRow`s + dividers + optional
+/// pagination spinner. Lifted out of `_ResultsList.build` so the
+/// section-split branches can share one render path.
+class _RowListColumn extends StatelessWidget {
+  const _RowListColumn({
+    required this.rows,
+    required this.query,
+    required this.mealHint,
+    required this.isLoadingMore,
+  });
+
+  final List<Food> rows;
+  final String query;
+  final Meal? mealHint;
+  final bool isLoadingMore;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: <Widget>[
+        for (var i = 0; i < rows.length; i++) ...<Widget>[
+          SearchResultRow(
+            food: rows[i],
+            query: query,
+            onTap: () => context.push(
+              _detailPathWithMealHint(rows[i].id, mealHint),
+            ),
+          ),
+          if (i < rows.length - 1 || isLoadingMore)
+            Divider(
+              height: 1,
+              thickness: 1,
+              color: context.colors.line2,
+              indent: context.space.x5,
+              endIndent: 0,
+            ),
+        ],
+        if (isLoadingMore)
+          Padding(
+            padding: EdgeInsets.symmetric(vertical: context.space.x4),
+            child: Center(
+              child: SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: context.colors.ink3,
+                ),
+              ),
+            ),
+          ),
+      ],
     );
   }
 }

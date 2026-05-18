@@ -1,7 +1,10 @@
+import 'dart:math' as math;
+
 import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
+import 'package:intl/intl.dart';
 
 import '../../../domain/enums.dart';
 import '../../../domain/food.dart';
@@ -48,10 +51,14 @@ class SearchResultRow extends StatelessWidget {
     // T-20: composed row label — `name, serving, N kilocalories`. Children
     // are excluded so a screen reader announces the row once with the
     // rendered number rather than reading each visual leaf in turn.
+    //
+    // F5-T4: previously-logged rows get a "Previously logged. " prepend so
+    // the section header context isn't lost in a flat a11y traversal.
     final semanticLabel = _composeSemanticLabel(
       name: food.name,
       servingName: defaultServing?.name,
       kcal: kcal,
+      wasLoggedByCaller: food.wasLoggedByCaller,
     );
 
     return Semantics(
@@ -83,11 +90,28 @@ class SearchResultRow extends StatelessWidget {
                     children: <Widget>[
                       _HighlightedName(name: food.name, query: query),
                       const SizedBox(height: 2),
+                      // F5-T4: on previously-logged rows we swap the catalog
+                      // brand sub-line for a personal "Logged Tue · 4×" sub-
+                      // line. Accent-tinted + w600 so the cluster pops within
+                      // its "YOUR FOODS" section without becoming a screaming
+                      // pill. Falls through to the existing brand sub-line
+                      // when the row was never logged (or when log fields
+                      // aren't on the wire — defensive).
                       Text(
-                        _metaLine(food, defaultServing),
+                        food.wasLoggedByCaller
+                            ? formatLoggedSubline(
+                                food.lastLoggedAt!,
+                                food.logCount,
+                              )
+                            : _metaLine(food, defaultServing),
                         style: context.text.metaNumeric.copyWith(
-                          color: context.colors.ink2,
+                          color: food.wasLoggedByCaller
+                              ? context.colors.accent
+                              : context.colors.ink2,
                           fontSize: 12,
+                          fontWeight: food.wasLoggedByCaller
+                              ? FontWeight.w600
+                              : FontWeight.w400,
                         ),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
@@ -130,6 +154,7 @@ String _composeSemanticLabel({
   required String name,
   required String? servingName,
   required Decimal? kcal,
+  bool wasLoggedByCaller = false,
 }) {
   final parts = <String>[name];
   if (servingName != null && servingName.trim().isNotEmpty) {
@@ -140,7 +165,8 @@ String _composeSemanticLabel({
   } else {
     parts.add('kilocalories unknown');
   }
-  return parts.join(', ');
+  final body = parts.join(', ');
+  return wasLoggedByCaller ? 'Previously logged. $body' : body;
 }
 
 class _Thumb extends StatelessWidget {
@@ -161,9 +187,7 @@ class _Thumb extends StatelessWidget {
       height: 36,
       alignment: Alignment.center,
       decoration: BoxDecoration(
-        color: isUser
-            ? context.colors.userThumbBg
-            : context.colors.accentSoft,
+        color: isUser ? context.colors.userThumbBg : context.colors.accentSoft,
         borderRadius: BorderRadius.circular(context.radius.r1 + 2),
       ),
       child: Text(
@@ -173,9 +197,7 @@ class _Thumb extends StatelessWidget {
           fontSize: 11,
           fontWeight: FontWeight.w700,
           letterSpacing: 0.04 * 11,
-          color: isUser
-              ? context.colors.userThumbInk
-              : context.colors.accent,
+          color: isUser ? context.colors.userThumbInk : context.colors.accent,
         ),
       ),
     );
@@ -340,4 +362,71 @@ String _perLabel(String servingName) {
   if (n.contains('piece')) return 'piece';
   if (n.contains('cup')) return 'serving';
   return 'serving';
+}
+
+// ---------------------------------------------------------------------------
+// F5-T4: "Logged Tue · 4×" sub-line copy.
+//
+// Top-level helpers so widget tests can hit the formatter directly without
+// pumping the row widget. The `now` parameter is exposed so the table tests
+// can pin a deterministic clock — production callers omit it and we read
+// `DateTime.now()`.
+// ---------------------------------------------------------------------------
+
+/// Build the sub-line for a previously-logged search-result row.
+///
+/// Format: `"Logged <when>"` with an optional `" · N×"` count suffix where
+/// the multiplication glyph is U+00D7 (`×`), *not* the letter `x`. The
+/// suffix is dropped when [logCount] is `null` or `<= 1` ("Logged Tue · 1×"
+/// reads identically to "Logged Tue"). Counts of 1000 or more render as
+/// `"999+"` so the row width stays bounded; precise counts at that scale
+/// no longer inform a decision.
+///
+/// [now] defaults to `DateTime.now()` and is parameterised for tests.
+String formatLoggedSubline(
+  DateTime lastLogged,
+  int? logCount, {
+  DateTime? now,
+}) {
+  final clock = now ?? DateTime.now();
+  final whenText = _formatLoggedWhen(lastLogged, clock);
+  final count = logCount ?? 0;
+  if (count <= 1) return 'Logged $whenText';
+  // Cap at 999+ — `math.min` keeps the rendered count bounded even if a
+  // caller passes a huge number; the >= 1000 branch produces the "999+"
+  // string and the < 1000 branch falls through to the raw int.
+  final capped = math.min(count, 1000);
+  final countText = capped >= 1000 ? '999+' : '$capped';
+  return 'Logged $whenText · $countText×';
+}
+
+/// Render the recency portion of the sub-line:
+///   - same local-calendar day → `"Today"`
+///   - prior local-calendar day → `"Yesterday"`
+///   - within last 7 calendar days → short weekday (`"Tue"`)
+///   - within current calendar year → `"MMM d"` (`"May 3"`)
+///   - older → `"MMM d, y"` (`"May 3, 2024"`)
+///
+/// All date math runs against the *local-calendar* `DateTime(y, m, d)`
+/// constructor, so DST transitions don't shift the calendar-day comparison
+/// (an instant 22:00 on a spring-forward day still resolves to the same
+/// `DateTime(y, m, d)` it would on a non-DST day).
+String _formatLoggedWhen(DateTime lastLogged, DateTime now) {
+  final atLocal = lastLogged.toLocal();
+  final nowLocal = now.toLocal();
+  final today = DateTime(nowLocal.year, nowLocal.month, nowLocal.day);
+  final yesterday = today.subtract(const Duration(days: 1));
+  final atDay = DateTime(atLocal.year, atLocal.month, atLocal.day);
+
+  if (atDay == today) return 'Today';
+  if (atDay == yesterday) return 'Yesterday';
+
+  final deltaDays = today.difference(atDay).inDays;
+  if (deltaDays > 0 && deltaDays < 7) {
+    return DateFormat.E().format(atLocal); // "Tue"
+  }
+  if (atLocal.year == nowLocal.year) {
+    return DateFormat('MMM d').format(atLocal); // "May 3"
+  }
+  return DateFormat('MMM d, y').format(atLocal); // "May 3, 2024"
 }
