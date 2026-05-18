@@ -251,7 +251,10 @@ class _LogWeightSheetState extends ConsumerState<LogWeightSheet> {
 
     return Padding(
       padding: EdgeInsets.only(
-        bottom: MediaQuery.of(context).viewInsets.bottom,
+        // Perf (Flutter doc — "Control build() cost"): only depend on
+        // the keyboard inset, not the full MediaQueryData (which would
+        // rebuild on every padding/insets/text-scale/orientation tick).
+        bottom: MediaQuery.viewInsetsOf(context).bottom,
       ),
       child: Container(
         decoration: BoxDecoration(
