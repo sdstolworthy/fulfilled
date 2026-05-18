@@ -10,6 +10,7 @@ import 'package:fulfilled/widgets/skeleton.dart';
 import '../../data/friendly_error.dart';
 import '../../domain/enums.dart';
 import '../../domain/food.dart';
+import '../../domain/meal.dart';
 import '../../features/log_entry/log_entry_sheet.dart';
 import '../../form_factor/form_factor.dart';
 import '../../providers/food_providers.dart';
@@ -33,6 +34,7 @@ const bool _kDebugForceError = false;
 typedef ShowLogEntrySheet = void Function(
   BuildContext context, {
   required Food food,
+  Meal? defaultMeal,
 });
 
 /// Screen 03 — Food detail. URL-addressable route (`/foods/:foodId`),
@@ -53,11 +55,18 @@ typedef ShowLogEntrySheet = void Function(
 class FoodDetailScreen extends ConsumerWidget {
   const FoodDetailScreen({
     required this.foodId,
+    this.defaultMeal,
     this.showLogEntrySheetOverride,
     super.key,
   });
 
   final String foodId;
+
+  /// Optional meal hint sourced from the `?meal=<wire>` query param.
+  /// Forwarded into [showLogEntrySheet] so the sheet's meal picker
+  /// defaults to the meal section the user came from rather than the
+  /// wall-clock heuristic.
+  final Meal? defaultMeal;
 
   /// Test-only seam — production code leaves this null and uses the
   /// real `showLogEntrySheet` imported above. Letting tests inject a
@@ -110,16 +119,25 @@ class FoodDetailScreen extends ConsumerWidget {
         foodId: foodId,
         onRetry: () => ref.invalidate(foodDetailProvider(foodId)),
       ),
-      data: (food) => _DetailLoaded(food: food, openLogEntry: open),
+      data: (food) => _DetailLoaded(
+        food: food,
+        openLogEntry: open,
+        defaultMeal: defaultMeal,
+      ),
     );
   }
 }
 
 class _DetailLoaded extends StatelessWidget {
-  const _DetailLoaded({required this.food, required this.openLogEntry});
+  const _DetailLoaded({
+    required this.food,
+    required this.openLogEntry,
+    this.defaultMeal,
+  });
 
   final Food food;
   final ShowLogEntrySheet openLogEntry;
+  final Meal? defaultMeal;
 
   @override
   Widget build(BuildContext context) {
@@ -130,7 +148,8 @@ class _DetailLoaded extends StatelessWidget {
       backgroundColor: context.colors.bg,
       appBar: _DetailAppBar(
         showAddToLog: !isCompact,
-        onAddToLog: () => openLogEntry(context, food: food),
+        onAddToLog: () =>
+            openLogEntry(context, food: food, defaultMeal: defaultMeal),
         // The Edit affordance only paints for `source == user` foods —
         // the OFF / USDA rows are read-only (their data is upstream and
         // shared across users). The button pushes
@@ -149,7 +168,11 @@ class _DetailLoaded extends StatelessWidget {
                 right: 0,
                 bottom: 0,
                 child: _BottomCta(
-                  onPressed: () => openLogEntry(context, food: food),
+                  onPressed: () => openLogEntry(
+                    context,
+                    food: food,
+                    defaultMeal: defaultMeal,
+                  ),
                 ),
               ),
           ],

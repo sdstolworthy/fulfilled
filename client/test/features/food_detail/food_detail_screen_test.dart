@@ -10,6 +10,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fulfilled/domain/enums.dart';
 import 'package:fulfilled/domain/food.dart';
+import 'package:fulfilled/domain/meal.dart';
 import 'package:fulfilled/domain/serving.dart';
 import 'package:fulfilled/domain/unit.dart';
 import 'package:fulfilled/features/food_detail/food_detail_screen.dart';
@@ -260,7 +261,8 @@ Widget _harness({required Food food}) {
       theme: buildLightTheme(),
       home: FoodDetailScreen(
         foodId: food.id,
-        showLogEntrySheetOverride: (_, {required Food food}) {},
+        showLogEntrySheetOverride:
+            (_, {required Food food, Meal? defaultMeal}) {},
       ),
     ),
   );

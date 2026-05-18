@@ -8,6 +8,7 @@ import 'package:fulfilled/widgets/primary_button.dart';
 import 'package:fulfilled/widgets/skeleton.dart';
 
 import '../../domain/food.dart';
+import '../../domain/meal.dart';
 import '../../form_factor/form_factor.dart';
 import '../../providers/food_providers.dart';
 import '../../theme/context_extensions.dart';
@@ -34,15 +35,24 @@ import 'widgets/search_result_row.dart';
 /// centered `Dialog`. Other agents (the global shortcuts handler) call
 /// it. The dialog wraps `SearchScreenBody` directly.
 class SearchScreen extends StatelessWidget {
-  const SearchScreen({this.initialQuery, super.key});
+  const SearchScreen({this.initialQuery, this.initialMeal, super.key});
 
   /// Optional seed from the `?q=` query parameter. Passed straight to
   /// `SearchScreenBody`.
   final String? initialQuery;
 
+  /// Optional meal hint from the `?meal=<wire>` query parameter. Set
+  /// when the user reached the search screen via a meal-section
+  /// "Add food" tap; forwarded to `/foods/<id>?meal=<wire>` on row
+  /// tap so the log-entry sheet seeds its meal picker to match.
+  final Meal? initialMeal;
+
   @override
   Widget build(BuildContext context) {
-    return SearchScreenBody(initialQuery: initialQuery);
+    return SearchScreenBody(
+      initialQuery: initialQuery,
+      initialMeal: initialMeal,
+    );
   }
 }
 
@@ -56,12 +66,17 @@ class SearchScreen extends StatelessWidget {
 class SearchScreenBody extends ConsumerStatefulWidget {
   const SearchScreenBody({
     this.initialQuery,
+    this.initialMeal,
     this.onClose,
     this.autofocus = true,
     super.key,
   });
 
   final String? initialQuery;
+
+  /// Meal hint forwarded when pushing a result row to the food-detail
+  /// route. Null = no hint (the sheet falls back to `mealForLocalTime`).
+  final Meal? initialMeal;
 
   /// Optional close hook. The dialog wrapper passes a function that pops
   /// the dialog; the route variant lets `context.pop()` happen via the
@@ -153,6 +168,7 @@ class _SearchScreenBodyState extends ConsumerState<SearchScreenBody> {
                       provider: recentFoodsProvider,
                       title: 'Recent',
                       dotColor: context.colors.accent,
+                      mealHint: widget.initialMeal,
                     ),
                     _ChipsSection(
                       provider: frequentFoodsProvider,
@@ -160,10 +176,11 @@ class _SearchScreenBodyState extends ConsumerState<SearchScreenBody> {
                       // T-03: Frequent uses ink3 instead of the macro
                       // protein color from the mock — see QuickChipRow.
                       dotColor: context.colors.ink3,
+                      mealHint: widget.initialMeal,
                     ),
                   ],
                   if (isQueryActive)
-                    _ResultsSection(query: _query)
+                    _ResultsSection(query: _query, mealHint: widget.initialMeal)
                   else
                     SizedBox(height: context.space.x3),
                 ],
@@ -345,11 +362,17 @@ class _ChipsSection extends ConsumerWidget {
     required this.provider,
     required this.title,
     required this.dotColor,
+    this.mealHint,
   });
 
   final FutureProvider<List<Food>> provider;
   final String title;
   final Color dotColor;
+
+  /// Forwarded to [QuickChipRow] so chip taps land on
+  /// `/foods/<id>?meal=<wire>` when the user entered the search via a
+  /// meal-section "Add food".
+  final Meal? mealHint;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -364,6 +387,7 @@ class _ChipsSection extends ConsumerWidget {
         title: title,
         foods: foods,
         dotColor: dotColor,
+        mealHint: mealHint,
       ),
     );
   }
@@ -375,9 +399,13 @@ class _ChipsSection extends ConsumerWidget {
 // ---------------------------------------------------------------------------
 
 class _ResultsSection extends ConsumerWidget {
-  const _ResultsSection({required this.query});
+  const _ResultsSection({required this.query, this.mealHint});
 
   final String query;
+
+  /// Forwarded down to [_ResultsList] so row taps preserve the meal
+  /// hint when the user came in from a meal-section "Add food".
+  final Meal? mealHint;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -463,7 +491,11 @@ class _ResultsSection extends ConsumerWidget {
                 body: 'Try a different name.',
               );
             }
-            return _ResultsList(query: query, rows: rows);
+            return _ResultsList(
+              query: query,
+              rows: rows,
+              mealHint: mealHint,
+            );
           },
         ),
       ],
@@ -475,10 +507,19 @@ class _ResultsSection extends ConsumerWidget {
 }
 
 class _ResultsList extends StatelessWidget {
-  const _ResultsList({required this.query, required this.rows});
+  const _ResultsList({
+    required this.query,
+    required this.rows,
+    this.mealHint,
+  });
 
   final String query;
   final List<Food> rows;
+
+  /// When non-null, row taps push `/foods/<id>?meal=<wire>` so the
+  /// food-detail route can seed the log-entry sheet's default meal.
+  /// Null preserves the route's stock behaviour (no query param).
+  final Meal? mealHint;
 
   @override
   Widget build(BuildContext context) {
@@ -494,7 +535,13 @@ class _ResultsList extends StatelessWidget {
       child: Column(
         children: <Widget>[
           for (var i = 0; i < rows.length; i++) ...<Widget>[
-            SearchResultRow(food: rows[i], query: query),
+            SearchResultRow(
+              food: rows[i],
+              query: query,
+              onTap: () => context.push(
+                _detailPathWithMealHint(rows[i].id, mealHint),
+              ),
+            ),
             if (i < rows.length - 1)
               Divider(
                 height: 1,
@@ -620,4 +667,13 @@ class _CommandPaletteShell extends StatelessWidget {
 
 class _DismissDialogIntent extends Intent {
   const _DismissDialogIntent();
+}
+
+/// Build the food-detail URL with an optional `?meal=<wire>` suffix.
+/// The suffix is forwarded by the food-detail route into the
+/// log-entry sheet so the meal picker defaults to the section the
+/// user came from. When [hint] is null the stock path is returned.
+String _detailPathWithMealHint(String foodId, Meal? hint) {
+  if (hint == null) return '/foods/$foodId';
+  return '/foods/$foodId?meal=${hint.wire}';
 }

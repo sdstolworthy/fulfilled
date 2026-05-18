@@ -315,7 +315,11 @@ class _MealGrid extends StatelessWidget {
           MealSection(
             subtotal: summary.byMeal[meal] ?? MealSubtotal.empty(meal),
             entries: byMeal[meal] ?? const <LogEntry>[],
-            onAddTap: () => context.push(Routes.foodsSearchPath),
+            // Thread the meal hint as `?meal=<wire>`; see the compact
+            // sibling for the chain that consumes it.
+            onAddTap: () => context.push(
+              '${Routes.foodsSearchPath}?meal=${meal.wire}',
+            ),
             onEntryTap: onEntryTap,
             isPendingSync: isPendingSync,
             dense: true,

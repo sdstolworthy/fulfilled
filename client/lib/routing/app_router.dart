@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../data/auth_token.dart';
 import '../domain/enums.dart';
+import '../domain/meal.dart';
 import '../domain/user.dart';
 import '../features/custom_food/custom_food_screen.dart';
 import '../features/food_detail/food_detail_screen.dart';
@@ -157,6 +158,14 @@ final appRouterProvider = Provider<GoRouter>((ref) {
                 path: 'search',
                 builder: (_, state) => SearchScreen(
                   initialQuery: state.uri.queryParameters['q'] ?? '',
+                  // `?meal=<wire>` is set by meal-section "Add food" taps;
+                  // forwarded to the food detail route when a row is
+                  // selected so the log-entry sheet's default meal
+                  // matches the section the user came from. Unparseable
+                  // values silently fall back to null.
+                  initialMeal: _parseMealParam(
+                    state.uri.queryParameters['meal'],
+                  ),
                 ),
               ),
               GoRoute(
@@ -244,6 +253,11 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         path: Routes.foodDetailPath,
         builder: (_, state) => FoodDetailScreen(
           foodId: state.pathParameters['foodId']!,
+          // `?meal=<wire>` arrives here from the search row tap when the
+          // user came in via a meal-section "Add food". Seeds the
+          // log-entry sheet's default meal so it doesn't fall back to
+          // the wall-clock heuristic and contradict user intent.
+          defaultMeal: _parseMealParam(state.uri.queryParameters['meal']),
         ),
       ),
       GoRoute(
@@ -676,5 +690,17 @@ void _popOrFallback(BuildContext context, {String fallback = '/foods'}) {
     router.pop();
   } else {
     router.go(fallback);
+  }
+}
+
+/// Parse a `?meal=<wire>` query parameter into a [Meal]. Unknown values
+/// (or an absent parameter) collapse to `null` so callers can fall back
+/// to their default heuristic without throwing.
+Meal? _parseMealParam(String? raw) {
+  if (raw == null || raw.isEmpty) return null;
+  try {
+    return Meal.fromWire(raw);
+  } on ArgumentError {
+    return null;
   }
 }

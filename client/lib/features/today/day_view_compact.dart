@@ -127,8 +127,13 @@ class DayViewCompact extends ConsumerWidget {
                 date: date,
                 summaryAsync: summaryAsync,
                 entriesAsync: entriesAsync,
-                onAddTap: (Meal _) =>
-                    context.push(Routes.foodsSearchPath),
+                // Thread the meal hint through `?meal=<wire>` so the
+                // search → detail → log-entry-sheet chain can default
+                // the meal picker to the section the user tapped under
+                // instead of falling back to `mealForLocalTime`.
+                onAddTap: (Meal m) => context.push(
+                  '${Routes.foodsSearchPath}?meal=${m.wire}',
+                ),
                 // LU-005: tapping a logged row opens the LogEntrySheet
                 // in edit mode. The handler guards on pending-sync
                 // (T-22) and fetches the full Food before opening —

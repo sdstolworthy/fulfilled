@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../../domain/enums.dart';
 import '../../../domain/food.dart';
+import '../../../domain/meal.dart';
 import '../../../domain/units/energy.dart';
 import '../../../theme/context_extensions.dart';
 
@@ -18,17 +19,24 @@ import '../../../theme/context_extensions.dart';
 ///   - Frequent → `AppColors.ink3` (architectural override — T-03)
 ///
 /// Tap behavior: `context.push('/foods/${food.id}')` per architect brief.
+/// When [mealHint] is non-null the URL gains a `?meal=<wire>` suffix so
+/// the food-detail route can seed the log-entry sheet's default meal.
 class QuickChipRow extends StatelessWidget {
   const QuickChipRow({
     required this.title,
     required this.foods,
     required this.dotColor,
+    this.mealHint,
     super.key,
   });
 
   final String title;
   final List<Food> foods;
   final Color dotColor;
+
+  /// Forwarded into each chip's tap target. Null = stock behaviour
+  /// (no query suffix).
+  final Meal? mealHint;
 
   @override
   Widget build(BuildContext context) {
@@ -58,7 +66,11 @@ class QuickChipRow extends StatelessWidget {
             separatorBuilder: (_, __) => SizedBox(width: context.space.x2),
             itemBuilder: (context, i) {
               final food = foods[i];
-              return _Chip(food: food, dotColor: dotColor);
+              return _Chip(
+                food: food,
+                dotColor: dotColor,
+                mealHint: mealHint,
+              );
             },
           ),
         ),
@@ -68,10 +80,15 @@ class QuickChipRow extends StatelessWidget {
 }
 
 class _Chip extends StatelessWidget {
-  const _Chip({required this.food, required this.dotColor});
+  const _Chip({
+    required this.food,
+    required this.dotColor,
+    this.mealHint,
+  });
 
   final Food food;
   final Color dotColor;
+  final Meal? mealHint;
 
   @override
   Widget build(BuildContext context) {
@@ -89,7 +106,12 @@ class _Chip extends StatelessWidget {
       label: semanticLabel.toString(),
       excludeSemantics: true,
       child: InkResponse(
-        onTap: () => context.push('/foods/${food.id}'),
+        onTap: () {
+          final hint = mealHint;
+          context.push(hint == null
+              ? '/foods/${food.id}'
+              : '/foods/${food.id}?meal=${hint.wire}');
+        },
         containedInkWell: true,
         radius: 24,
         child: Container(
