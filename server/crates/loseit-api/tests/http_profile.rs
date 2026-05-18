@@ -25,7 +25,8 @@ use loseit_core::repo::{
 };
 use loseit_testing::{
     FakeAuthenticator, InMemoryFoodRepository, InMemoryGoalRepository, InMemoryLogRepository,
-    InMemoryServingRepository, InMemoryUserRepository, InMemoryWeightRepository,
+    InMemoryServingRepository, InMemoryUserFoodSummaryReader, InMemoryUserRepository,
+    InMemoryWeightRepository,
 };
 use tower::ServiceExt;
 
@@ -60,11 +61,27 @@ fn build_test_app_alice() -> (axum::Router, Arc<InMemoryUserRepository>) {
     foods_concrete.set_serving_repo(servings_concrete.clone());
     let foods: Arc<dyn FoodRepository> = foods_concrete;
     let servings: Arc<dyn ServingRepository> = servings_concrete;
-    let logs: Arc<dyn LogRepository> = Arc::new(InMemoryLogRepository::new());
+    let logs_concrete = Arc::new(InMemoryLogRepository::new());
+    let summary_reader: Arc<dyn loseit_core::service::UserFoodSummaryReader> =
+        Arc::new(InMemoryUserFoodSummaryReader::new(logs_concrete.clone()));
+    let logs: Arc<dyn LogRepository> = logs_concrete;
     let authn: Arc<dyn Authenticator> =
         Arc::new(FakeAuthenticator::new(ALICE_TOKEN, alice_identity()));
     let users_dyn: Arc<dyn UserRepository> = users_concrete.clone();
-    let state = AppState::from_ports(users_dyn, weights, goals, foods, servings, logs, authn, None, None, false, false);
+    let state = AppState::from_ports(
+        users_dyn,
+        weights,
+        goals,
+        foods,
+        servings,
+        logs,
+        summary_reader,
+        authn,
+        None,
+        None,
+        false,
+        false,
+    );
     (router(state), users_concrete)
 }
 
@@ -83,10 +100,26 @@ fn build_test_app_two_users() -> (axum::Router, axum::Router, Arc<InMemoryUserRe
         foods_concrete.set_serving_repo(servings_concrete.clone());
         let foods: Arc<dyn FoodRepository> = foods_concrete;
         let servings: Arc<dyn ServingRepository> = servings_concrete;
-        let logs: Arc<dyn LogRepository> = Arc::new(InMemoryLogRepository::new());
+        let logs_concrete = Arc::new(InMemoryLogRepository::new());
+        let summary_reader: Arc<dyn loseit_core::service::UserFoodSummaryReader> =
+            Arc::new(InMemoryUserFoodSummaryReader::new(logs_concrete.clone()));
+        let logs: Arc<dyn LogRepository> = logs_concrete;
         let authn: Arc<dyn Authenticator> = Arc::new(FakeAuthenticator::new(token, identity));
         let users_dyn: Arc<dyn UserRepository> = users_concrete.clone();
-        let state = AppState::from_ports(users_dyn, weights, goals, foods, servings, logs, authn, None, None, false, false);
+        let state = AppState::from_ports(
+            users_dyn,
+            weights,
+            goals,
+            foods,
+            servings,
+            logs,
+            summary_reader,
+            authn,
+            None,
+            None,
+            false,
+            false,
+        );
         router(state)
     };
 

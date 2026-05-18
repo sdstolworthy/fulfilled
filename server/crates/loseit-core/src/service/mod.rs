@@ -11,6 +11,7 @@ pub mod log;
 pub mod page;
 pub mod serving;
 pub mod user;
+pub mod user_food_summary;
 pub mod weight;
 
 pub use auth::{AuthService, TOKEN_TTL};
@@ -25,4 +26,5 @@ pub use log::{LogService, FREQUENT_WINDOW_DAYS};
 pub use page::{resolve_page_params, PageParams, Paginated, DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT};
 pub use serving::ServingService;
 pub use user::UserService;
+pub use user_food_summary::{enrich_hits, wrap_hits, UserFoodSummaryReader};
 pub use weight::WeightService;

@@ -16,6 +16,7 @@ mod local_auth;
 mod logs;
 mod oidc_handoff;
 mod servings;
+mod user_food_summary;
 mod users;
 mod weights;
 
@@ -27,5 +28,6 @@ pub use local_auth::InMemoryLocalAuthRepository;
 pub use logs::InMemoryLogRepository;
 pub use oidc_handoff::InMemoryOidcHandoffRepository;
 pub use servings::InMemoryServingRepository;
+pub use user_food_summary::InMemoryUserFoodSummaryReader;
 pub use users::InMemoryUserRepository;
 pub use weights::InMemoryWeightRepository;

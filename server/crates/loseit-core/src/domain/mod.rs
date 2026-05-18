@@ -13,8 +13,8 @@ pub mod weight;
 pub use auth::{LocalAuthCredential, LocalAuthToken, Username};
 pub use day_summary::{DaySummary, MealSubtotal};
 pub use food::{
-    Food, FoodDraft, FoodKind, FoodPatch, FoodSearchHit, FoodSource, NutriscoreGrade,
-    ServingPreview,
+    Food, FoodDraft, FoodKind, FoodPatch, FoodSearchHit, FoodSearchHitWithSignals, FoodSource,
+    NutriscoreGrade, ServingPreview, UserFoodSummary,
 };
 pub use food_import_batch::{BatchStatus, FoodImportBatch};
 pub use goal::{Goal, GoalDraft, GoalPatch};

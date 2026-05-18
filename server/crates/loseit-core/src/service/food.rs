@@ -3,24 +3,35 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::domain::{
-    Food, FoodDraft, FoodPatch, FoodSearchHit, FoodSource, Serving, ServingDraft,
+    Food, FoodDraft, FoodPatch, FoodSearchHitWithSignals, FoodSource, Serving, ServingDraft,
 };
 use crate::repo::food::QUICK_ADD_SENTINEL_NAME;
 use crate::repo::{FoodRepository, ServingRepository};
 use crate::service::page::{resolve_page_params, Paginated};
+use crate::service::user_food_summary::{enrich_hits, wrap_hits, UserFoodSummaryReader};
 use crate::{CoreError, CoreResult};
 
-/// Business logic for foods and food search. Holds a `FoodRepository` and
-/// a `ServingRepository` because both detail lookup and custom-food
-/// creation need to compose the two.
+/// Business logic for foods and food search. Holds a `FoodRepository`,
+/// a `ServingRepository`, and a `UserFoodSummaryReader` because the
+/// search/`mine` endpoints attach per-user log signals to each hit (see
+/// [`crate::service::user_food_summary`]).
 pub struct FoodService {
     foods: Arc<dyn FoodRepository>,
     servings: Arc<dyn ServingRepository>,
+    summary_reader: Arc<dyn UserFoodSummaryReader>,
 }
 
 impl FoodService {
-    pub fn new(foods: Arc<dyn FoodRepository>, servings: Arc<dyn ServingRepository>) -> Self {
-        Self { foods, servings }
+    pub fn new(
+        foods: Arc<dyn FoodRepository>,
+        servings: Arc<dyn ServingRepository>,
+        summary_reader: Arc<dyn UserFoodSummaryReader>,
+    ) -> Self {
+        Self {
+            foods,
+            servings,
+            summary_reader,
+        }
     }
 
     pub fn foods(&self) -> &Arc<dyn FoodRepository> {
@@ -64,7 +75,7 @@ impl FoodService {
         q: &str,
         limit: Option<i64>,
         offset: Option<i64>,
-    ) -> CoreResult<Paginated<FoodSearchHit>> {
+    ) -> CoreResult<Paginated<FoodSearchHitWithSignals>> {
         let trimmed = q.trim();
         if trimmed.is_empty() {
             return Err(CoreError::Validation("query is required".into()));
@@ -72,11 +83,14 @@ impl FoodService {
 
         let page = resolve_page_params(limit, offset)?;
 
-        let results = self
+        let raw = self
             .foods
             .search(viewer, trimmed, page.limit, page.offset)
             .await?;
         let total = self.foods.search_count(viewer, trimmed).await?;
+
+        let mut results = wrap_hits(raw);
+        enrich_hits(self.summary_reader.as_ref(), viewer, &mut results).await?;
 
         Ok(Paginated {
             results,
@@ -93,7 +107,7 @@ impl FoodService {
         q: Option<&str>,
         limit: Option<i64>,
         offset: Option<i64>,
-    ) -> CoreResult<Paginated<FoodSearchHit>> {
+    ) -> CoreResult<Paginated<FoodSearchHitWithSignals>> {
         let q_opt = match q {
             Some(s) => {
                 let trimmed = s.trim();
@@ -110,11 +124,14 @@ impl FoodService {
 
         let page = resolve_page_params(limit, offset)?;
 
-        let results = self
+        let raw = self
             .foods
             .list_mine(owner, q_opt, page.limit, page.offset)
             .await?;
         let total = self.foods.count_mine(owner, q_opt).await?;
+
+        let mut results = wrap_hits(raw);
+        enrich_hits(self.summary_reader.as_ref(), owner, &mut results).await?;
 
         Ok(Paginated {
             results,

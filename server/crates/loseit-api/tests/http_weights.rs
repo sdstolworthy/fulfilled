@@ -16,7 +16,8 @@ use loseit_core::repo::{
 };
 use loseit_testing::{
     FakeAuthenticator, InMemoryFoodRepository, InMemoryGoalRepository, InMemoryLogRepository,
-    InMemoryServingRepository, InMemoryUserRepository, InMemoryWeightRepository,
+    InMemoryServingRepository, InMemoryUserFoodSummaryReader, InMemoryUserRepository,
+    InMemoryWeightRepository,
 };
 use rust_decimal::Decimal;
 use serde_json::Value;
@@ -51,10 +52,25 @@ async fn build_test_app() -> (axum::Router, Uuid, Arc<InMemoryWeightRepository>)
     let goals: Arc<dyn GoalRepository> = goals_concrete;
     let foods: Arc<dyn FoodRepository> = foods_concrete;
     let servings: Arc<dyn ServingRepository> = servings_concrete;
+    let summary_reader: Arc<dyn loseit_core::service::UserFoodSummaryReader> =
+        Arc::new(InMemoryUserFoodSummaryReader::new(logs_concrete.clone()));
     let logs: Arc<dyn LogRepository> = logs_concrete;
     let authn: Arc<dyn Authenticator> =
         Arc::new(FakeAuthenticator::new(TEST_TOKEN, test_identity()));
-    let state = AppState::from_ports(users, weights_dyn, goals, foods, servings, logs, authn, None, None, false, false);
+    let state = AppState::from_ports(
+        users,
+        weights_dyn,
+        goals,
+        foods,
+        servings,
+        logs,
+        summary_reader,
+        authn,
+        None,
+        None,
+        false,
+        false,
+    );
     (router(state), alice.id, weights_concrete)
 }
 

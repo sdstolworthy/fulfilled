@@ -26,11 +26,13 @@ use loseit_core::repo::{
     ServingRepository, UserRepository, WeightRepository,
 };
 use loseit_core::service::{
-    AuthService, FoodService, GoalService, LogService, ServingService, UserService, WeightService,
+    AuthService, FoodService, GoalService, LogService, ServingService, UserFoodSummaryReader,
+    UserService, WeightService,
 };
 use loseit_db::{
     PgFoodRepository, PgGoalRepository, PgLocalAuthRepository, PgLogRepository,
-    PgOidcHandoffRepository, PgPool, PgServingRepository, PgUserRepository, PgWeightRepository,
+    PgOidcHandoffRepository, PgPool, PgServingRepository, PgUserFoodSummaryReader,
+    PgUserRepository, PgWeightRepository,
 };
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
@@ -98,6 +100,7 @@ impl AppState {
         foods: Arc<dyn FoodRepository>,
         servings: Arc<dyn ServingRepository>,
         logs: Arc<dyn LogRepository>,
+        summary_reader: Arc<dyn UserFoodSummaryReader>,
         authenticator: DynAuthenticator,
         auth_service: Option<Arc<AuthService>>,
         oidc: Option<Arc<OidcRegistry>>,
@@ -107,9 +110,13 @@ impl AppState {
         let user_service = Arc::new(UserService::new(users));
         let weight_service = Arc::new(WeightService::new(weights));
         let goal_service = Arc::new(GoalService::new(goals.clone()));
-        let food_service = Arc::new(FoodService::new(foods.clone(), servings.clone()));
+        let food_service = Arc::new(FoodService::new(
+            foods.clone(),
+            servings.clone(),
+            summary_reader.clone(),
+        ));
         let serving_service = Arc::new(ServingService::new(servings.clone(), foods.clone()));
-        let log_service = Arc::new(LogService::new(logs, foods, servings, goals));
+        let log_service = Arc::new(LogService::new(logs, foods, servings, goals, summary_reader));
         Self {
             users: user_service,
             weights: weight_service,
@@ -142,6 +149,12 @@ pub async fn build_state(pool: PgPool, config: &AppConfig) -> Result<AppState> {
     let foods: Arc<dyn FoodRepository> = Arc::new(PgFoodRepository::new(pool.clone()));
     let servings: Arc<dyn ServingRepository> = Arc::new(PgServingRepository::new(pool.clone()));
     let logs: Arc<dyn LogRepository> = Arc::new(PgLogRepository::new(pool.clone()));
+    // F5: the single seam between today's `food_log_entries` aggregate
+    // and tomorrow's `user_food_summary` denorm table. Swap this one
+    // constructor when the v2 reader lands (see
+    // `loseit_core::service::user_food_summary` doc comment).
+    let summary_reader: Arc<dyn UserFoodSummaryReader> =
+        Arc::new(PgUserFoodSummaryReader::new(pool.clone()));
 
     let local_login_enabled = config.auth.local.is_some();
     let (authenticator, auth_service) =
@@ -201,6 +214,7 @@ pub async fn build_state(pool: PgPool, config: &AppConfig) -> Result<AppState> {
         foods,
         servings,
         logs,
+        summary_reader,
         authenticator,
         auth_service,
         oidc,

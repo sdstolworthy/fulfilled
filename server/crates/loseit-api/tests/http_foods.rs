@@ -30,7 +30,8 @@ use loseit_core::repo::{
 };
 use loseit_testing::{
     FakeAuthenticator, InMemoryFoodRepository, InMemoryGoalRepository, InMemoryLogRepository,
-    InMemoryServingRepository, InMemoryUserRepository, InMemoryWeightRepository,
+    InMemoryServingRepository, InMemoryUserFoodSummaryReader, InMemoryUserRepository,
+    InMemoryWeightRepository,
 };
 use rust_decimal::Decimal;
 use serde_json::Value;
@@ -89,10 +90,25 @@ where
     let goals: Arc<dyn GoalRepository> = Arc::new(InMemoryGoalRepository::new());
     let foods: Arc<dyn FoodRepository> = foods_concrete;
     let servings: Arc<dyn ServingRepository> = servings_concrete;
+    let summary_reader: Arc<dyn loseit_core::service::UserFoodSummaryReader> =
+        Arc::new(InMemoryUserFoodSummaryReader::new(logs_concrete.clone()));
     let logs: Arc<dyn LogRepository> = logs_concrete;
     let authn: Arc<dyn Authenticator> =
         Arc::new(FakeAuthenticator::new(TEST_TOKEN, test_identity()));
-    let state = AppState::from_ports(users, weights, goals, foods, servings, logs, authn, None, None, false, false);
+    let state = AppState::from_ports(
+        users,
+        weights,
+        goals,
+        foods,
+        servings,
+        logs,
+        summary_reader,
+        authn,
+        None,
+        None,
+        false,
+        false,
+    );
     (router(state), alice.id)
 }
 
@@ -1286,4 +1302,355 @@ async fn food_detail_kind_quick_add_for_sentinel() {
         body["kind"], "quick_add",
         "quick_add sentinel must report kind=quick_add"
     );
+}
+
+// ===========================================================================
+// F5-T2: per-user log-signal enrichment on /foods/* list routes.
+//
+// The wire shape adds three new fields to every `FoodSearchHit`:
+//   * last_logged_at:  Option<NaiveDate>  ("YYYY-MM-DD" or null)
+//   * log_count:       i32                (non-nullable; 0 when unlogged)
+//   * last_serving_id: Option<Uuid>
+//
+// Every test here builds an app via `build_test_app_with`, which wires an
+// `InMemoryUserFoodSummaryReader` over the same `InMemoryLogRepository`
+// the seeders push log entries into. The shape returned by the HTTP
+// layer therefore tracks the seeded data without any extra wiring.
+// ===========================================================================
+
+use chrono::NaiveDate;
+use loseit_core::domain::unit::Unit as DomainUnit;
+use loseit_core::domain::{Meal, NutritionSnapshot, PersistedLogEntry};
+
+/// Build a single `PersistedLogEntry` with kcal=140 for the given food /
+/// date / serving. The fields the F5 enrichment query reads are
+/// (`user_id`, `food_id`, `consumed_on`, `serving_id`) — everything else
+/// is filler.
+fn make_log_entry(food_id: Uuid, day: NaiveDate, serving_id: Option<Uuid>) -> PersistedLogEntry {
+    PersistedLogEntry {
+        food_id,
+        serving_id,
+        consumed_on: day,
+        meal: Meal::Breakfast,
+        quantity: Decimal::from(1),
+        entered_amount: Decimal::from(1),
+        entered_unit: DomainUnit::Serving,
+        snapshot: NutritionSnapshot {
+            calories_kcal: Decimal::from(140),
+            protein_g: None,
+            carbs_g: None,
+            fat_g: None,
+            fiber_g: None,
+            sugar_g: None,
+            sodium_mg: None,
+            saturated_fat_g: None,
+        },
+        note: None,
+    }
+}
+
+/// Find a hit by name. Helps tests survive ranking changes — assertions
+/// always target the food the test seeded.
+fn find_hit_by_name<'a>(results: &'a [Value], name: &str) -> &'a Value {
+    results
+        .iter()
+        .find(|h| h["name"].as_str() == Some(name))
+        .unwrap_or_else(|| panic!("expected a hit named {name:?} in {results:#?}"))
+}
+
+#[tokio::test]
+async fn test_search_enrichment_for_logged_food() {
+    // Seed one OFF food + one log entry. Search for it. Assert the hit
+    // carries `log_count == 1`, the seeded date, and a non-null serving id.
+    let (app, _alice) = build_test_app_with(move |foods, servings, logs, alice| {
+        let foods = foods.clone();
+        let servings = servings.clone();
+        let logs = logs.clone();
+        Box::pin(async move {
+            let id = seed_off_food(&foods, "F5-LOG-1", "Logged Yogurt", Some("Brand")).await;
+            let day = NaiveDate::from_ymd_opt(2026, 5, 14).unwrap();
+            // Pull one of the seeded servings to attach to the log entry.
+            let all_servings = servings.list_for_food(id).await.unwrap();
+            let default_serving_id = all_servings
+                .iter()
+                .find(|s| s.is_default)
+                .map(|s| s.id)
+                .expect("default serving");
+            logs.create(alice, &make_log_entry(id, day, Some(default_serving_id)))
+                .await
+                .unwrap();
+        })
+    })
+    .await;
+
+    let resp = app
+        .oneshot(authed_request(
+            "GET",
+            "/api/v1/foods/search?q=Logged%20Yogurt",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = read_json(resp.into_body()).await;
+    let results = body["results"].as_array().unwrap();
+    let hit = find_hit_by_name(results, "Logged Yogurt");
+
+    assert_eq!(hit["log_count"], 1, "log_count must reflect single entry");
+    assert_eq!(
+        hit["last_logged_at"].as_str(),
+        Some("2026-05-14"),
+        "last_logged_at must be YYYY-MM-DD",
+    );
+    assert!(
+        hit["last_serving_id"].is_string(),
+        "last_serving_id must be a UUID string when serving is present",
+    );
+}
+
+#[tokio::test]
+async fn test_search_enrichment_for_unlogged_food() {
+    // Seed an OFF food but no log entry. Search hit must carry
+    // log_count == 0 and null date/serving.
+    let (app, _alice) = build_test_app_with(|foods, _s, _l, _u| {
+        let foods = foods.clone();
+        Box::pin(async move {
+            seed_off_food(&foods, "F5-COLD-1", "Cold Sardine", Some("Brand")).await;
+        })
+    })
+    .await;
+
+    let resp = app
+        .oneshot(authed_request(
+            "GET",
+            "/api/v1/foods/search?q=Cold%20Sardine",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = read_json(resp.into_body()).await;
+    let results = body["results"].as_array().unwrap();
+    let hit = find_hit_by_name(results, "Cold Sardine");
+
+    assert_eq!(hit["log_count"], 0, "log_count is 0 for unlogged foods");
+    assert!(
+        hit["last_logged_at"].is_null(),
+        "last_logged_at must be null for unlogged foods",
+    );
+    assert!(
+        hit["last_serving_id"].is_null(),
+        "last_serving_id must be null for unlogged foods",
+    );
+}
+
+#[tokio::test]
+async fn test_mine_enrichment_for_owned_but_unlogged_food() {
+    // Custom food created via the food repo but never logged. /foods/mine
+    // must still emit log_count == 0 and null date/serving — enrichment
+    // applies uniformly across the four list routes.
+    let (app, _alice) = build_test_app_with(move |foods, _s, _l, alice| {
+        let foods = foods.clone();
+        Box::pin(async move {
+            seed_custom_food(&foods, alice, "My Untouched Stew").await;
+        })
+    })
+    .await;
+
+    let resp = app
+        .oneshot(authed_request("GET", "/api/v1/foods/mine"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = read_json(resp.into_body()).await;
+    let results = body["results"].as_array().unwrap();
+    let hit = find_hit_by_name(results, "My Untouched Stew");
+
+    assert_eq!(hit["log_count"], 0);
+    assert!(hit["last_logged_at"].is_null());
+    assert!(hit["last_serving_id"].is_null());
+}
+
+#[tokio::test]
+async fn test_recent_enrichment_returns_log_count_ge_1() {
+    // Two log entries for the same food → /foods/recent dedups to a
+    // single hit, but `log_count` must still reflect the lifetime total.
+    let (app, _alice) = build_test_app_with(move |foods, _s, logs, alice| {
+        let foods = foods.clone();
+        let logs = logs.clone();
+        Box::pin(async move {
+            let id = seed_off_food(&foods, "F5-REC-1", "Recent Cheese", Some("Brand")).await;
+            logs.create(
+                alice,
+                &make_log_entry(id, NaiveDate::from_ymd_opt(2026, 5, 10).unwrap(), None),
+            )
+            .await
+            .unwrap();
+            logs.create(
+                alice,
+                &make_log_entry(id, NaiveDate::from_ymd_opt(2026, 5, 12).unwrap(), None),
+            )
+            .await
+            .unwrap();
+        })
+    })
+    .await;
+
+    let resp = app
+        .oneshot(authed_request("GET", "/api/v1/foods/recent"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = read_json(resp.into_body()).await;
+    let results = body.as_array().unwrap();
+    let hit = find_hit_by_name(results, "Recent Cheese");
+
+    assert_eq!(hit["log_count"], 2);
+    assert_eq!(hit["last_logged_at"].as_str(), Some("2026-05-12"));
+}
+
+#[tokio::test]
+async fn test_frequent_enrichment_returns_log_count() {
+    // Five log entries inside the 30-day frequent window → /foods/frequent
+    // surfaces the food with `log_count == 5`.
+    let (app, _alice) = build_test_app_with(move |foods, _s, logs, alice| {
+        let foods = foods.clone();
+        let logs = logs.clone();
+        Box::pin(async move {
+            let id = seed_off_food(&foods, "F5-FREQ-1", "Frequent Apple", Some("Brand")).await;
+            for d in 1..=5 {
+                logs.create(
+                    alice,
+                    &make_log_entry(id, NaiveDate::from_ymd_opt(2026, 5, d).unwrap(), None),
+                )
+                .await
+                .unwrap();
+            }
+        })
+    })
+    .await;
+
+    let resp = app
+        .oneshot(authed_request("GET", "/api/v1/foods/frequent"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = read_json(resp.into_body()).await;
+    let results = body.as_array().unwrap();
+    let hit = find_hit_by_name(results, "Frequent Apple");
+
+    assert_eq!(hit["log_count"], 5);
+}
+
+#[tokio::test]
+async fn test_enrichment_handles_deleted_serving() {
+    // Log entry with serving_id = None (mirrors what happens in production
+    // when the FK is `ON DELETE SET NULL` after a serving deletion).
+    // last_logged_at and log_count must still surface; last_serving_id
+    // is null.
+    let (app, _alice) = build_test_app_with(move |foods, _s, logs, alice| {
+        let foods = foods.clone();
+        let logs = logs.clone();
+        Box::pin(async move {
+            let id =
+                seed_off_food(&foods, "F5-DEL-1", "Orphaned Serving Bar", Some("Brand")).await;
+            logs.create(
+                alice,
+                &make_log_entry(id, NaiveDate::from_ymd_opt(2026, 5, 9).unwrap(), None),
+            )
+            .await
+            .unwrap();
+        })
+    })
+    .await;
+
+    let resp = app
+        .oneshot(authed_request(
+            "GET",
+            "/api/v1/foods/search?q=Orphaned%20Serving",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = read_json(resp.into_body()).await;
+    let results = body["results"].as_array().unwrap();
+    let hit = find_hit_by_name(results, "Orphaned Serving Bar");
+
+    assert_eq!(hit["log_count"], 1);
+    assert_eq!(hit["last_logged_at"].as_str(), Some("2026-05-09"));
+    assert!(
+        hit["last_serving_id"].is_null(),
+        "deleted serving means last_serving_id == null",
+    );
+}
+
+#[tokio::test]
+async fn test_enrichment_isolated_per_user() {
+    // Bob logs the food; alice (the test caller) searches. The hit must
+    // carry log_count == 0 — the SQL filter on user_id is what makes
+    // this work in production.
+    let bob = Uuid::new_v4();
+    let (app, _alice) = build_test_app_with(move |foods, _s, logs, _alice| {
+        let foods = foods.clone();
+        let logs = logs.clone();
+        Box::pin(async move {
+            let id = seed_off_food(&foods, "F5-ISO-1", "Bob's Snack", Some("Brand")).await;
+            // Bob (not alice) logs it.
+            logs.create(
+                bob,
+                &make_log_entry(id, NaiveDate::from_ymd_opt(2026, 5, 8).unwrap(), None),
+            )
+            .await
+            .unwrap();
+        })
+    })
+    .await;
+
+    let resp = app
+        .oneshot(authed_request(
+            "GET",
+            "/api/v1/foods/search?q=Bob%27s%20Snack",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = read_json(resp.into_body()).await;
+    let results = body["results"].as_array().unwrap();
+    let hit = find_hit_by_name(results, "Bob's Snack");
+
+    assert_eq!(hit["log_count"], 0, "alice must not see bob's logs");
+    assert!(hit["last_logged_at"].is_null());
+    assert!(hit["last_serving_id"].is_null());
+}
+
+#[tokio::test]
+async fn test_log_count_uses_zero_not_null_for_unlogged() {
+    // Wire-shape regression. The decision in feature_tickets_f5.md §0
+    // makes `log_count` non-nullable (i32, defaults to 0). Assert the
+    // raw JSON type is `Number`, not `Null`. Locks the contract for
+    // the FE decoder.
+    let (app, _alice) = build_test_app_with(|foods, _s, _l, _u| {
+        let foods = foods.clone();
+        Box::pin(async move {
+            seed_off_food(&foods, "F5-NUM-1", "Wire Shape Probe", Some("Brand")).await;
+        })
+    })
+    .await;
+
+    let resp = app
+        .oneshot(authed_request(
+            "GET",
+            "/api/v1/foods/search?q=Wire%20Shape%20Probe",
+        ))
+        .await
+        .unwrap();
+    let body = read_json(resp.into_body()).await;
+    let hit = find_hit_by_name(body["results"].as_array().unwrap(), "Wire Shape Probe");
+
+    let lc = hit
+        .get("log_count")
+        .expect("log_count must be present in JSON");
+    assert!(
+        lc.is_number(),
+        "log_count must be a JSON number for unlogged foods (got {lc})",
+    );
+    assert_eq!(lc.as_i64(), Some(0));
 }

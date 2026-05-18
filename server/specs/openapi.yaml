@@ -1447,7 +1447,7 @@ components:
 
     FoodSearchHit:
       type: object
-      required: [id, source, name]
+      required: [id, source, name, log_count]
       properties:
         id: { type: string, format: uuid }
         source: { $ref: "#/components/schemas/FoodSource" }
@@ -1462,6 +1462,33 @@ components:
             - type: "null"
         calories_per_serving:
           $ref: "#/components/schemas/NullableDecimal"
+        # F5 additions — per-caller log signals attached by the service
+        # layer. See `loseit_core::service::user_food_summary`.
+        last_logged_at:
+          type: [string, "null"]
+          format: date
+          description: |
+            Date of the caller's most recent log entry for this food.
+            `null` when the caller has never logged it. Wire-encoded as
+            `"YYYY-MM-DD"` (bare local date, no timezone) — `consumed_on`
+            is a `DATE` column so there is no instant to emit.
+        log_count:
+          type: integer
+          minimum: 0
+          description: |
+            How many times the caller has ever logged this food. `0`
+            when never logged. Always present (non-nullable) — all
+            `/foods/*` routes are auth-gated so the field is always
+            meaningful.
+        last_serving_id:
+          oneOf:
+            - { type: string, format: uuid }
+            - type: "null"
+          description: |
+            `serving_id` from the caller's most recent log entry for
+            this food. `null` when never logged or when the referenced
+            serving has since been deleted (the FK is
+            `ON DELETE SET NULL` on `food_log_entries`).
 
     Paginated:
       type: object

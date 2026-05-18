@@ -9,7 +9,10 @@ use loseit_core::domain::unit::Unit;
 use loseit_core::domain::{FoodDraft, ServingDraft};
 use loseit_core::service::FoodService;
 use loseit_core::CoreError;
-use loseit_testing::{InMemoryFoodRepository, InMemoryServingRepository};
+use loseit_testing::{
+    InMemoryFoodRepository, InMemoryLogRepository, InMemoryServingRepository,
+    InMemoryUserFoodSummaryReader,
+};
 use rust_decimal_macros::dec;
 use uuid::Uuid;
 
@@ -48,8 +51,10 @@ fn make_food_draft(servings: Vec<ServingDraft>) -> FoodDraft {
 fn make_service() -> FoodService {
     let food_repo = Arc::new(InMemoryFoodRepository::new());
     let srv_repo = Arc::new(InMemoryServingRepository::new());
+    let log_repo = Arc::new(InMemoryLogRepository::new());
+    let summary_reader = Arc::new(InMemoryUserFoodSummaryReader::new(log_repo));
     food_repo.set_serving_repo(srv_repo.clone());
-    FoodService::new(food_repo, srv_repo)
+    FoodService::new(food_repo, srv_repo, summary_reader)
 }
 
 /// §5.4: empty servings list is rejected with Validation containing "serving".

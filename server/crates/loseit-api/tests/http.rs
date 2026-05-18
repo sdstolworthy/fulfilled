@@ -18,7 +18,8 @@ use loseit_core::repo::{
 };
 use loseit_testing::{
     FakeAuthenticator, InMemoryFoodRepository, InMemoryGoalRepository, InMemoryLogRepository,
-    InMemoryServingRepository, InMemoryUserRepository, InMemoryWeightRepository,
+    InMemoryServingRepository, InMemoryUserFoodSummaryReader, InMemoryUserRepository,
+    InMemoryWeightRepository,
 };
 use serde_json::{json, Value};
 use tower::ServiceExt;
@@ -40,10 +41,26 @@ fn build_test_app() -> axum::Router {
     let goals: Arc<dyn GoalRepository> = Arc::new(InMemoryGoalRepository::new());
     let foods: Arc<dyn FoodRepository> = Arc::new(InMemoryFoodRepository::new());
     let servings: Arc<dyn ServingRepository> = Arc::new(InMemoryServingRepository::new());
-    let logs: Arc<dyn LogRepository> = Arc::new(InMemoryLogRepository::new());
+    let logs_concrete = Arc::new(InMemoryLogRepository::new());
+    let summary_reader: Arc<dyn loseit_core::service::UserFoodSummaryReader> =
+        Arc::new(InMemoryUserFoodSummaryReader::new(logs_concrete.clone()));
+    let logs: Arc<dyn LogRepository> = logs_concrete;
     let authn: Arc<dyn Authenticator> =
         Arc::new(FakeAuthenticator::new(TEST_TOKEN, test_identity()));
-    let state = AppState::from_ports(users, weights, goals, foods, servings, logs, authn, None, None, false, false);
+    let state = AppState::from_ports(
+        users,
+        weights,
+        goals,
+        foods,
+        servings,
+        logs,
+        summary_reader,
+        authn,
+        None,
+        None,
+        false,
+        false,
+    );
     router(state)
 }
 

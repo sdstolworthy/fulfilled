@@ -37,7 +37,7 @@ use loseit_core::service::AuthService;
 use loseit_testing::{
     InMemoryFoodRepository, InMemoryGoalRepository, InMemoryLocalAuthRepository,
     InMemoryLogRepository, InMemoryOidcHandoffRepository, InMemoryServingRepository,
-    InMemoryUserRepository, InMemoryWeightRepository,
+    InMemoryUserFoodSummaryReader, InMemoryUserRepository, InMemoryWeightRepository,
 };
 use rsa::pkcs1::EncodeRsaPrivateKey;
 use rsa::pkcs8::LineEnding;
@@ -166,7 +166,10 @@ async fn build_harness(with_oidc: bool) -> Harness {
     foods_concrete.set_serving_repo(servings_concrete.clone());
     let foods: Arc<dyn FoodRepository> = foods_concrete;
     let servings: Arc<dyn ServingRepository> = servings_concrete;
-    let logs: Arc<dyn LogRepository> = Arc::new(InMemoryLogRepository::new());
+    let logs_concrete = Arc::new(InMemoryLogRepository::new());
+    let summary_reader: Arc<dyn loseit_core::service::UserFoodSummaryReader> =
+        Arc::new(InMemoryUserFoodSummaryReader::new(logs_concrete.clone()));
+    let logs: Arc<dyn LogRepository> = logs_concrete;
     let users_dyn: Arc<dyn UserRepository> = users_concrete.clone();
 
     // 3. AuthService + LocalAuthenticator
@@ -239,6 +242,7 @@ async fn build_harness(with_oidc: bool) -> Harness {
         foods,
         servings,
         logs,
+        summary_reader,
         authn,
         Some(auth_service.clone()),
         oidc_registry,

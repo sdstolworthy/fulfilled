@@ -1,4 +1,4 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use rust_decimal::Decimal;
 use uuid::Uuid;
 
@@ -158,4 +158,38 @@ pub struct ServingPreview {
     pub amount: Decimal,
     pub unit: Unit,
     pub kcal: Decimal,
+}
+
+/// Per-`(user, food)` log signals attached to search/list hits by the
+/// service layer (see [`crate::service::user_food_summary`]).
+///
+/// Lives in `domain` rather than `service` so it can be referenced by
+/// the [`FoodSearchHitWithSignals`] wrapper without creating a
+/// service→domain→service import cycle.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UserFoodSummary {
+    /// Lifetime `COUNT(*)` of the caller's `food_log_entries` rows for
+    /// this food. Never a window — the future denorm table stores this
+    /// as a plain integer.
+    pub log_count: i32,
+    /// Most-recent `consumed_on` among those entries.
+    pub last_logged_at: Option<NaiveDate>,
+    /// `serving_id` from the most-recent entry. `None` when the serving
+    /// was deleted (the FK is `ON DELETE SET NULL` on the log row) or
+    /// the food has never been logged.
+    pub last_serving_id: Option<Uuid>,
+}
+
+/// Service-layer composition: a search hit paired with optional
+/// per-user log signals. The wrapper exists so repos still return the
+/// lean [`FoodSearchHit`] projection and only services attach signals;
+/// the wire-layer adapter (`FoodSearchHitResponse` in `loseit-api`)
+/// converts from this type via `From<FoodSearchHitWithSignals>`.
+///
+/// `signals == None` means "no entries for this `(user, food)` pair" —
+/// the wire layer maps that to `log_count: 0` and null date/serving.
+#[derive(Debug, Clone)]
+pub struct FoodSearchHitWithSignals {
+    pub hit: FoodSearchHit,
+    pub signals: Option<UserFoodSummary>,
 }

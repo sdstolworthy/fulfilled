@@ -18,8 +18,9 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::routing::{get, patch, post};
 use axum::{Json, Router};
+use chrono::NaiveDate;
 use loseit_core::domain::{
-    Food, FoodDraft, FoodKind, FoodPatch, FoodSearchHit, FoodSource, NutriscoreGrade,
+    Food, FoodDraft, FoodKind, FoodPatch, FoodSearchHitWithSignals, FoodSource, NutriscoreGrade,
     Serving, ServingDraft, ServingPatch, ServingPreview, ServingSource,
 };
 use loseit_core::domain::unit::Unit;
@@ -195,13 +196,33 @@ struct FoodSearchHitResponse {
     /// food has no default serving. No `skip_serializing_if` — the
     /// field is always present in the JSON, possibly as `null`.
     calories_per_serving: Option<Decimal>,
+
+    // -- F5 additions: per-user log signals -------------------------------
+    /// Date of the caller's most recent log entry for this food.
+    /// `null` when the caller has never logged it. Wire-encoded as
+    /// `"YYYY-MM-DD"` (bare local date, no timezone) — `consumed_on` is
+    /// a `DATE` column so there is no instant to emit.
+    last_logged_at: Option<NaiveDate>,
+    /// How many times the caller has ever logged this food. `0` when
+    /// never logged. **Non-nullable** — all `/foods/*` routes are
+    /// `require_auth`-gated so "we didn't enrich" doesn't exist.
+    log_count: i32,
+    /// `serving_id` from the caller's most recent log entry for this
+    /// food. `null` when never logged or when the serving has since
+    /// been deleted (the FK is `ON DELETE SET NULL`).
+    last_serving_id: Option<Uuid>,
 }
 
-impl From<FoodSearchHit> for FoodSearchHitResponse {
-    fn from(h: FoodSearchHit) -> Self {
+impl From<FoodSearchHitWithSignals> for FoodSearchHitResponse {
+    fn from(w: FoodSearchHitWithSignals) -> Self {
+        let h = w.hit;
         // Derive the top-level kcal from the default serving BEFORE
         // moving `h.default_serving` into the response.
         let calories_per_serving = h.default_serving.as_ref().map(|s| s.kcal);
+        let (last_logged_at, log_count, last_serving_id) = match w.signals {
+            Some(s) => (s.last_logged_at, s.log_count, s.last_serving_id),
+            None => (None, 0, None),
+        };
         Self {
             id: h.id,
             source: food_source_str(h.source),
@@ -210,6 +231,9 @@ impl From<FoodSearchHit> for FoodSearchHitResponse {
             barcode: h.barcode,
             default_serving: h.default_serving.map(Into::into),
             calories_per_serving,
+            last_logged_at,
+            log_count,
+            last_serving_id,
         }
     }
 }

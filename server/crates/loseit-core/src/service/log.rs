@@ -7,12 +7,13 @@ use uuid::Uuid;
 
 use crate::domain::{
     unit::{Unit, UnitFamily},
-    DaySummary, FoodLogEntry, FoodSearchHit, LogDraft, LogPatch, Meal, MealSubtotal,
-    NutritionSnapshot, PersistedLogEntry, PersistedLogPatch, RecomputedSnapshot, Serving,
-    ServingPreview,
+    DaySummary, FoodLogEntry, FoodSearchHit, FoodSearchHitWithSignals, LogDraft, LogPatch, Meal,
+    MealSubtotal, NutritionSnapshot, PersistedLogEntry, PersistedLogPatch, RecomputedSnapshot,
+    Serving, ServingPreview,
 };
 use crate::repo::{FoodRepository, GoalRepository, LogRepository, ServingRepository};
 use crate::service::page::{resolve_page_params, Paginated};
+use crate::service::user_food_summary::{enrich_hits, wrap_hits, UserFoodSummaryReader};
 use crate::{CoreError, CoreResult};
 
 /// Hardcoded "frequent" lookback window for v1. See NEXT_STEPS open
@@ -32,6 +33,7 @@ pub struct LogService {
     foods: Arc<dyn FoodRepository>,
     servings: Arc<dyn ServingRepository>,
     goals: Arc<dyn GoalRepository>,
+    summary_reader: Arc<dyn UserFoodSummaryReader>,
 }
 
 impl LogService {
@@ -40,12 +42,14 @@ impl LogService {
         foods: Arc<dyn FoodRepository>,
         servings: Arc<dyn ServingRepository>,
         goals: Arc<dyn GoalRepository>,
+        summary_reader: Arc<dyn UserFoodSummaryReader>,
     ) -> Self {
         Self {
             logs,
             foods,
             servings,
             goals,
+            summary_reader,
         }
     }
 
@@ -426,21 +430,35 @@ impl LogService {
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn recent_foods(&self, user: Uuid, limit: i64) -> CoreResult<Vec<FoodSearchHit>> {
+    pub async fn recent_foods(
+        &self,
+        user: Uuid,
+        limit: i64,
+    ) -> CoreResult<Vec<FoodSearchHitWithSignals>> {
         let limit = clamp_recent_frequent_limit(limit);
         let ids = self.logs.recent_food_ids(user, limit).await?;
-        self.hydrate_hits(user, ids).await
+        let hits = self.hydrate_hits(user, ids).await?;
+        let mut wrapped = wrap_hits(hits);
+        enrich_hits(self.summary_reader.as_ref(), user, &mut wrapped).await?;
+        Ok(wrapped)
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn frequent_foods(&self, user: Uuid, limit: i64) -> CoreResult<Vec<FoodSearchHit>> {
+    pub async fn frequent_foods(
+        &self,
+        user: Uuid,
+        limit: i64,
+    ) -> CoreResult<Vec<FoodSearchHitWithSignals>> {
         let limit = clamp_recent_frequent_limit(limit);
         let pairs = self
             .logs
             .frequent_food_ids(user, FREQUENT_WINDOW_DAYS, limit)
             .await?;
         let ids: Vec<Uuid> = pairs.into_iter().map(|(id, _count)| id).collect();
-        self.hydrate_hits(user, ids).await
+        let hits = self.hydrate_hits(user, ids).await?;
+        let mut wrapped = wrap_hits(hits);
+        enrich_hits(self.summary_reader.as_ref(), user, &mut wrapped).await?;
+        Ok(wrapped)
     }
 
     /// Hydrate a ranked list of food ids into `FoodSearchHit`. Skips foods no

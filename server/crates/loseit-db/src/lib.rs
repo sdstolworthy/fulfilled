@@ -18,6 +18,7 @@ mod log_repo;
 mod oidc_handoff_repo;
 mod pool;
 mod serving_repo;
+mod user_food_summary;
 mod user_repo;
 mod weight_repo;
 
@@ -29,6 +30,7 @@ pub use log_repo::PgLogRepository;
 pub use oidc_handoff_repo::PgOidcHandoffRepository;
 pub use pool::{build_pool, run_migrations, PoolConfig};
 pub use serving_repo::PgServingRepository;
+pub use user_food_summary::PgUserFoodSummaryReader;
 pub use user_repo::PgUserRepository;
 pub use weight_repo::PgWeightRepository;
 
