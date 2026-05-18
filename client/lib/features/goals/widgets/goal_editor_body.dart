@@ -7,6 +7,7 @@ import '../../../domain/units/energy.dart';
 import '../../../theme/context_extensions.dart';
 import '../../../widgets/number_text.dart';
 import '../../../widgets/skeleton.dart';
+import '../../../widgets/weight_stepper.dart';
 
 /// Shared form body for the New / Edit goal flows.
 ///
@@ -27,6 +28,8 @@ class GoalEditorBody extends StatelessWidget {
     required this.onRateChange,
     required this.saveLabel,
     required this.onSave,
+    this.targetWeightKg,
+    this.onTargetWeightChange,
     super.key,
   });
 
@@ -34,6 +37,15 @@ class GoalEditorBody extends StatelessWidget {
 
   /// Unsigned kg/week. Direction encodes the sign.
   final Decimal rateKgPerWeek;
+
+  /// Canonical target weight in kg. Null hides the section entirely
+  /// (the parent passes null on `maintain`, where no target makes
+  /// sense — "hold steady" is the target by definition).
+  final Decimal? targetWeightKg;
+
+  /// Required when [targetWeightKg] is non-null. The stepper emits the
+  /// canonical kg on every commit; the parent owns the state.
+  final ValueChanged<Decimal>? onTargetWeightChange;
 
   /// Pre-computed daily kcal target, ready to display via formatKcal.
   ///
@@ -64,6 +76,17 @@ class GoalEditorBody extends StatelessWidget {
           value: direction,
           onChanged: onDirectionChange,
         ),
+        if (targetWeightKg != null && onTargetWeightChange != null) ...<Widget>[
+          SizedBox(height: tokens.space.x5),
+          const _SectionLabel(text: 'Target weight'),
+          SizedBox(height: tokens.space.x2),
+          WeightStepper(
+            key: const ValueKey('goals.target_weight'),
+            value: targetWeightKg!,
+            onChanged: onTargetWeightChange!,
+            semanticsLabel: 'Target weight',
+          ),
+        ],
         SizedBox(height: tokens.space.x5),
         const _SectionLabel(text: 'Weekly rate'),
         SizedBox(height: tokens.space.x2),

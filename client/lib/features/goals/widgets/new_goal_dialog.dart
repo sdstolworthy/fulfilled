@@ -138,6 +138,7 @@ class _NewGoalForm extends ConsumerStatefulWidget {
 class _NewGoalFormState extends ConsumerState<_NewGoalForm> {
   late GoalDirection _direction;
   late Decimal _rate; // unsigned kg/week
+  Decimal? _targetWeightKg;
   bool _saving = false;
 
   @override
@@ -150,6 +151,7 @@ class _NewGoalFormState extends ConsumerState<_NewGoalForm> {
     // lose-rate of `-0.5` pre-fills the slider at `0.5`.
     final stored = t?.rateKgPerWeek ?? Decimal.parse('0.5');
     _rate = stored < Decimal.zero ? -stored : stored;
+    _targetWeightKg = t?.targetWeightKg;
   }
 
   @override
@@ -177,6 +179,8 @@ class _NewGoalFormState extends ConsumerState<_NewGoalForm> {
           direction: _direction,
           rateKgPerWeek: _rate,
           previewKcal: null,
+          targetWeightKg: _targetWeightForSection(currentKg: null),
+          onTargetWeightChange: (v) => setState(() => _targetWeightKg = v),
           onDirectionChange: (d) => setState(() => _direction = d),
           onRateChange: (r) => setState(() => _rate = r),
           saveLabel: _saving ? 'Saving…' : 'Save goal',
@@ -203,6 +207,9 @@ class _NewGoalFormState extends ConsumerState<_NewGoalForm> {
             // currentWeightKg / activityLevel). Render the skeleton and
             // disable save — the user has to complete their profile first.
             previewKcal: estimate?.dailyTargetKcal,
+            targetWeightKg:
+                _targetWeightForSection(currentKg: user.currentWeightKg),
+            onTargetWeightChange: (v) => setState(() => _targetWeightKg = v),
             onDirectionChange: (d) => setState(() => _direction = d),
             onRateChange: (r) => setState(() => _rate = r),
             saveLabel: _saving ? 'Saving…' : 'Save goal',
@@ -211,6 +218,18 @@ class _NewGoalFormState extends ConsumerState<_NewGoalForm> {
         );
       },
     );
+  }
+
+  /// Compute the value to hand to [GoalEditorBody.targetWeightKg]. The
+  /// section is hidden on `maintain` (target is "hold steady, no
+  /// number"). Otherwise return the user's edited value if any, the
+  /// template's prior target, or — as a last resort — the user's
+  /// current weight so the stepper has a sensible starting point.
+  /// Returns `null` when none of those are available (profile still
+  /// loading on a brand-new goal); the editor hides the section.
+  Decimal? _targetWeightForSection({required Decimal? currentKg}) {
+    if (_direction == GoalDirection.maintain) return null;
+    return _targetWeightKg ?? widget.template?.targetWeightKg ?? currentKg;
   }
 
   /// Build the [CalorieEstimate] for the current form state + user
@@ -249,13 +268,20 @@ class _NewGoalFormState extends ConsumerState<_NewGoalForm> {
       // split (P 25% / C 50% / F 25% on energy) matches onboarding and
       // the edit-goal sheet. `estimateCalories` rounds to integer grams
       // half-to-even; we coerce to `Decimal` for the wire.
+      // Target weight only applies to lose/gain; maintain stores no
+      // numeric target. Prefer the user's edited value over the
+      // template's prior value.
+      final Decimal? targetForWire = _direction == GoalDirection.maintain
+          ? null
+          : (_targetWeightKg ?? widget.template?.targetWeightKg);
+
       await repo.create(
         GoalCreate(
           startsOn: startsOn,
           weeklyRateKg: signedRate,
           dailyCalorieTarget: estimate.dailyTargetKcal,
           startWeightKg: widget.template?.startWeightKg,
-          targetWeightKg: widget.template?.targetWeightKg,
+          targetWeightKg: targetForWire,
           proteinTargetG: Decimal.fromInt(estimate.proteinG),
           carbsTargetG: Decimal.fromInt(estimate.carbsG),
           fatTargetG: Decimal.fromInt(estimate.fatG),
