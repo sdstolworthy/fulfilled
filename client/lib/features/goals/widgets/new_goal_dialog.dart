@@ -8,7 +8,6 @@ import '../../../domain/goal.dart';
 import '../../../domain/user.dart';
 import '../../../form_factor/form_factor.dart';
 import '../../../providers/goal_providers.dart';
-import '../../../providers/log_providers.dart';
 import '../../../providers/profile_providers.dart';
 import '../../../providers/repository_providers.dart';
 import '../../../providers/weight_providers.dart';
@@ -307,10 +306,17 @@ class _NewGoalFormState extends ConsumerState<_NewGoalForm> {
           fatTargetG: Decimal.fromInt(estimate.fatG),
         ),
       );
-      // T-18: invalidate only what changed.
+      // T-18: invalidate only what changed. We do *not* invalidate
+      // `daySummaryProvider(startsOn)` from here:
+      //   - For today, the ring + macros read live values from
+      //     `effectiveActiveGoalTargetsProvider`, which itself
+      //     watches `activeGoalProvider` (invalidated just above)
+      //     and rebuilds on its own.
+      //   - For past days, the BE-stored value is the per-day
+      //     historical snapshot we want to preserve; flushing it
+      //     here would force a re-fetch of the same number.
       ref.invalidate(activeGoalProvider);
       ref.invalidate(goalsProvider);
-      ref.invalidate(daySummaryProvider(startsOn));
       if (mounted) navigator.maybePop();
     } catch (e) {
       if (mounted) {

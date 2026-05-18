@@ -104,11 +104,15 @@ class GoalRepository {
   /// - `activeGoalProvider` — the new row supersedes the prior active
   ///   goal.
   /// - `goalsProvider` — the history list gains the new row.
-  /// - `daySummaryProvider(date)` — the kcal/macro targets feeding the
-  ///   ring and macro bars changed.
   ///
   /// Call sites are responsible for invalidating per T-18 (minimal +
   /// explicit); this list is the **contract** the call site reads.
+  /// `daySummaryProvider` is intentionally absent — for today the
+  /// ring + macros derive live from
+  /// `effectiveActiveGoalTargetsProvider`, which watches
+  /// `activeGoalProvider` and rebuilds on its own; for past days the
+  /// BE-returned value is the per-day historical snapshot we want
+  /// to keep.
   Future<Goal> create(GoalCreate data) async {
     final res = await _api.dio.post<dynamic>(
       '/goals',
@@ -132,8 +136,8 @@ class GoalRepository {
   /// `@invalidates`
   /// - `activeGoalProvider` — the active row's fields may have shifted.
   /// - `goalsProvider` — the history list reflects the edited row.
-  /// - `daySummaryProvider(date)` — the kcal/macro targets may have
-  ///   changed.
+  ///
+  /// See `create` for why `daySummaryProvider` is absent.
   Future<Goal> update(Goal goal) async {
     final patch = <String, dynamic>{
       'starts_on': _formatDate(goal.startedOn),

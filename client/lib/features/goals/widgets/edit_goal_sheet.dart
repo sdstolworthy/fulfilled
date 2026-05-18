@@ -8,7 +8,6 @@ import '../../../domain/goal.dart';
 import '../../../domain/user.dart';
 import '../../../form_factor/form_factor.dart';
 import '../../../providers/goal_providers.dart';
-import '../../../providers/log_providers.dart';
 import '../../../providers/profile_providers.dart';
 import '../../../providers/repository_providers.dart';
 import '../../../providers/weight_providers.dart';
@@ -269,9 +268,10 @@ class _EditGoalFormState extends ConsumerState<_EditGoalForm> {
           fatTargetG: Decimal.fromInt(estimate.fatG),
         ),
       );
+      // See the new-goal sibling for why `daySummaryProvider` is
+      // intentionally not invalidated here.
       ref.invalidate(activeGoalProvider);
       ref.invalidate(goalsProvider);
-      ref.invalidate(daySummaryProvider(startsOn));
       if (mounted) navigator.maybePop();
     } catch (e) {
       if (mounted) {
