@@ -62,7 +62,20 @@ class GoalActiveCard extends ConsumerWidget {
         ? '—'
         : formatKcal(Decimal.fromInt(kcalTarget));
 
-    final percents = _macroPercents(goal);
+    // Prefer the derived macro grams when available — the kcal
+    // headline above already uses the live value, so the split bar
+    // and gram grid below have to track or the card disagrees with
+    // itself after a profile edit.
+    final proteinG = effective == null
+        ? goal.proteinTargetG
+        : Decimal.fromInt(effective.proteinG);
+    final carbsG = effective == null
+        ? goal.carbsTargetG
+        : Decimal.fromInt(effective.carbsG);
+    final fatG = effective == null
+        ? goal.fatTargetG
+        : Decimal.fromInt(effective.fatG);
+    final percents = _macroPercents(proteinG, carbsG, fatG);
 
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -103,7 +116,12 @@ class GoalActiveCard extends ConsumerWidget {
             SizedBox(height: tokens.space.x1 + tokens.space.x05),
             _SplitLegend(percents: percents, color: mutedTeal),
             SizedBox(height: tokens.space.x3 + tokens.space.x05),
-            _MacroGrid(goal: goal, mutedTeal: mutedTeal),
+            _MacroGrid(
+              proteinG: proteinG,
+              carbsG: carbsG,
+              fatG: fatG,
+              mutedTeal: mutedTeal,
+            ),
             SizedBox(height: tokens.space.x4),
             _ActionRow(
               onEditCurrent: onEditCurrent,
@@ -135,10 +153,11 @@ class GoalActiveCard extends ConsumerWidget {
   /// Returns a triple of `(protein%, carbs%, fat%)` rounded so they sum to
   /// 100. Falls back to `25 / 50 / 25` (the mock's default) when the goal
   /// has no macro targets.
-  static _MacroPercents _macroPercents(Goal g) {
-    final p = g.proteinTargetG;
-    final c = g.carbsTargetG;
-    final f = g.fatTargetG;
+  static _MacroPercents _macroPercents(
+    Decimal? p,
+    Decimal? c,
+    Decimal? f,
+  ) {
     if (p == null || c == null || f == null) {
       return const _MacroPercents(25, 50, 25);
     }
@@ -340,8 +359,15 @@ class _SplitLegend extends StatelessWidget {
 }
 
 class _MacroGrid extends StatelessWidget {
-  const _MacroGrid({required this.goal, required this.mutedTeal});
-  final Goal goal;
+  const _MacroGrid({
+    required this.proteinG,
+    required this.carbsG,
+    required this.fatG,
+    required this.mutedTeal,
+  });
+  final Decimal? proteinG;
+  final Decimal? carbsG;
+  final Decimal? fatG;
   final Color mutedTeal;
 
   @override
@@ -353,7 +379,7 @@ class _MacroGrid extends StatelessWidget {
         Expanded(
           child: _MacroCell(
             label: 'Protein',
-            grams: goal.proteinTargetG,
+            grams: proteinG,
             kcalPerGram: 4,
             mutedTeal: mutedTeal,
           ),
@@ -362,7 +388,7 @@ class _MacroGrid extends StatelessWidget {
         Expanded(
           child: _MacroCell(
             label: 'Carbs',
-            grams: goal.carbsTargetG,
+            grams: carbsG,
             kcalPerGram: 4,
             mutedTeal: mutedTeal,
           ),
@@ -371,7 +397,7 @@ class _MacroGrid extends StatelessWidget {
         Expanded(
           child: _MacroCell(
             label: 'Fat',
-            grams: goal.fatTargetG,
+            grams: fatG,
             kcalPerGram: 9,
             mutedTeal: mutedTeal,
           ),
