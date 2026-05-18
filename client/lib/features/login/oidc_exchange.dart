@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/api_client.dart';
 import '../../data/auth_token.dart';
+import '../../providers/profile_providers.dart';
 
 /// Result of exchanging an OIDC handoff code for an opaque bearer.
 sealed class OidcExchangeResult {
@@ -77,6 +78,13 @@ Future<OidcExchangeResult> _runOidcExchangeInner(
     }
     final token = body['token'] as String;
     await ref.read(authTokenProvider.notifier).signIn(token);
+    // Force `meProvider` to refetch with the freshly-installed
+    // bearer. Without this its pre-login state (typically the
+    // `AsyncError` produced by the boot-time /me 401) lingers, so
+    // the router's redirect callback sees `me.value == null` and
+    // the onboarding gate stays in "loading" mode indefinitely
+    // until something else invalidates the provider.
+    ref.invalidate(meProvider);
     return OidcExchangeResult.success();
   } on DioException catch (e) {
     final status = e.response?.statusCode;
