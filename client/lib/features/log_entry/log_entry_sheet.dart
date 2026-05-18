@@ -269,21 +269,31 @@ class _LogEntrySheetBodyState extends ConsumerState<LogEntrySheetBody> {
     _noteCtrl.text = ex?.note ?? '';
     // Re-render save-button enablement as the user types in the note.
     // (Quantity / serving / meal / date all already trigger `setState`
-    // when they change; the note field is a raw TextField, so we wire
-    // its controller here.)
-    _noteCtrl.addListener(_onFormChanged);
+    // when they change; the note field is a raw TextField driven by
+    // [_noteCtrl], so we wire its controller listener here.)
+    _noteCtrl.addListener(_onNoteChanged);
   }
 
-  void _onFormChanged() {
-    // The save button's `onPressed` is a function of the form state vs.
-    // the seed; rebuild to recompute it. Cheap — no provider work.
+  /// Rebuild trigger for the save button. `_isUnchanged()` reads
+  /// `_noteCtrl.text` to decide the disabled state, but Flutter doesn't
+  /// know about that read (it's a synchronous getter call inside
+  /// `build`, not a listenable subscription). So we listen to the
+  /// controller, and on every keystroke schedule an empty `setState` —
+  /// the rebuild re-runs `_isUnchanged()` against the fresh text.
+  ///
+  /// The empty body is intentional: this method's job is *just* to
+  /// invalidate the frame, not to mutate fields. Don't refactor it
+  /// into a `ValueListenableBuilder` around the save button alone —
+  /// the rest of the sheet body already rebuilds on every other
+  /// field change, so isolating the button buys nothing.
+  void _onNoteChanged() {
     if (!mounted) return;
     setState(() {});
   }
 
   @override
   void dispose() {
-    _noteCtrl.removeListener(_onFormChanged);
+    _noteCtrl.removeListener(_onNoteChanged);
     _noteCtrl.dispose();
     super.dispose();
   }

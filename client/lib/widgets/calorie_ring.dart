@@ -116,15 +116,18 @@ class CalorieRing extends StatelessWidget {
                 // `titleNumeric` (17 / 600) for compact and `bodyStrongNumeric`
                 // scaled up to 24 for the larger ring lands on the visual
                 // weight the designer drew without inventing a new typescale.
-                Text(
-                  centerLabel,
-                  style: context.text.titleNumeric.copyWith(
-                    fontSize: size >= 100 ? 24 : 20,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: -0.02 * (size >= 100 ? 24 : 20),
-                    color: overBudget ? colors.dangerOver : colors.ink,
-                  ),
-                ),
+                Builder(builder: (_) {
+                  final centerFontSize = size >= 100 ? 24.0 : 20.0;
+                  return Text(
+                    centerLabel,
+                    style: context.text.titleNumeric.copyWith(
+                      fontSize: centerFontSize,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: -0.02 * centerFontSize,
+                      color: overBudget ? colors.dangerOver : colors.ink,
+                    ),
+                  );
+                }),
                 Text(
                   centerCaption.toUpperCase(),
                   style: context.text.eyebrow.copyWith(

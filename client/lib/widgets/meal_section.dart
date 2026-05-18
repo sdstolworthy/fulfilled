@@ -109,6 +109,16 @@ class MealSection extends StatelessWidget {
           ),
           for (final entry in entries)
             _EntryRow(
+              // Stable identity per LogEntry so Flutter doesn't recycle
+              // a `_EntryRowState` across rows when the list reorders
+              // (e.g. after a swap with the outbox merger or a server
+              // re-sort). Without this key, an in-flight 100 ms pulse
+              // can be left half-finished if the framework discards
+              // the State during the animation window — the
+              // `Future.delayed(halfPulse)` callback then fires
+              // against a state that no longer matches the row it
+              // was scheduled for.
+              key: ValueKey<String>(entry.id),
               entry: entry,
               onTap: onEntryTap == null ? null : () => onEntryTap!(entry),
               dense: dense,
@@ -301,6 +311,7 @@ enum _CopyMealAction { copyFrom }
 /// reduce-motion users get the badge without the pulse.
 class _EntryRow extends StatefulWidget {
   const _EntryRow({
+    super.key,
     required this.entry,
     required this.onTap,
     required this.dense,

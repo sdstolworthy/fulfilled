@@ -886,8 +886,12 @@ class _ScrubGestureWrapState extends State<_ScrubGestureWrap>
 /// dot + floating tooltip card. Snaps to the nearest data point in X.
 ///
 /// The Y-axis bounds are recomputed locally so this painter doesn't have
-/// to share state with `_SparklinePainter` (the chart caps at ~30 points;
-/// the linear scan + min/max sweep is O(n) and fast). The math mirrors
+/// to share state with `_SparklinePainter` — a small linear scan over
+/// `points` per scrub-overlay frame is the simpler shape than threading
+/// shared min/max plumbing through the foreground painter. Typical
+/// `WeightRange.oneMonth` ranges hand us ≤ 30 points; an "all" range
+/// can be larger but the O(n) sweep stays cheap in absolute terms (a
+/// few hundred FP comparisons per repaint). The math mirrors
 /// `_SparklinePainter` 1:1 — the chart-top / chart-bottom inset, the
 /// 15 % padding, the `xFor` / `yFor` mapping.
 class _ScrubOverlayPainter extends CustomPainter {
