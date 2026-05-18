@@ -234,19 +234,28 @@ class _ChartBody extends StatelessWidget {
     }
 
     final colors = context.colors;
+    // Perf (Flutter doc — "Performance considerations" on CustomPaint):
+    // the sparkline lives inside the weight screen's parent scroll view
+    // and its painter does non-trivial path work (two polylines + an
+    // area gradient + dashed goal). Wrapping the painter in a
+    // RepaintBoundary caches the rasterisation so scrolling siblings
+    // (the summary card, the history rows) doesn't force the chart to
+    // repaint, and the chart's scrub-overlay redraws don't bubble out.
     return Semantics(
       label: 'Weight trend, ${points.length} points',
       child: _ScrubGestureWrap(
         points: points,
         unit: unit,
         colors: colors,
-        child: CustomPaint(
-          size: Size.infinite,
-          painter: _SparklinePainter(
-            points: points,
-            goalKg: goalKg,
-            unit: unit,
-            colors: colors,
+        child: RepaintBoundary(
+          child: CustomPaint(
+            size: Size.infinite,
+            painter: _SparklinePainter(
+              points: points,
+              goalKg: goalKg,
+              unit: unit,
+              colors: colors,
+            ),
           ),
         ),
       ),
