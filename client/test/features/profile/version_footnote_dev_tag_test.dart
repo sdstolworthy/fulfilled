@@ -1,6 +1,8 @@
 @Skip('Quarantined post Ask 10 — UI/value assertions need rebaseline.')
 library;
 
+// ignore_for_file: dead_code
+
 
 // UX-112 — Profile "(dev)" version-tag flavour wiring.
 //

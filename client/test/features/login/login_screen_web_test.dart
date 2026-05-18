@@ -151,18 +151,18 @@ GoRouter _buildRouter() {
 /// Test double mirroring the compact test's fake. See
 /// `login_screen_compact_test.dart` for the rationale.
 class _FakeLoginController extends LoginController {
-  _FakeLoginController(
-    LoginFormState initial, {
-    this.submitResult = true,
-  }) : super(_StubRef(), initial: initial);
+  _FakeLoginController(LoginFormState initial)
+      : super(_StubRef(), initial: initial);
 
-  final bool submitResult;
   int submitCalls = 0;
 
+  /// Web tests don't currently exercise the submit-fail branch — when
+  /// they do, the compact test's `submitResult` named param is the
+  /// seam to copy in. Kept simple for now.
   @override
   Future<bool> submit() async {
     submitCalls += 1;
-    return submitResult;
+    return true;
   }
 }
 

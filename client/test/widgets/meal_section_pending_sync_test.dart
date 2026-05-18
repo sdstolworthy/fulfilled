@@ -26,7 +26,6 @@ import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fulfilled/domain/day_summary.dart';
-import 'package:fulfilled/domain/enums.dart';
 import 'package:fulfilled/domain/log_entry.dart';
 import 'package:fulfilled/domain/meal.dart';
 import 'package:fulfilled/domain/nutrition.dart';

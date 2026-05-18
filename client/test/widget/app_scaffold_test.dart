@@ -1,6 +1,11 @@
+import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:fulfilled/data/auth_token.dart';
+import 'package:fulfilled/domain/enums.dart';
+import 'package:fulfilled/domain/user.dart';
+import 'package:fulfilled/providers/profile_providers.dart';
 import 'package:fulfilled/routing/app_router.dart';
 import 'package:fulfilled/theme/theme_data.dart';
 
@@ -13,8 +18,35 @@ import 'package:fulfilled/theme/theme_data.dart';
 /// `matchesGoldenFile`. Three breakpoints come from
 /// `tester.view.physicalSize` so the same widget tree renders at three
 /// widths.
+
+/// Fully-onboarded user — the router redirect rule short-circuits on
+/// `needsOnboarding(me) == false` and lets us land on `/today`. Without
+/// the override, `meProvider` would resolve via the real
+/// `profileRepository.me()` chain → `apiClientProvider` → Dio with the
+/// `about:invalid` sentinel base URL → throw before this test ever
+/// gets to the scaffold.
+User _onboardedUser() => User(
+      id: 'u_test',
+      displayName: 'Test',
+      email: 't@example.com',
+      sex: Sex.male,
+      birthDate: DateTime(1990, 1, 1),
+      heightCm: Decimal.fromInt(180),
+      activityLevel: ActivityLevel.moderate,
+      createdAt: DateTime(2026, 1, 1),
+      updatedAt: DateTime(2026, 1, 1),
+    );
+
 Widget _harness() {
   return ProviderScope(
+    overrides: <Override>[
+      // Seed a token so the router doesn't redirect to `/login` before
+      // we can assert the scaffold renders.
+      authTokenProvider.overrideWith(() => _StubAuthTokenNotifier('stub')),
+      // Skip the real /me network fetch — the router's redirect rule
+      // (added in 4b956a4) reads `meProvider.value` synchronously.
+      meProvider.overrideWith((ref) async => _onboardedUser()),
+    ],
     child: Consumer(
       builder: (context, ref, _) {
         final router = ref.watch(appRouterProvider);
@@ -25,6 +57,17 @@ Widget _harness() {
       },
     ),
   );
+}
+
+/// Stub notifier — ships a non-null token from `build()` so the
+/// auth-gate redirect skips the `/login` bounce.
+class _StubAuthTokenNotifier extends AuthTokenNotifier {
+  _StubAuthTokenNotifier(this._seed);
+
+  final String _seed;
+
+  @override
+  String? build() => _seed;
 }
 
 void main() {

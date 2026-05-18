@@ -7,7 +7,6 @@ import 'package:fulfilled/widgets/activity_option.dart';
 import 'package:fulfilled/widgets/height_stepper.dart';
 import 'package:fulfilled/widgets/weight_stepper.dart';
 
-import '../../../domain/drafts.dart';
 import '../../../domain/enums.dart';
 import '../../../providers/draft_providers.dart';
 import '../../../theme/context_extensions.dart';

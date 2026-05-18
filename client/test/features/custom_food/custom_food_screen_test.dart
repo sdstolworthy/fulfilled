@@ -9,7 +9,6 @@ import 'package:fulfilled/domain/serving.dart';
 import 'package:fulfilled/domain/unit.dart';
 import 'package:fulfilled/features/custom_food/custom_food_screen.dart';
 import 'package:fulfilled/providers/draft_providers.dart';
-import 'package:fulfilled/providers/food_providers.dart';
 import 'package:fulfilled/providers/repository_providers.dart';
 import 'package:fulfilled/repositories/food_repository.dart';
 import 'package:fulfilled/theme/theme_data.dart';

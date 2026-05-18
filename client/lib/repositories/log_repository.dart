@@ -217,10 +217,7 @@ class LogRepository {
   bool isPendingSync(String entryId) {
     final ox = _outbox;
     if (ox == null) return false;
-    return ox.state.entries.any((e) =>
-        e.entry.optimisticId == entryId &&
-        (e.status == OutboxEntryStatus.pending ||
-            e.status == OutboxEntryStatus.failed));
+    return ox.isUnsynced(entryId);
   }
 
   Future<void> delete(String entryId) async {

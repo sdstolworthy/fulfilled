@@ -393,10 +393,10 @@ class _BarcodeResolveScreen extends ConsumerStatefulWidget {
 }
 
 class _BarcodeResolveScreenState extends ConsumerState<_BarcodeResolveScreen> {
-  // null = in flight; non-null = transient/unknown error (we then show
-  // the inline "Couldn't look up …" affordance). Success/404 paths
-  // navigate away and never reach a second render.
-  Object? _error;
+  // `_loading = false` on a frame that hasn't navigated away means
+  // the resolve hit a transient/unknown error — we render the inline
+  // "Couldn't look up …" affordance. Success and 404 paths navigate
+  // immediately and never reach a second build.
   bool _loading = true;
 
   @override
@@ -411,7 +411,6 @@ class _BarcodeResolveScreenState extends ConsumerState<_BarcodeResolveScreen> {
     if (!mounted) return;
     setState(() {
       _loading = true;
-      _error = null;
     });
     final repo = ref.read(foodRepositoryProvider);
     try {
@@ -425,11 +424,14 @@ class _BarcodeResolveScreenState extends ConsumerState<_BarcodeResolveScreen> {
         return;
       }
       context.pushReplacement('/foods/${food.id}');
-    } on Object catch (err) {
+    } on Object {
       if (!mounted) return;
+      // Specific error details aren't surfaced inline — the
+      // `_BarcodeResolveError` affordance is fixed copy ("Couldn't
+      // look up barcode … · Retry / Enter manually"). Catch + drop
+      // the error and let `_loading=false` drive the UI.
       setState(() {
         _loading = false;
-        _error = err;
       });
     }
   }

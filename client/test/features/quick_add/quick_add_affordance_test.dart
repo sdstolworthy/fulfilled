@@ -11,7 +11,6 @@ import 'package:fulfilled/domain/enums.dart';
 import 'package:fulfilled/domain/food.dart';
 import 'package:fulfilled/domain/log_entry.dart';
 import 'package:fulfilled/domain/meal.dart';
-import 'package:fulfilled/domain/nutrition.dart';
 import 'package:fulfilled/domain/serving.dart';
 import 'package:fulfilled/domain/unit.dart';
 import 'package:fulfilled/domain/weight.dart';

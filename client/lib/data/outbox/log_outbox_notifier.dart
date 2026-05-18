@@ -99,6 +99,18 @@ class LogOutboxNotifier extends StateNotifier<OutboxState> {
   bool _draining = false;
   final Map<String, Timer> _retryTimers = <String, Timer>{};
 
+  /// True iff the outbox holds a `pending` or `failed` entry whose
+  /// `optimisticId` matches [optimisticId]. Exposed publicly so
+  /// `LogRepository.isPendingSync` doesn't have to poke
+  /// `notifier.state` from outside the class (StateNotifier's
+  /// `state` getter is `@visibleForTesting` + `@protected`).
+  bool isUnsynced(String optimisticId) {
+    return state.entries.any((e) =>
+        e.entry.optimisticId == optimisticId &&
+        (e.status == OutboxEntryStatus.pending ||
+            e.status == OutboxEntryStatus.failed));
+  }
+
   void _hydrate() {
     final entries = <OutboxEntryWithStatus>[];
     var failed = 0;

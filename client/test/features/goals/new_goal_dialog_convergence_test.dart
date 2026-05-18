@@ -31,7 +31,6 @@ import 'package:fulfilled/domain/goal.dart';
 import 'package:fulfilled/domain/units/energy.dart';
 import 'package:fulfilled/domain/user.dart';
 import 'package:fulfilled/features/goals/widgets/new_goal_dialog.dart';
-import 'package:fulfilled/providers/goal_providers.dart';
 import 'package:fulfilled/providers/profile_providers.dart';
 import 'package:fulfilled/providers/repository_providers.dart';
 import 'package:fulfilled/repositories/goal_repository.dart';
