@@ -152,17 +152,29 @@ class _KeyboardShortcutsState extends ConsumerState<KeyboardShortcuts> {
       // Stage 1: a raw key handler runs **before** the Shortcuts map so
       // the two-key `g _` sequence — which can't be expressed as a
       // single `SingleActivator` — can consume the second keystroke.
+      // All character-keyed shortcuts (`/`, `n`, `g _`) run *here* —
+      // not through a `Shortcuts` widget — because Flutter's
+      // `Shortcuts` + `CharacterActivator` invokes the action before
+      // the focused `EditableText` ever sees the keystroke, even
+      // though the docs imply otherwise. Doing the editable-focus
+      // gate manually at this layer is the only way to keep `n` from
+      // hijacking typed characters in the search field. Modifier-
+      // based and `Escape` shortcuts continue through the `Shortcuts`
+      // widget below — text fields don't consume those.
       onKeyEvent: (node, event) {
         if (event is! KeyDownEvent) return KeyEventResult.ignored;
         final key = event.logicalKey;
 
-        // `Esc` and `⌘K` are pure single-shot activators; let the
-        // Shortcuts map below handle them so they keep working when
-        // a TextField is focused.
+        // Let `Esc` / `⌘K` fall through to the Shortcuts map.
         if (key == LogicalKeyboardKey.escape) return KeyEventResult.ignored;
+        if (key == LogicalKeyboardKey.keyK &&
+            (HardwareKeyboard.instance.isMetaPressed ||
+                HardwareKeyboard.instance.isControlPressed)) {
+          return KeyEventResult.ignored;
+        }
 
-        // Two-key matcher. After `g`, the matcher consumes the next
-        // key inside the 1 s window.
+        // Two-key `g _` sequence. After `g`, consume the next key
+        // inside the 1 s window.
         if (_goMatcher.isWaitingForSecondKey) {
           if (_editableFocused) {
             _goMatcher.reset();
@@ -173,8 +185,19 @@ class _KeyboardShortcutsState extends ConsumerState<KeyboardShortcuts> {
           return KeyEventResult.handled;
         }
 
-        if (key == LogicalKeyboardKey.keyG && !_editableFocused) {
+        // From here on every shortcut is editable-gated.
+        if (_editableFocused) return KeyEventResult.ignored;
+
+        if (key == LogicalKeyboardKey.keyG) {
           _goMatcher.armForSecondKey();
+          return KeyEventResult.handled;
+        }
+        if (event.character == '/') {
+          _focusSearchOrPush(context);
+          return KeyEventResult.handled;
+        }
+        if (event.character?.toLowerCase() == 'n') {
+          unawaited(_openLogEntryForMostRecent(context));
           return KeyEventResult.handled;
         }
 
@@ -182,22 +205,6 @@ class _KeyboardShortcutsState extends ConsumerState<KeyboardShortcuts> {
       },
       child: Shortcuts(
         shortcuts: const <ShortcutActivator, Intent>{
-          // Character-based shortcuts use `CharacterActivator` rather
-          // than `SingleActivator(LogicalKeyboardKey.x)` because
-          // Flutter's `CharacterActivator` is documented to **skip**
-          // when an editable text field currently has focus — which
-          // is exactly what we want for plain letters / punctuation.
-          // The earlier `SingleActivator` form fired on every `n` or
-          // `/` keystroke regardless of focus, hijacking the keypress
-          // before the search field's TextField could see it. The
-          // `_editableFocused` check on the Action wasn't sufficient
-          // because (a) the search field uses an explicit external
-          // `FocusNode` whose `context.widget` is `Focus`, not
-          // `EditableText`, so the check returned false; and (b)
-          // even when it returned true, `Shortcuts` still consumed
-          // the event when the Action no-op'd.
-          CharacterActivator('/'): _FocusSearchIntent(),
-          CharacterActivator('n'): _NewEntryIntent(),
           // ⌘K / Ctrl-K stays on `SingleActivator` — modifier
           // combinations aren't consumed by text fields, and the
           // shortcut is intentionally global anyway.
@@ -211,25 +218,11 @@ class _KeyboardShortcutsState extends ConsumerState<KeyboardShortcuts> {
         },
         child: Actions(
           actions: <Type, Action<Intent>>{
-            _FocusSearchIntent: CallbackAction<_FocusSearchIntent>(
-              onInvoke: (_) {
-                if (_editableFocused) return null;
-                _focusSearchOrPush(context);
-                return null;
-              },
-            ),
             _OpenSearchRouteIntent: CallbackAction<_OpenSearchRouteIntent>(
               onInvoke: (_) {
                 // ⌘K / Ctrl-K is intentionally NOT carved out — it's a
                 // global escape hatch the user can hit anywhere.
                 context.goNamed(Routes.foodsSearchName);
-                return null;
-              },
-            ),
-            _NewEntryIntent: CallbackAction<_NewEntryIntent>(
-              onInvoke: (_) {
-                if (_editableFocused) return null;
-                _openLogEntryForMostRecent(context);
                 return null;
               },
             ),
@@ -249,18 +242,12 @@ class _KeyboardShortcutsState extends ConsumerState<KeyboardShortcuts> {
 
 // ---------------------------------------------------------------------------
 // Intents — empty marker types per Shortcuts/Actions convention.
+// Only modifier-keyed shortcuts still flow through Shortcuts/Actions;
+// the character-keyed ones are handled in the raw `onKeyEvent` above.
 // ---------------------------------------------------------------------------
-
-class _FocusSearchIntent extends Intent {
-  const _FocusSearchIntent();
-}
 
 class _OpenSearchRouteIntent extends Intent {
   const _OpenSearchRouteIntent();
-}
-
-class _NewEntryIntent extends Intent {
-  const _NewEntryIntent();
 }
 
 class _PopIntent extends Intent {
