@@ -28,6 +28,9 @@ class Food {
     this.nutriscore,
     this.categoriesTags = const <String>[],
     DateTime? createdAt,
+    this.lastLoggedAt,
+    this.logCount,
+    this.lastServingId,
   }) : createdAt = createdAt ?? DateTime.now();
 
   final String id;
@@ -60,6 +63,28 @@ class Food {
   /// sorts by this descending so a freshly-saved custom food surfaces
   /// at the top.
   final DateTime createdAt;
+
+  /// Per-user log-history signals — only populated when this [Food] was
+  /// projected from a search/recent/frequent hit ([FoodRepository._hitToFood]).
+  /// Never present on `GET /foods/{id}` (single-food detail). On a hit
+  /// where the caller has never logged the food, [logCount] is `0` (BE
+  /// emits the field as non-nullable) and the other two are `null`.
+  final DateTime? lastLoggedAt;
+
+  /// Lifetime count of `food_log_entries` rows for `(caller, food)`. Not
+  /// distinct-days, not a sliding window. See note on [lastLoggedAt].
+  final int? logCount;
+
+  /// Serving id used on the caller's most-recent log entry for this food.
+  /// `null` when the serving was deleted (FK `ON DELETE SET NULL`) or the
+  /// caller has never logged this food. See note on [lastLoggedAt].
+  final String? lastServingId;
+
+  /// True iff the caller has previously logged this food at least once.
+  /// Mirrors [FoodSearchHit.isPreviouslyLogged]; drives the "YOUR FOODS"
+  /// section split + sub-line in `SearchResultRow` (F5-T4).
+  bool get wasLoggedByCaller =>
+      (logCount ?? 0) > 0 && lastLoggedAt != null;
 
   /// The default serving (the one with `is_default == true`). Falls
   /// back to the first row if no flag is set (defensive — real wire
@@ -95,6 +120,9 @@ class Food {
     List<Serving>? servings,
     List<String>? categoriesTags,
     DateTime? createdAt,
+    DateTime? lastLoggedAt,
+    int? logCount,
+    String? lastServingId,
   }) =>
       Food(
         id: id ?? this.id,
@@ -108,6 +136,9 @@ class Food {
         servings: servings ?? this.servings,
         categoriesTags: categoriesTags ?? this.categoriesTags,
         createdAt: createdAt ?? this.createdAt,
+        lastLoggedAt: lastLoggedAt ?? this.lastLoggedAt,
+        logCount: logCount ?? this.logCount,
+        lastServingId: lastServingId ?? this.lastServingId,
       );
 
   factory Food.fromJson(Map<String, dynamic> json) {
@@ -132,6 +163,11 @@ class Food {
       createdAt: createdAtRaw == null
           ? null
           : DateTime.parse(createdAtRaw as String),
+      lastLoggedAt: json['last_logged_at'] == null
+          ? null
+          : DateTime.parse(json['last_logged_at'] as String),
+      logCount: (json['log_count'] as num?)?.toInt(),
+      lastServingId: json['last_serving_id'] as String?,
     );
   }
 
@@ -146,6 +182,13 @@ class Food {
         'servings': servings.map((s) => s.toJson()).toList(),
         'categories_tags': categoriesTags,
         'created_at': createdAt.toIso8601String(),
+        if (lastLoggedAt != null)
+          'last_logged_at':
+              '${lastLoggedAt!.year.toString().padLeft(4, '0')}-'
+              '${lastLoggedAt!.month.toString().padLeft(2, '0')}-'
+              '${lastLoggedAt!.day.toString().padLeft(2, '0')}',
+        if (logCount != null) 'log_count': logCount,
+        if (lastServingId != null) 'last_serving_id': lastServingId,
       };
 
   @override
@@ -162,7 +205,10 @@ class Food {
           other.nutriscore == nutriscore &&
           listEquals(other.servings, servings) &&
           listEquals(other.categoriesTags, categoriesTags) &&
-          other.createdAt == createdAt;
+          other.createdAt == createdAt &&
+          other.lastLoggedAt == lastLoggedAt &&
+          other.logCount == logCount &&
+          other.lastServingId == lastServingId;
 
   @override
   int get hashCode => Object.hash(
@@ -177,6 +223,9 @@ class Food {
         Object.hashAll(servings),
         Object.hashAll(categoriesTags),
         createdAt,
+        lastLoggedAt,
+        logCount,
+        lastServingId,
       );
 }
 
@@ -200,6 +249,9 @@ class FoodSearchHit {
     this.defaultServingAmount,
     this.defaultServingUnit,
     this.caloriesPerServing,
+    this.lastLoggedAt,
+    this.logCount,
+    this.lastServingId,
   });
 
   final String id;
@@ -217,6 +269,32 @@ class FoodSearchHit {
   final Unit? defaultServingUnit;
   final Decimal? caloriesPerServing;
 
+  /// Per-user log-history signals from the BE enrichment composer
+  /// (F5-T2). Populated on hits from `/foods/search|recent|frequent|mine`
+  /// when the caller is authenticated. `lastLoggedAt` is decoded from
+  /// the wire's bare `"YYYY-MM-DD"` date string (parsed as local
+  /// midnight) — *not* an ISO-8601 instant.
+  final DateTime? lastLoggedAt;
+
+  /// Lifetime `COUNT(*)` of `(caller, food)` rows in `food_log_entries`.
+  /// BE always emits this as a non-nullable integer; we decode `int?`
+  /// defensively and treat `null` and `0` identically.
+  final int? logCount;
+
+  /// Serving id used on the caller's most-recent log entry for this food.
+  /// `null` when the serving was deleted (FK `ON DELETE SET NULL`) or
+  /// the caller has never logged this food.
+  final String? lastServingId;
+
+  /// True iff the caller has previously logged this food at least once.
+  /// Drives the "YOUR FOODS" section split + sub-line in `SearchResultRow`
+  /// (F5-T4). Requires *both* a non-null [lastLoggedAt] *and* a positive
+  /// [logCount] — guards against an enriched row with a stale `last_logged_at`
+  /// but a zeroed count (shouldn't happen with the current BE shape, but
+  /// cheap to defend).
+  bool get isPreviouslyLogged =>
+      (logCount ?? 0) > 0 && lastLoggedAt != null;
+
   FoodSearchHit copyWith({
     String? id,
     String? name,
@@ -228,6 +306,9 @@ class FoodSearchHit {
     Decimal? defaultServingAmount,
     Unit? defaultServingUnit,
     Decimal? caloriesPerServing,
+    DateTime? lastLoggedAt,
+    int? logCount,
+    String? lastServingId,
   }) =>
       FoodSearchHit(
         id: id ?? this.id,
@@ -240,6 +321,9 @@ class FoodSearchHit {
         defaultServingAmount: defaultServingAmount ?? this.defaultServingAmount,
         defaultServingUnit: defaultServingUnit ?? this.defaultServingUnit,
         caloriesPerServing: caloriesPerServing ?? this.caloriesPerServing,
+        lastLoggedAt: lastLoggedAt ?? this.lastLoggedAt,
+        logCount: logCount ?? this.logCount,
+        lastServingId: lastServingId ?? this.lastServingId,
       );
 
   /// Project a hit from a full [Food]. The mock repository uses this so
@@ -276,6 +360,16 @@ class FoodSearchHit {
       defaultServingAmount: dec(defServing?['amount']),
       defaultServingUnit: unitWire == null ? null : Unit.fromWire(unitWire),
       caloriesPerServing: dec(json['calories_per_serving'] ?? defServing?['kcal']),
+      // Wire shape is a bare `"YYYY-MM-DD"` date string (BE plan §2 —
+      // `Option<NaiveDate>`, not an ISO-8601 instant). `DateTime.parse`
+      // accepts the date-only form and returns local midnight, which is
+      // exactly what the "Today"/"Yesterday"/"Tue" math in
+      // `_formatLoggedWhen` expects.
+      lastLoggedAt: json['last_logged_at'] == null
+          ? null
+          : DateTime.parse(json['last_logged_at'] as String),
+      logCount: (json['log_count'] as num?)?.toInt(),
+      lastServingId: json['last_serving_id'] as String?,
     );
   }
 
@@ -295,6 +389,13 @@ class FoodSearchHit {
           },
         if (caloriesPerServing != null)
           'calories_per_serving': caloriesPerServing.toString(),
+        if (lastLoggedAt != null)
+          'last_logged_at':
+              '${lastLoggedAt!.year.toString().padLeft(4, '0')}-'
+              '${lastLoggedAt!.month.toString().padLeft(2, '0')}-'
+              '${lastLoggedAt!.day.toString().padLeft(2, '0')}',
+        if (logCount != null) 'log_count': logCount,
+        if (lastServingId != null) 'last_serving_id': lastServingId,
       };
 
   @override
@@ -310,7 +411,10 @@ class FoodSearchHit {
           other.defaultServingLabel == defaultServingLabel &&
           other.defaultServingAmount == defaultServingAmount &&
           other.defaultServingUnit == defaultServingUnit &&
-          other.caloriesPerServing == caloriesPerServing;
+          other.caloriesPerServing == caloriesPerServing &&
+          other.lastLoggedAt == lastLoggedAt &&
+          other.logCount == logCount &&
+          other.lastServingId == lastServingId;
 
   @override
   int get hashCode => Object.hash(
@@ -324,6 +428,9 @@ class FoodSearchHit {
         defaultServingAmount,
         defaultServingUnit,
         caloriesPerServing,
+        lastLoggedAt,
+        logCount,
+        lastServingId,
       );
 }
 

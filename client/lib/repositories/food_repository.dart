@@ -558,6 +558,17 @@ class FoodRepository {
       servings: servings,
       categoriesTags: const <String>[],
       createdAt: null,
+      // Forward F5 log-history signals from the enriched hit JSON so the
+      // search-result row widget can read them off the `Food` directly
+      // (the row only sees a `Food`, never the raw hit). Wire shape for
+      // `last_logged_at` is a bare `"YYYY-MM-DD"` date — `DateTime.parse`
+      // accepts it and returns local midnight, matching F5-T4's "Today /
+      // Yesterday / Tue" math.
+      lastLoggedAt: json['last_logged_at'] == null
+          ? null
+          : DateTime.parse(json['last_logged_at'] as String),
+      logCount: (json['log_count'] as num?)?.toInt(),
+      lastServingId: json['last_serving_id'] as String?,
     );
   }
 }

@@ -8,6 +8,12 @@
 // preferring the top-level field when both are present.
 //
 // See `feature_tickets.md` §F1-T2 for the exact decoder contract.
+//
+// F5-T3 extends this file with cases for the three log-history fields
+// (`last_logged_at`, `log_count`, `last_serving_id`) and the
+// `isPreviouslyLogged` getter. The `last_logged_at` wire shape is a
+// bare `"YYYY-MM-DD"` date string (not an ISO-8601 instant) per
+// `feature_tickets_f5.md` "Wire-shape decisions" §2.
 
 import 'package:decimal/decimal.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -62,6 +68,80 @@ void main() {
     test('returns null when neither top-level nor nested kcal is present', () {
       final hit = FoodSearchHit.fromJson(_baseHit());
       expect(hit.caloriesPerServing, isNull);
+    });
+  });
+
+  group('FoodSearchHit.fromJson F5 log-history fields', () {
+    test(
+        'all three fields present → decoded; isPreviouslyLogged == true; '
+        'date is local midnight from bare YYYY-MM-DD', () {
+      final hit = FoodSearchHit.fromJson(<String, dynamic>{
+        ..._baseHit(),
+        'last_logged_at': '2026-05-14',
+        'log_count': 4,
+        'last_serving_id': 'sv_last',
+      });
+      expect(hit.lastLoggedAt, isNotNull);
+      expect(hit.lastLoggedAt!.year, 2026);
+      expect(hit.lastLoggedAt!.month, 5);
+      expect(hit.lastLoggedAt!.day, 14);
+      expect(hit.lastLoggedAt!.hour, 0);
+      expect(hit.lastLoggedAt!.minute, 0);
+      expect(hit.lastLoggedAt!.isUtc, isFalse);
+      expect(hit.logCount, 4);
+      expect(hit.lastServingId, 'sv_last');
+      expect(hit.isPreviouslyLogged, isTrue);
+    });
+
+    test(
+        'all three fields absent → all null; isPreviouslyLogged == false',
+        () {
+      final hit = FoodSearchHit.fromJson(_baseHit());
+      expect(hit.lastLoggedAt, isNull);
+      expect(hit.logCount, isNull);
+      expect(hit.lastServingId, isNull);
+      expect(hit.isPreviouslyLogged, isFalse);
+    });
+
+    test('explicit nulls decode the same as absent fields', () {
+      final hit = FoodSearchHit.fromJson(<String, dynamic>{
+        ..._baseHit(),
+        'last_logged_at': null,
+        'log_count': null,
+        'last_serving_id': null,
+      });
+      expect(hit.lastLoggedAt, isNull);
+      expect(hit.logCount, isNull);
+      expect(hit.lastServingId, isNull);
+      expect(hit.isPreviouslyLogged, isFalse);
+    });
+
+    test(
+        'log_count == 0 with null last_logged_at → isPreviouslyLogged == false '
+        '(BE-default zero-state regression)', () {
+      final hit = FoodSearchHit.fromJson(<String, dynamic>{
+        ..._baseHit(),
+        'log_count': 0,
+      });
+      expect(hit.logCount, 0);
+      expect(hit.lastLoggedAt, isNull);
+      expect(hit.isPreviouslyLogged, isFalse);
+    });
+
+    test('fromJson → toJson round-trip preserves log-history fields', () {
+      final json = <String, dynamic>{
+        ..._baseHit(topLevelKcal: '180'),
+        'last_logged_at': '2026-05-14',
+        'log_count': 7,
+        'last_serving_id': 'sv_last',
+      };
+      final hit = FoodSearchHit.fromJson(json);
+      final round = hit.toJson();
+      expect(round['last_logged_at'], '2026-05-14');
+      expect(round['log_count'], 7);
+      expect(round['last_serving_id'], 'sv_last');
+      // Decoding the re-encoded payload yields an equal `FoodSearchHit`.
+      expect(FoodSearchHit.fromJson(round), hit);
     });
   });
 }
