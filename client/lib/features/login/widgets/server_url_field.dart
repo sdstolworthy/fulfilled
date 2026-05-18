@@ -48,19 +48,32 @@ class _ServerUrlFieldState extends ConsumerState<ServerUrlField> {
 
   @override
   Widget build(BuildContext context) {
-    final state = ref.watch(loginControllerProvider);
+    // Perf (Flutter doc — "Control build() cost"): the URL field's
+    // visible value is owned by `_controller`, so we only need to
+    // react to two state slices — `submitting` (disables the field)
+    // and `urlError` (drives the helper text + border color + HTTP
+    // disclosure). Watching the whole state would rebuild on every
+    // keystroke (the controller calls `setUrl(v)` → `state.url = v`),
+    // even though the `TextField` already mirrors the keystroke
+    // locally.
+    final submitting = ref.watch(
+      loginControllerProvider.select((s) => s.submitting),
+    );
+    final urlError = ref.watch(
+      loginControllerProvider.select((s) => s.urlError),
+    );
     final controller = ref.read(loginControllerProvider.notifier);
     final colors = context.colors;
     final space = context.space;
 
-    final hasError = state.urlError != null;
+    final hasError = urlError != null;
     // PM §5.4 — helper text under the field by default; replaced with the
     // typed error string in danger on a URL error.
     final helperStyle = hasError
         ? context.text.meta.copyWith(color: colors.danger)
         : context.text.meta;
     final helperText = hasError
-        ? state.urlError!
+        ? urlError
         : 'e.g. https://fulfilled.mydomain.com';
 
     // Architect §5.6 — only render the per-session disclosure when the
@@ -68,7 +81,7 @@ class _ServerUrlFieldState extends ConsumerState<ServerUrlField> {
     // contains the literal word "HTTP" (see `url_normalize.dart`'s
     // `insecureScheme` message); we match on it rather than threading a
     // separate `kind` field through state.
-    final showHttpDisclosure = hasError && state.urlError!.contains('HTTP');
+    final showHttpDisclosure = hasError && urlError.contains('HTTP');
 
     return Semantics(
       label: 'Server URL',
@@ -84,7 +97,7 @@ class _ServerUrlFieldState extends ConsumerState<ServerUrlField> {
             // Re-login pre-seed: when the form already has a URL the
             // focus moves to the password (CredentialsForm handles its
             // own autofocus); the URL field is not autofocused here.
-            enabled: !state.submitting,
+            enabled: !submitting,
             onChanged: controller.setUrl,
             decoration: InputDecoration(
               labelText: 'Server URL',

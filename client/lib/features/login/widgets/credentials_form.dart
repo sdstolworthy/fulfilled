@@ -59,12 +59,23 @@ class _CredentialsFormState extends ConsumerState<CredentialsForm> {
 
   @override
   Widget build(BuildContext context) {
-    final state = ref.watch(loginControllerProvider);
+    // Perf (Flutter doc — "Control build() cost"): the form's visible
+    // text values are owned by `_usernameCtrl` / `_passwordCtrl`, so
+    // we only need to react to `submitting` (disables fields) and
+    // `credentialsError` (drives the helper text + border color).
+    // Watching the whole state would rebuild on every keystroke
+    // since `setUsername` / `setPassword` re-emit on each character.
+    final submitting = ref.watch(
+      loginControllerProvider.select((s) => s.submitting),
+    );
+    final credentialsError = ref.watch(
+      loginControllerProvider.select((s) => s.credentialsError),
+    );
     final controller = ref.read(loginControllerProvider.notifier);
     final colors = context.colors;
     final space = context.space;
 
-    final hasCredsError = state.credentialsError != null;
+    final hasCredsError = credentialsError != null;
     final passwordHelperStyle = hasCredsError
         ? context.text.meta.copyWith(color: colors.danger)
         : context.text.meta;
@@ -85,7 +96,7 @@ class _CredentialsFormState extends ConsumerState<CredentialsForm> {
               autofocus: !_passwordAutofocus,
               autocorrect: false,
               enableSuggestions: false,
-              enabled: !state.submitting,
+              enabled: !submitting,
               autofillHints: const <String>[AutofillHints.username],
               keyboardType: TextInputType.text,
               textInputAction: TextInputAction.next,
@@ -108,13 +119,13 @@ class _CredentialsFormState extends ConsumerState<CredentialsForm> {
               obscureText: true,
               autocorrect: false,
               enableSuggestions: false,
-              enabled: !state.submitting,
+              enabled: !submitting,
               autofillHints: const <String>[AutofillHints.password],
               textInputAction: TextInputAction.done,
               onChanged: controller.setPassword,
               decoration: InputDecoration(
                 labelText: 'Password',
-                helperText: hasCredsError ? state.credentialsError : null,
+                helperText: hasCredsError ? credentialsError : null,
                 helperStyle: passwordHelperStyle,
                 border: const OutlineInputBorder(),
                 enabledBorder: OutlineInputBorder(

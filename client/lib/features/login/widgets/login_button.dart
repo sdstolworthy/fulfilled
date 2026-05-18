@@ -24,12 +24,20 @@ class LoginButton extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final state = ref.watch(loginControllerProvider);
+    // Perf (Flutter doc — "Control build() cost"): only `submitting`
+    // and `url` are read here. Watching the whole state would rebuild
+    // the button on every keystroke of username / password / urlError.
+    // We use two `.select` calls because the two slices change on
+    // independent edges; the button rebuilds when either flips.
+    final submitting = ref.watch(
+      loginControllerProvider.select((s) => s.submitting),
+    );
+    final url = ref.watch(
+      loginControllerProvider.select((s) => s.url),
+    );
     final controller = ref.read(loginControllerProvider.notifier);
     final colors = context.colors;
     final radius = context.radius;
-
-    final submitting = state.submitting;
 
     Future<void> onPressed() async {
       final ok = await controller.submit();
@@ -44,7 +52,7 @@ class LoginButton extends ConsumerWidget {
     // T-20 — semantic label includes the hostname when the URL field
     // has been filled (architect §5.8 + ticket "submit reads 'Sign in
     // to <hostname>' when URL present").
-    final hostHint = _hostnameForSemantics(state.url);
+    final hostHint = _hostnameForSemantics(url);
     final semanticsLabel =
         hostHint != null ? 'Sign in to $hostHint' : 'Sign in';
 

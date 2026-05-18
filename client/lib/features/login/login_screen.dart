@@ -211,7 +211,17 @@ class _LoginBody extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final state = ref.watch(loginControllerProvider);
+    // Perf (Flutter doc — "Control build() cost"): the body re-renders
+    // on every keystroke if it watches the full `LoginState`. Each
+    // keystroke flips `state.url` / `state.username` / `state.password`,
+    // and the body only reads `state.formError`. Narrowing via
+    // `.select` keeps the body's `build` keystroke-stable; the
+    // individual `TextField`s, the submit button, and the inline
+    // disclosure each watch their own slice (see the consumers
+    // below).
+    final formError = ref.watch(
+      loginControllerProvider.select((s) => s.formError),
+    );
     final space = context.space;
 
     return Column(
@@ -256,9 +266,9 @@ class _LoginBody extends ConsumerWidget {
         // `state.endpointMissing` (the widget guards itself).
         const PasteJwtDisclosure(),
         // 11. Form-level error row (T-11 — inline, no SnackBar).
-        if (state.formError != null) ...<Widget>[
+        if (formError != null) ...<Widget>[
           SizedBox(height: space.x3),
-          _FormErrorRow(message: state.formError!),
+          _FormErrorRow(message: formError),
         ],
         // 12. Spacer above sign-up link.
         SizedBox(height: space.x4),

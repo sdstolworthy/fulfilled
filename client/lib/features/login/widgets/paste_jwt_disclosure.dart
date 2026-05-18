@@ -23,8 +23,13 @@ class PasteJwtDisclosure extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final state = ref.watch(loginControllerProvider);
-    if (!state.endpointMissing) {
+    // Perf (Flutter doc — "Control build() cost"): the disclosure only
+    // reacts to the `endpointMissing` boolean; narrowing via `.select`
+    // keeps this widget out of every keystroke's rebuild fan-out.
+    final endpointMissing = ref.watch(
+      loginControllerProvider.select((s) => s.endpointMissing),
+    );
+    if (!endpointMissing) {
       return const SizedBox.shrink();
     }
     final controller = ref.read(loginControllerProvider.notifier);
