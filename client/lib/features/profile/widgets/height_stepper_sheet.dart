@@ -8,6 +8,7 @@ import '../../../domain/user.dart';
 import '../../../providers/profile_providers.dart';
 import '../../../providers/repository_providers.dart';
 import '../../../theme/context_extensions.dart';
+import '../../goals/recompute_active_goal.dart';
 import 'editor_footer.dart';
 import 'editor_host.dart';
 
@@ -86,6 +87,7 @@ class _HeightStepperSheetState extends ConsumerState<HeightStepperSheet> {
       final repo = ref.read(profileRepositoryProvider);
       await repo.update(UserPatch(heightCm: _cm));
       ref.invalidate(meProvider);
+      await recomputeActiveGoalAfterProfileChange(ref);
       if (mounted) Navigator.of(context).pop();
     } catch (_) {
       if (mounted) {
