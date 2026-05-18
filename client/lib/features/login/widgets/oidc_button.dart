@@ -128,10 +128,19 @@ class _OidcButtonState extends ConsumerState<OidcButton> {
           mainAxisAlignment: MainAxisAlignment.center,
           children: <Widget>[
             if (widget.provider.hasIcon) ...<Widget>[
+              // Perf (Flutter doc — "Performance" on Image): decode the
+              // network bitmap at the painted resolution (40 px to
+              // cover 2x DPR) instead of the source resolution. IdP
+              // icon URLs commonly serve a 256-px favicon; without the
+              // cache-size cap, the full 256² ARGB blob lives in
+              // `PaintingBinding.instance.imageCache` and pays a
+              // larger decode cost per IdP button.
               Image.network(
                 widget.provider.iconUrl,
                 width: 20,
                 height: 20,
+                cacheWidth: 40,
+                cacheHeight: 40,
                 errorBuilder: (_, __, ___) =>
                     Icon(Icons.shield_outlined, size: 20, color: colors.ink2),
               ),
