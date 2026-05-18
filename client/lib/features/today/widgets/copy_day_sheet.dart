@@ -304,13 +304,14 @@ class _CopyDaySheetState extends ConsumerState<CopyDaySheet> {
       if (!mounted) return;
       // T-18 minimal invalidation. Source-date providers are NOT
       // invalidated (the source is read-only — see `copyDay`'s
-      // `@invalidates` block).
+      // `@invalidates` block). `weeklyLogDaysProvider` derives from
+      // `logEntriesProvider`, so the invalidate above propagates
+      // automatically — no separate flush needed.
       ref
         ..invalidate(daySummaryProvider(widget.targetDate))
         ..invalidate(logEntriesProvider(widget.targetDate))
         ..invalidate(recentFoodsProvider)
-        ..invalidate(frequentFoodsProvider)
-        ..invalidate(weeklyLogDaysProvider);
+        ..invalidate(frequentFoodsProvider);
 
       // T-24 Case 2 — route-to-effect.
       //

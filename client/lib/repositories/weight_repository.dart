@@ -86,13 +86,13 @@ class WeightRepository {
   ///   range first per the existing call-site convention, then the
   ///   inactive ranges so a range-switch repaints fresh.
   /// - `weightHistoryProvider` — the newest-first history list.
-  /// - `meProvider` — `User.currentWeightKg` is derived from the
-  ///   most recent entry (see [ProfileRepository.me]).
+  ///
+  /// `currentWeightKgProvider` derives from `weightHistoryProvider`
+  /// and recomputes automatically. There is no `meProvider`
+  /// invalidate — current weight is no longer a field on `User`.
   ///
   /// Call sites are responsible for invalidating per T-18 (minimal +
-  /// explicit); this list is the **contract** the call site reads. A
-  /// new dependent provider is added by editing this list and the call
-  /// sites in the same PR.
+  /// explicit); this list is the **contract** the call site reads.
   Future<WeightEntry> createEntry(WeightEntry entry) async {
     final body = <String, dynamic>{
       'recorded_on': _isoDate(entry.recordedOn),

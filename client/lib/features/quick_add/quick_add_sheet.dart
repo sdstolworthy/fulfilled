@@ -368,8 +368,10 @@ class _QuickAddSheetBodyState extends ConsumerState<QuickAddSheetBody> {
     try {
       final entry = await ref.read(logRepositoryProvider).create(payload);
       if (!mounted) return;
-      // Invalidate the same provider family as `LogEntrySheet.onCreate`
-      // (matches `LogRepository.create`'s `@invalidates` block).
+      // Invalidate the same provider family as `LogEntrySheet`'s
+      // create path — day-summary + entries for this date, plus
+      // recents/frequents. `weeklyLogDaysProvider` watches
+      // `logEntriesProvider` and re-derives on its own.
       ref
         ..invalidate(daySummaryProvider(_date))
         ..invalidate(logEntriesProvider(_date))
