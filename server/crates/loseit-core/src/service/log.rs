@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::NaiveDate;
@@ -7,11 +6,11 @@ use uuid::Uuid;
 
 use crate::domain::{
     unit::{Unit, UnitFamily},
-    DaySummary, FoodLogEntry, FoodSearchHit, FoodSearchHitWithSignals, LogDraft, LogPatch, Meal,
-    MealSubtotal, NutritionSnapshot, PersistedLogEntry, PersistedLogPatch, RecomputedSnapshot,
-    Serving, ServingPreview,
+    FoodLogEntry, FoodSearchHit, FoodSearchHitWithSignals, LogDraft, LogPatch, Meal,
+    NutritionSnapshot, PersistedLogEntry, PersistedLogPatch, RecomputedSnapshot, Serving,
+    ServingPreview,
 };
-use crate::repo::{FoodRepository, GoalRepository, LogRepository, ServingRepository};
+use crate::repo::{FoodRepository, LogRepository, ServingRepository};
 use crate::service::page::{resolve_page_params, Paginated};
 use crate::service::user_food_summary::{enrich_hits, wrap_hits, UserFoodSummaryReader};
 use crate::{CoreError, CoreResult};
@@ -32,7 +31,6 @@ pub struct LogService {
     logs: Arc<dyn LogRepository>,
     foods: Arc<dyn FoodRepository>,
     servings: Arc<dyn ServingRepository>,
-    goals: Arc<dyn GoalRepository>,
     summary_reader: Arc<dyn UserFoodSummaryReader>,
 }
 
@@ -41,14 +39,12 @@ impl LogService {
         logs: Arc<dyn LogRepository>,
         foods: Arc<dyn FoodRepository>,
         servings: Arc<dyn ServingRepository>,
-        goals: Arc<dyn GoalRepository>,
         summary_reader: Arc<dyn UserFoodSummaryReader>,
     ) -> Self {
         Self {
             logs,
             foods,
             servings,
-            goals,
             summary_reader,
         }
     }
@@ -63,10 +59,6 @@ impl LogService {
 
     pub fn servings(&self) -> &Arc<dyn ServingRepository> {
         &self.servings
-    }
-
-    pub fn goals(&self) -> &Arc<dyn GoalRepository> {
-        &self.goals
     }
 
     /// Compute a nutrition snapshot from a serving and a quantity multiplier.
@@ -338,98 +330,6 @@ impl LogService {
     }
 
     #[tracing::instrument(skip(self))]
-    pub async fn day_summary(&self, user: Uuid, on: NaiveDate) -> CoreResult<DaySummary> {
-        let entries = self.logs.list_for_day(user, on).await?;
-        let active_goal = self.goals.find_active_on(user, on).await?;
-
-        let mut by_meal_map: HashMap<Meal, MealSubtotal> = HashMap::new();
-        for meal in Meal::all() {
-            by_meal_map.insert(
-                meal,
-                MealSubtotal {
-                    meal,
-                    calories_kcal: Decimal::ZERO,
-                    protein_g: Decimal::ZERO,
-                    carbs_g: Decimal::ZERO,
-                    fat_g: Decimal::ZERO,
-                    entry_count: 0,
-                },
-            );
-        }
-
-        let mut total_calories = Decimal::ZERO;
-        let mut total_protein = (Decimal::ZERO, false);
-        let mut total_carbs = (Decimal::ZERO, false);
-        let mut total_fat = (Decimal::ZERO, false);
-        let mut total_fiber = (Decimal::ZERO, false);
-        let mut total_sugar = (Decimal::ZERO, false);
-        let mut total_sodium = (Decimal::ZERO, false);
-        let mut total_satfat = (Decimal::ZERO, false);
-
-        for entry in &entries {
-            let subtotal = by_meal_map
-                .get_mut(&entry.meal)
-                .expect("seeded with all four meals");
-            subtotal.calories_kcal += entry.snapshot.calories_kcal;
-            if let Some(v) = entry.snapshot.protein_g {
-                subtotal.protein_g += v;
-            }
-            if let Some(v) = entry.snapshot.carbs_g {
-                subtotal.carbs_g += v;
-            }
-            if let Some(v) = entry.snapshot.fat_g {
-                subtotal.fat_g += v;
-            }
-            subtotal.entry_count += 1;
-
-            total_calories += entry.snapshot.calories_kcal;
-            accumulate(&mut total_protein, entry.snapshot.protein_g);
-            accumulate(&mut total_carbs, entry.snapshot.carbs_g);
-            accumulate(&mut total_fat, entry.snapshot.fat_g);
-            accumulate(&mut total_fiber, entry.snapshot.fiber_g);
-            accumulate(&mut total_sugar, entry.snapshot.sugar_g);
-            accumulate(&mut total_sodium, entry.snapshot.sodium_mg);
-            accumulate(&mut total_satfat, entry.snapshot.saturated_fat_g);
-        }
-
-        let by_meal: Vec<MealSubtotal> = Meal::all()
-            .into_iter()
-            .map(|m| by_meal_map.remove(&m).expect("seeded above"))
-            .collect();
-
-        let total = if !entries.is_empty() {
-            NutritionSnapshot {
-                calories_kcal: to_numeric_8_2(total_calories),
-                protein_g: total_protein.1.then(|| to_numeric_8_2(total_protein.0)),
-                carbs_g: total_carbs.1.then(|| to_numeric_8_2(total_carbs.0)),
-                fat_g: total_fat.1.then(|| to_numeric_8_2(total_fat.0)),
-                fiber_g: total_fiber.1.then(|| to_numeric_8_2(total_fiber.0)),
-                sugar_g: total_sugar.1.then(|| to_numeric_8_2(total_sugar.0)),
-                sodium_mg: total_sodium.1.then(|| to_numeric_8_2(total_sodium.0)),
-                saturated_fat_g: total_satfat.1.then(|| to_numeric_8_2(total_satfat.0)),
-            }
-        } else {
-            NutritionSnapshot {
-                calories_kcal: Decimal::ZERO,
-                protein_g: None,
-                carbs_g: None,
-                fat_g: None,
-                fiber_g: None,
-                sugar_g: None,
-                sodium_mg: None,
-                saturated_fat_g: None,
-            }
-        };
-
-        Ok(DaySummary {
-            date: on,
-            total,
-            by_meal,
-            active_goal,
-        })
-    }
-
-    #[tracing::instrument(skip(self))]
     pub async fn recent_foods(
         &self,
         user: Uuid,
@@ -512,13 +412,6 @@ fn clamp_recent_frequent_limit(limit: i64) -> i64 {
         RECENT_FREQUENT_DEFAULT_LIMIT
     } else {
         limit.min(RECENT_FREQUENT_MAX_LIMIT)
-    }
-}
-
-fn accumulate(acc: &mut (Decimal, bool), value: Option<Decimal>) {
-    if let Some(v) = value {
-        acc.0 += v;
-        acc.1 = true;
     }
 }
 

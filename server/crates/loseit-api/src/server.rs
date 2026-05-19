@@ -26,8 +26,8 @@ use loseit_core::repo::{
     ServingRepository, UserRepository, WeightRepository,
 };
 use loseit_core::service::{
-    AuthService, FoodService, GoalService, LogService, ServingService, UserFoodSummaryReader,
-    UserService, WeightService,
+    AuthService, DaySummaryService, FoodService, GoalService, LogService, ServingService,
+    UserFoodSummaryReader, UserService, WeightService,
 };
 use loseit_db::{
     PgFoodRepository, PgGoalRepository, PgLocalAuthRepository, PgLogRepository,
@@ -77,6 +77,7 @@ pub struct AppState {
     pub foods: Arc<FoodService>,
     pub servings: Arc<ServingService>,
     pub logs: Arc<LogService>,
+    pub day_summary: Arc<DaySummaryService>,
     pub authenticator: DynAuthenticator,
     pub auth: Option<Arc<AuthService>>,
     /// `Some` when at least one OIDC provider is configured.
@@ -116,13 +117,8 @@ impl AppState {
             summary_reader.clone(),
         ));
         let serving_service = Arc::new(ServingService::new(servings.clone(), foods.clone()));
-        let log_service = Arc::new(LogService::new(
-            logs,
-            foods,
-            servings,
-            goals,
-            summary_reader,
-        ));
+        let day_summary_service = Arc::new(DaySummaryService::new(logs.clone(), goals.clone()));
+        let log_service = Arc::new(LogService::new(logs, foods, servings, summary_reader));
         Self {
             users: user_service,
             weights: weight_service,
@@ -130,6 +126,7 @@ impl AppState {
             foods: food_service,
             servings: serving_service,
             logs: log_service,
+            day_summary: day_summary_service,
             authenticator,
             auth: auth_service,
             oidc,

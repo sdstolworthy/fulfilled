@@ -4,6 +4,7 @@
 //! implementations they need.
 
 pub mod auth;
+pub mod day_summary;
 pub mod food;
 pub mod goal;
 pub mod ingest;
@@ -15,6 +16,7 @@ pub mod user_food_summary;
 pub mod weight;
 
 pub use auth::{AuthService, TOKEN_TTL};
+pub use day_summary::DaySummaryService;
 pub use food::FoodService;
 pub use goal::GoalService;
 pub use ingest::{

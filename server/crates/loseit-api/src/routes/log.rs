@@ -372,7 +372,7 @@ async fn day_summary(
     AuthenticatedUser(user): AuthenticatedUser,
     Path(date): Path<NaiveDate>,
 ) -> Result<Json<DaySummaryResponse>, ApiError> {
-    let summary = state.logs.day_summary(user.id, date).await?;
+    let summary = state.day_summary.for_day(user.id, date).await?;
     Ok(Json(summary.into()))
 }
 

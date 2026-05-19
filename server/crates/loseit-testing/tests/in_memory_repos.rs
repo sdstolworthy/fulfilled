@@ -13,9 +13,8 @@ use loseit_core::repo::{
 use loseit_core::service::{LogService, WeightService};
 use loseit_core::CoreError;
 use loseit_testing::{
-    InMemoryFoodRepository, InMemoryGoalRepository, InMemoryLogRepository,
-    InMemoryServingRepository, InMemoryUserFoodSummaryReader, InMemoryUserRepository,
-    InMemoryWeightRepository,
+    InMemoryFoodRepository, InMemoryLogRepository, InMemoryServingRepository,
+    InMemoryUserFoodSummaryReader, InMemoryUserRepository, InMemoryWeightRepository,
 };
 use rust_decimal::Decimal;
 use uuid::Uuid;
@@ -504,9 +503,8 @@ fn make_log_service() -> (Arc<InMemoryLogRepository>, LogService) {
     let logs = Arc::new(InMemoryLogRepository::new());
     let foods = Arc::new(InMemoryFoodRepository::new());
     let servings = Arc::new(InMemoryServingRepository::new());
-    let goals = Arc::new(InMemoryGoalRepository::new());
     let summary_reader = Arc::new(InMemoryUserFoodSummaryReader::new(logs.clone()));
-    let svc = LogService::new(logs.clone(), foods, servings, goals, summary_reader);
+    let svc = LogService::new(logs.clone(), foods, servings, summary_reader);
     (logs, svc)
 }
 
