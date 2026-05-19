@@ -90,4 +90,32 @@ impl BatchRepository for InMemoryBatchRepository {
         batch.error = Some(error.to_string());
         Ok(())
     }
+
+    /// Phase 2.1: scan stored batches for a `Completed` row matching the
+    /// `(source_url, source_etag)` pair. Returns the most-recently started
+    /// match so re-imports compare against the freshest dump-of-record.
+    /// Missing etag → `None` (an unidentified file isn't safe to dedupe on).
+    async fn find_completed_batch(
+        &self,
+        source_url: &str,
+        source_etag: Option<&str>,
+    ) -> CoreResult<Option<FoodImportBatch>> {
+        let etag = match source_etag {
+            Some(s) => s,
+            None => return Ok(None),
+        };
+        let store = self.by_id.lock().unwrap();
+        let mut hits: Vec<FoodImportBatch> = store
+            .values()
+            .filter(|b| {
+                b.status == BatchStatus::Completed
+                    && b.source_url == source_url
+                    && b.source_etag.as_deref() == Some(etag)
+            })
+            .cloned()
+            .collect();
+        // Newest first.
+        hits.sort_by_key(|b| std::cmp::Reverse(b.started_at));
+        Ok(hits.into_iter().next())
+    }
 }

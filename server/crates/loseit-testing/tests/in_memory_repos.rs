@@ -13,8 +13,9 @@ use loseit_core::repo::{
 use loseit_core::service::{LogService, WeightService};
 use loseit_core::CoreError;
 use loseit_testing::{
-    InMemoryFoodRepository, InMemoryLogRepository, InMemoryServingRepository,
-    InMemoryUserFoodSummaryReader, InMemoryUserRepository, InMemoryWeightRepository,
+    InMemoryBatchRepository, InMemoryFoodRepository, InMemoryLogRepository,
+    InMemoryServingRepository, InMemoryUserFoodSummaryReader, InMemoryUserRepository,
+    InMemoryWeightRepository,
 };
 use rust_decimal::Decimal;
 use uuid::Uuid;
@@ -1437,4 +1438,90 @@ async fn in_memory_user_repo_update_profile_only_overwrites_provided_units() {
         .unwrap();
     assert_eq!(after_height.weight_unit, WeightUnit::Lb, "weight survived");
     assert_eq!(after_height.height_unit, HeightUnit::FtIn);
+}
+
+// ── batch_repo::find_completed_batch (Phase 2.1) ────────────────────────────
+
+/// 2.1: a freshly-started batch is not yet completed → no short-circuit hit.
+#[tokio::test]
+async fn batch_repo_find_completed_returns_none_for_running_batch() {
+    use loseit_core::repo::BatchRepository;
+
+    let repo = InMemoryBatchRepository::new();
+    let _ = repo
+        .start("test://src", Some("sha256:abc;size:1"))
+        .await
+        .expect("start");
+
+    let hit = repo
+        .find_completed_batch("test://src", Some("sha256:abc;size:1"))
+        .await
+        .expect("find_completed_batch");
+    assert!(hit.is_none(), "running batch must not short-circuit");
+}
+
+/// 2.1: a completed batch with matching `source_url + source_etag` is found.
+/// Same URL with a different etag must NOT match — a re-released dump should
+/// always re-import.
+#[tokio::test]
+async fn batch_repo_find_completed_matches_on_url_and_etag() {
+    use loseit_core::repo::{BatchRepository, UpsertStats};
+
+    let repo = InMemoryBatchRepository::new();
+    let batch_a = repo
+        .start("test://src", Some("sha256:aaa;size:1"))
+        .await
+        .expect("start a");
+    repo.finish(batch_a.id, UpsertStats::default())
+        .await
+        .expect("finish a");
+
+    // Same url + etag → hit.
+    let hit = repo
+        .find_completed_batch("test://src", Some("sha256:aaa;size:1"))
+        .await
+        .expect("find_completed_batch");
+    let hit = hit.expect("completed batch must be found");
+    assert_eq!(hit.id, batch_a.id);
+
+    // Same url, different etag → miss (the dump changed).
+    let miss = repo
+        .find_completed_batch("test://src", Some("sha256:bbb;size:1"))
+        .await
+        .expect("find_completed_batch");
+    assert!(miss.is_none(), "different etag must not match");
+
+    // Different url → miss.
+    let miss = repo
+        .find_completed_batch("test://other", Some("sha256:aaa;size:1"))
+        .await
+        .expect("find_completed_batch");
+    assert!(miss.is_none(), "different url must not match");
+
+    // Missing etag → never matches.
+    let miss = repo
+        .find_completed_batch("test://src", None)
+        .await
+        .expect("find_completed_batch");
+    assert!(miss.is_none(), "None etag must never short-circuit");
+}
+
+/// 2.1: a failed batch with matching url+etag must NOT short-circuit a new
+/// run — operator wants the retry to actually happen.
+#[tokio::test]
+async fn batch_repo_find_completed_ignores_failed_batches() {
+    use loseit_core::repo::BatchRepository;
+
+    let repo = InMemoryBatchRepository::new();
+    let batch = repo
+        .start("test://src", Some("sha256:zzz;size:1"))
+        .await
+        .expect("start");
+    repo.fail(batch.id, "boom").await.expect("fail");
+
+    let hit = repo
+        .find_completed_batch("test://src", Some("sha256:zzz;size:1"))
+        .await
+        .expect("find_completed_batch");
+    assert!(hit.is_none(), "failed batch must not short-circuit");
 }

@@ -19,4 +19,15 @@ pub trait BatchRepository: Send + Sync + 'static {
     async fn finish(&self, id: Uuid, stats: UpsertStats) -> CoreResult<()>;
 
     async fn fail(&self, id: Uuid, error: &str) -> CoreResult<()>;
+
+    /// Phase 2.1: look up the most recently-started completed batch with
+    /// the given `source_url` AND `source_etag`. Used by `IngestService` to
+    /// short-circuit a rerun when the input file (identified by its SHA-256
+    /// + size etag) was already imported to completion. `source_etag = None`
+    /// always returns `None` — a missing etag isn't safely identifying.
+    async fn find_completed_batch(
+        &self,
+        source_url: &str,
+        source_etag: Option<&str>,
+    ) -> CoreResult<Option<FoodImportBatch>>;
 }

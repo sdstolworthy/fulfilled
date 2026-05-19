@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::time::Instant;
 
 use async_trait::async_trait;
 use rust_decimal::prelude::ToPrimitive;
@@ -567,9 +568,44 @@ pub fn accept_and_normalize(record: OffFoodRecord) -> Option<FoodDraftWithServin
 // USDA normalizer  (§7.2)
 // ---------------------------------------------------------------------------
 
+/// USDA `dataType` values we accept for ingest. Anything outside this set
+/// is dropped (loud-fail) by `accept_and_normalize_usda` per 2.3 — the
+/// historical behaviour was a silent `continue` at the writer that lied
+/// about import stats.
+fn is_known_usda_data_type(raw: &str) -> bool {
+    matches!(
+        raw.trim().to_ascii_lowercase().as_str(),
+        "foundation"
+            | "foundation_food"
+            | "sr legacy"
+            | "sr_legacy"
+            | "sr_legacy_food"
+            | "survey (fndds)"
+            | "survey_fndds_food"
+            | "fndds"
+            | "branded"
+            | "branded_food"
+    )
+}
+
 /// Convert a raw [`UsdaFoodRecord`] into a [`FoodDraftWithServings`], or
 /// `None` if the record fails minimum-viable validation (§7.2 rule 5).
 pub fn accept_and_normalize_usda(mut record: UsdaFoodRecord) -> Option<FoodDraftWithServings> {
+    // 2.3: drop rows whose `data_type` we don't recognise. The DB writer
+    // would reject them downstream anyway (CHECK constraint on
+    // `foods.data_type`), but doing it here keeps the per-batch `skipped`
+    // counter accurate — `BatchWriteOutcome.skipped` already covers the
+    // writer branch, and the normalizer drop is counted via
+    // `normalizer_skipped` in `IngestService::run_usda_inner`.
+    if !is_known_usda_data_type(&record.data_type) {
+        tracing::warn!(
+            fdc_id = record.fdc_id,
+            data_type = %record.data_type,
+            "unknown USDA data_type; dropping row"
+        );
+        return None;
+    }
+
     // 1.2: USDA Branded foods report `foodNutrients[]` per serving, not
     // per-100g. Rescale: `amount_per_100g = amount / serving_size * 100`.
     // Reject the row (skip-and-log) when we can't rescale safely:
@@ -880,6 +916,17 @@ pub struct IngestService {
     batches: Arc<dyn BatchRepository>,
 }
 
+/// Phase 2.1: per-run knobs that callers can flip without touching the
+/// existing `run_off` / `run_usda` 3-arg signatures. Default is "respect
+/// the etag short-circuit"; CLI `--force` flips `force = true`.
+#[derive(Debug, Clone, Default)]
+pub struct RunOptions {
+    /// When `true`, bypass the `find_completed_batch` short-circuit and
+    /// always start a fresh import. Useful for redoing a botched import
+    /// without re-downloading the source file.
+    pub force: bool,
+}
+
 impl IngestService {
     pub fn new(foods: Arc<dyn FoodRepository>, batches: Arc<dyn BatchRepository>) -> Self {
         Self { foods, batches }
@@ -887,23 +934,12 @@ impl IngestService {
 
     pub async fn run<S: FoodRecordSource>(
         &self,
-        mut source: S,
+        source: S,
         source_url: &str,
         source_etag: Option<&str>,
     ) -> CoreResult<UpsertStats> {
-        let batch = self.batches.start(source_url, source_etag).await?;
-        let result = self.run_inner(&mut source, batch.id).await;
-        match result {
-            Ok(stats) => {
-                self.batches.finish(batch.id, stats.clone()).await?;
-                Ok(stats)
-            }
-            Err(err) => {
-                let msg = err.to_string();
-                let _ = self.batches.fail(batch.id, &msg).await;
-                Err(err)
-            }
-        }
+        self.run_off_with_options(source, source_url, source_etag, RunOptions::default())
+            .await
     }
 
     /// §7.4: Run the OFF pipeline. Reads `OffFoodRecord`s from `source`,
@@ -916,7 +952,78 @@ impl IngestService {
         source_url: &str,
         source_etag: Option<&str>,
     ) -> CoreResult<UpsertStats> {
-        self.run(source, source_url, source_etag).await
+        self.run_off_with_options(source, source_url, source_etag, RunOptions::default())
+            .await
+    }
+
+    /// Phase 2.1: same as [`Self::run_off`] but takes a [`RunOptions`]
+    /// so callers (CLI `--force`) can bypass the etag short-circuit.
+    pub async fn run_off_with_options<S: FoodRecordSource>(
+        &self,
+        mut source: S,
+        source_url: &str,
+        source_etag: Option<&str>,
+        options: RunOptions,
+    ) -> CoreResult<UpsertStats> {
+        // 2.1: short-circuit if a completed batch already covers this exact
+        // (source_url, source_etag) pair. Operator can opt out via --force.
+        if !options.force {
+            if let Some(existing) = self
+                .batches
+                .find_completed_batch(source_url, source_etag)
+                .await?
+            {
+                tracing::info!(
+                    target: "loseit_ingest::progress",
+                    source = "off",
+                    batch_id = %existing.id,
+                    etag = source_etag.unwrap_or(""),
+                    "ingest short-circuit: matching completed batch exists for etag; skipping"
+                );
+                // Report the original batch's counts so dashboards stay
+                // meaningful. `inserted`/`updated` aren't distinguished by
+                // the writer layer — return everything as `inserted` to
+                // match the per-chunk accounting in `run_inner`.
+                return Ok(UpsertStats {
+                    inserted: existing.records_upserted.max(0) as u64,
+                    updated: 0,
+                    skipped: existing.records_skipped.max(0) as u64,
+                });
+            }
+        }
+
+        let batch = self.batches.start(source_url, source_etag).await?;
+        tracing::info!(
+            target: "loseit_ingest::progress",
+            source = "off",
+            batch_id = %batch.id,
+            source_url = %source_url,
+            etag = source_etag.unwrap_or(""),
+            "ingest starting"
+        );
+        let started = Instant::now();
+        let result = self.run_inner(&mut source, batch.id, started, "off").await;
+        match result {
+            Ok(stats) => {
+                self.batches.finish(batch.id, stats.clone()).await?;
+                tracing::info!(
+                    target: "loseit_ingest::progress",
+                    source = "off",
+                    batch_id = %batch.id,
+                    processed = stats.inserted + stats.skipped,
+                    upserted = stats.inserted,
+                    skipped = stats.skipped,
+                    duration_ms = %started.elapsed().as_millis(),
+                    "ingest complete"
+                );
+                Ok(stats)
+            }
+            Err(err) => {
+                let msg = err.to_string();
+                let _ = self.batches.fail(batch.id, &msg).await;
+                Err(err)
+            }
+        }
     }
 
     /// §7.4: Run the USDA pipeline. Reads `UsdaFoodRecord`s from `source`,
@@ -925,15 +1032,69 @@ impl IngestService {
     /// `FoodRepository::upsert_external_food_batch`.
     pub async fn run_usda<S: UsdaSource>(
         &self,
-        mut source: S,
+        source: S,
         source_url: &str,
         source_etag: Option<&str>,
     ) -> CoreResult<UpsertStats> {
+        self.run_usda_with_options(source, source_url, source_etag, RunOptions::default())
+            .await
+    }
+
+    /// Phase 2.1: same as [`Self::run_usda`] but takes a [`RunOptions`].
+    pub async fn run_usda_with_options<S: UsdaSource>(
+        &self,
+        mut source: S,
+        source_url: &str,
+        source_etag: Option<&str>,
+        options: RunOptions,
+    ) -> CoreResult<UpsertStats> {
+        if !options.force {
+            if let Some(existing) = self
+                .batches
+                .find_completed_batch(source_url, source_etag)
+                .await?
+            {
+                tracing::info!(
+                    target: "loseit_ingest::progress",
+                    source = "usda",
+                    batch_id = %existing.id,
+                    etag = source_etag.unwrap_or(""),
+                    "ingest short-circuit: matching completed batch exists for etag; skipping"
+                );
+                return Ok(UpsertStats {
+                    inserted: existing.records_upserted.max(0) as u64,
+                    updated: 0,
+                    skipped: existing.records_skipped.max(0) as u64,
+                });
+            }
+        }
+
         let batch = self.batches.start(source_url, source_etag).await?;
-        let result = self.run_usda_inner(&mut source, batch.id).await;
+        tracing::info!(
+            target: "loseit_ingest::progress",
+            source = "usda",
+            batch_id = %batch.id,
+            source_url = %source_url,
+            etag = source_etag.unwrap_or(""),
+            "ingest starting"
+        );
+        let started = Instant::now();
+        let result = self
+            .run_usda_inner(&mut source, batch.id, started, "usda")
+            .await;
         match result {
             Ok(stats) => {
                 self.batches.finish(batch.id, stats.clone()).await?;
+                tracing::info!(
+                    target: "loseit_ingest::progress",
+                    source = "usda",
+                    batch_id = %batch.id,
+                    processed = stats.inserted + stats.skipped,
+                    upserted = stats.inserted,
+                    skipped = stats.skipped,
+                    duration_ms = %started.elapsed().as_millis(),
+                    "ingest complete"
+                );
                 Ok(stats)
             }
             Err(err) => {
@@ -948,10 +1109,16 @@ impl IngestService {
         &self,
         source: &mut S,
         batch_id: Uuid,
+        started: Instant,
+        source_name: &'static str,
     ) -> CoreResult<UpsertStats> {
         let mut total = UpsertStats::default();
+        let mut processed: u64 = 0;
+        let mut total_upserted: u64 = 0;
+        let mut total_skipped: u64 = 0;
 
         loop {
+            let chunk_start = Instant::now();
             let Some(chunk) = source.next_chunk(BATCH_SIZE).await? else {
                 break;
             };
@@ -995,6 +1162,29 @@ impl IngestService {
             self.batches
                 .bump_counts(batch_id, seen, upserted, skipped)
                 .await?;
+
+            // 2.2: per-chunk progress log so multi-hour imports surface
+            // throughput to operators tailing the logs.
+            processed += seen;
+            total_upserted += upserted;
+            total_skipped += skipped;
+            let total_elapsed = started.elapsed();
+            let throughput = if total_elapsed.as_secs_f64() > 0.0 {
+                processed as f64 / total_elapsed.as_secs_f64()
+            } else {
+                0.0
+            };
+            tracing::info!(
+                target: "loseit_ingest::progress",
+                source = source_name,
+                batch_id = %batch_id,
+                processed,
+                upserted = total_upserted,
+                skipped = total_skipped,
+                chunk_duration_ms = %chunk_start.elapsed().as_millis(),
+                throughput_per_sec = %format!("{throughput:.1}"),
+                "ingest progress"
+            );
         }
 
         Ok(total)
@@ -1004,10 +1194,16 @@ impl IngestService {
         &self,
         source: &mut S,
         batch_id: Uuid,
+        started: Instant,
+        source_name: &'static str,
     ) -> CoreResult<UpsertStats> {
         let mut total = UpsertStats::default();
+        let mut processed: u64 = 0;
+        let mut total_upserted: u64 = 0;
+        let mut total_skipped: u64 = 0;
 
         loop {
+            let chunk_start = Instant::now();
             let Some(chunk) = source.next_chunk(BATCH_SIZE).await? else {
                 break;
             };
@@ -1039,6 +1235,28 @@ impl IngestService {
             self.batches
                 .bump_counts(batch_id, seen, upserted, skipped)
                 .await?;
+
+            // 2.2: per-chunk progress log (USDA twin).
+            processed += seen;
+            total_upserted += upserted;
+            total_skipped += skipped;
+            let total_elapsed = started.elapsed();
+            let throughput = if total_elapsed.as_secs_f64() > 0.0 {
+                processed as f64 / total_elapsed.as_secs_f64()
+            } else {
+                0.0
+            };
+            tracing::info!(
+                target: "loseit_ingest::progress",
+                source = source_name,
+                batch_id = %batch_id,
+                processed,
+                upserted = total_upserted,
+                skipped = total_skipped,
+                chunk_duration_ms = %chunk_start.elapsed().as_millis(),
+                throughput_per_sec = %format!("{throughput:.1}"),
+                "ingest progress"
+            );
         }
 
         Ok(total)

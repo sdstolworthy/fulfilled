@@ -17,15 +17,18 @@
 //!
 //! No network fetch is performed — provide the file via `--input`.
 
-use std::path::PathBuf;
+use std::fs::File;
+use std::io::{BufReader, Read};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use loseit_core::service::{FoodRecordSource, IngestService, UsdaSource};
+use loseit_core::service::{FoodRecordSource, IngestService, RunOptions, UsdaSource};
 use loseit_db::{build_pool, run_migrations, PgBatchRepository, PgFoodRepository, PoolConfig};
 use loseit_ingest::{open_source, open_usda_source, LimitedSource, LimitedUsdaSource};
+use sha2::{Digest, Sha256};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
@@ -60,6 +63,21 @@ struct Args {
     /// Cap the number of records processed. Useful for smoke runs.
     #[arg(long)]
     limit: Option<usize>,
+
+    /// 2.1: bypass the etag short-circuit. By default the pipeline skips a
+    /// rerun when a `status='completed'` batch already covers the same
+    /// `(source_url, source_etag)` pair — useful so accidentally running
+    /// the same dump twice is a no-op. Pass `--force` to redo a botched
+    /// import without re-downloading.
+    #[arg(long)]
+    force: bool,
+
+    /// Override the `source-url` stored on the `food_import_batches`
+    /// provenance row. Defaults to the resolved input path. Useful when
+    /// running from a local copy of a remote dump — set this to the
+    /// canonical URL so the etag short-circuit matches future reruns.
+    #[arg(long)]
+    source_url: Option<String>,
 }
 
 #[tokio::main]
@@ -67,11 +85,28 @@ async fn main() -> Result<()> {
     init_tracing();
     let args = Args::parse();
 
+    // 2.1: stream the input file once, computing a SHA-256 digest + file
+    // size. The pair lands on `food_import_batches.source_etag` as
+    // `sha256:<hex>;size:<bytes>` so future reruns of the same dump are a
+    // no-op via the etag short-circuit. Streamed read (8 KiB buffer) so
+    // multi-GB dumps don't blow up memory.
+    let (file_sha256, file_size) = hash_input_file(&args.input)
+        .with_context(|| format!("computing SHA-256 of {:?}", args.input))?;
+    let source_etag = format!("sha256:{file_sha256};size:{file_size}");
+
+    let source_url = args
+        .source_url
+        .clone()
+        .unwrap_or_else(|| args.input.display().to_string());
+
     info!(
         source = %args.source,
         format = %args.format,
         input = %args.input.display(),
+        source_url = %source_url,
+        etag = %source_etag,
         limit = ?args.limit,
+        force = args.force,
         "starting loseit-ingest"
     );
 
@@ -98,8 +133,7 @@ async fn main() -> Result<()> {
     let batches = Arc::new(PgBatchRepository::new(pool));
 
     let service = IngestService::new(foods, batches);
-
-    let source_url = args.input.display().to_string();
+    let run_options = RunOptions { force: args.force };
 
     let stats = match args.source.as_str() {
         "off" => {
@@ -115,7 +149,15 @@ async fn main() -> Result<()> {
                 Some(n) => Box::new(LimitedSource::new(source, n)),
                 None => source,
             };
-            run_off(&service, BoxedOffSource(source), &source_url).await?
+            service
+                .run_off_with_options(
+                    BoxedOffSource(source),
+                    &source_url,
+                    Some(&source_etag),
+                    run_options,
+                )
+                .await
+                .context("OFF ingest run failed")?
         }
         "usda" => {
             let source = open_usda_source(&args.format, &args.input)
@@ -130,7 +172,15 @@ async fn main() -> Result<()> {
                 Some(n) => Box::new(LimitedUsdaSource::new(source, n)),
                 None => source,
             };
-            run_usda(&service, BoxedUsdaSource(source), &source_url).await?
+            service
+                .run_usda_with_options(
+                    BoxedUsdaSource(source),
+                    &source_url,
+                    Some(&source_etag),
+                    run_options,
+                )
+                .await
+                .context("USDA ingest run failed")?
         }
         other => {
             anyhow::bail!("unknown --source `{}`; expected `off` or `usda`", other);
@@ -146,36 +196,35 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// run_off / run_usda pipeline helpers  (§7.4)
-// ---------------------------------------------------------------------------
-
-/// §7.4: Pull `OffFoodRecord`s from `source`, normalize each via
-/// `accept_and_normalize_off`, and upsert the resulting
-/// `FoodDraftWithServings` batch via `repo.upsert_external_food_batch`.
-async fn run_off<S: FoodRecordSource>(
-    service: &IngestService,
-    source: S,
-    source_url: &str,
-) -> Result<loseit_core::repo::UpsertStats> {
-    service
-        .run_off(source, source_url, None)
-        .await
-        .context("OFF ingest run failed")
+/// 2.1: streamed SHA-256 over the input file. Returns `(hex_digest,
+/// size_bytes)`. The 8 KiB chunk size keeps memory bounded for multi-GB
+/// OFF parquet dumps.
+fn hash_input_file(path: &Path) -> Result<(String, u64)> {
+    let file = File::open(path).with_context(|| format!("opening {path:?}"))?;
+    let size = file.metadata().map(|m| m.len()).unwrap_or(0);
+    let mut reader = BufReader::new(file);
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 8192];
+    loop {
+        let n = reader.read(&mut buf).context("reading input file")?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    let digest = hasher.finalize();
+    Ok((hex_encode(&digest), size))
 }
 
-/// §7.4: Pull `UsdaFoodRecord`s from `source`, normalize each via
-/// `accept_and_normalize_usda`, and upsert the resulting
-/// `FoodDraftWithServings` batch via `repo.upsert_external_food_batch`.
-async fn run_usda<S: UsdaSource>(
-    service: &IngestService,
-    source: S,
-    source_url: &str,
-) -> Result<loseit_core::repo::UpsertStats> {
-    service
-        .run_usda(source, source_url, None)
-        .await
-        .context("USDA ingest run failed")
+/// Lowercase hex without pulling in a `hex` crate dependency.
+fn hex_encode(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        out.push(HEX[(b >> 4) as usize] as char);
+        out.push(HEX[(b & 0x0f) as usize] as char);
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------

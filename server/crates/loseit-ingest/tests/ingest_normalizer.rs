@@ -17,7 +17,7 @@ use loseit_core::service::ingest::{
     accept_and_normalize_off, accept_and_normalize_usda, parse_serving_size, IngestService,
     OffFoodRecord, UsdaFoodPortion, UsdaFoodRecord,
 };
-use loseit_core::service::{FoodRecordSource, UsdaSource};
+use loseit_core::service::{FoodRecordSource, RunOptions, UsdaSource};
 use loseit_core::CoreResult;
 use loseit_testing::{InMemoryBatchRepository, InMemoryFoodRepository, InMemoryServingRepository};
 use rust_decimal::Decimal;
@@ -704,4 +704,199 @@ async fn off_ingest_skip_and_log_on_row_failure() {
     assert_eq!(summary.records_seen, 3);
     assert_eq!(summary.records_upserted, 2);
     assert_eq!(summary.records_skipped, 1);
+}
+
+// ---------------------------------------------------------------------------
+// 2.1: etag short-circuit end-to-end via IngestService
+// ---------------------------------------------------------------------------
+
+fn sample_off_records() -> Vec<OffFoodRecord> {
+    vec![
+        OffFoodRecord {
+            code: "EC001".into(),
+            product_name: "Apple Juice".into(),
+            energy_kcal_100g: Some(dec!(46)),
+            protein_100g: Some(dec!(0.1)),
+            carbs_100g: Some(dec!(11)),
+            fat_100g: Some(dec!(0.1)),
+            serving_size: Some("250 g".into()),
+            ..Default::default()
+        },
+        OffFoodRecord {
+            code: "EC002".into(),
+            product_name: "Peanut Butter".into(),
+            energy_kcal_100g: Some(dec!(588)),
+            protein_100g: Some(dec!(25)),
+            carbs_100g: Some(dec!(20)),
+            fat_100g: Some(dec!(50)),
+            serving_size: Some("32 g".into()),
+            ..Default::default()
+        },
+    ]
+}
+
+/// 2.1: second run with same `(source_url, source_etag)` short-circuits.
+/// The pipeline must NOT pull any chunks; the existing batch's counts are
+/// returned and a fresh batch is NOT created in the repo.
+#[tokio::test]
+async fn off_ingest_short_circuits_on_repeat_etag() {
+    let (_foods, _servings, batches, svc) = build_ingest_service();
+
+    // First run: completes, persists 2 upserts in the in-memory batch repo.
+    let first_stats = svc
+        .run_off(
+            VecOffSource::new(sample_off_records()),
+            "test://etag-src",
+            Some("sha256:cafef00d;size:42"),
+        )
+        .await
+        .expect("first run");
+    assert_eq!(first_stats.inserted, 2);
+    assert_eq!(first_stats.skipped, 0);
+
+    // Snapshot how many batches exist after run #1 so we can assert run #2
+    // didn't create another.
+    let first_batch_id = batches
+        .find_by_url("test://etag-src")
+        .expect("first batch must exist");
+
+    // 2.1 trip wire: a source that PANICS if next_chunk is ever called.
+    // Short-circuit means we never touch this source.
+    struct ExplodingSource;
+    #[async_trait]
+    impl FoodRecordSource for ExplodingSource {
+        async fn next_chunk(&mut self, _n: usize) -> CoreResult<Option<Vec<OffFoodRecord>>> {
+            panic!("source must not be polled when short-circuit fires");
+        }
+    }
+
+    let second_stats = svc
+        .run_off(
+            ExplodingSource,
+            "test://etag-src",
+            Some("sha256:cafef00d;size:42"),
+        )
+        .await
+        .expect("second run must short-circuit, not error");
+
+    // Returned stats mirror the original completed batch.
+    assert_eq!(second_stats.inserted, 2);
+    assert_eq!(second_stats.skipped, 0);
+
+    // No new batch row was created — find_by_url returns the same id.
+    let still_same = batches
+        .find_by_url("test://etag-src")
+        .expect("batch persists");
+    assert_eq!(
+        still_same, first_batch_id,
+        "short-circuit must not start a new batch row"
+    );
+}
+
+/// 2.1: `--force` (RunOptions { force: true }) bypasses the short-circuit
+/// and a fresh batch runs even when a completed match exists.
+#[tokio::test]
+async fn off_ingest_force_bypasses_short_circuit() {
+    let (_foods, _servings, _batches, svc) = build_ingest_service();
+
+    // Seed a completed batch.
+    let _ = svc
+        .run_off(
+            VecOffSource::new(sample_off_records()),
+            "test://force-src",
+            Some("sha256:beef;size:1"),
+        )
+        .await
+        .expect("first run");
+
+    // Force re-run: source IS polled.
+    let stats = svc
+        .run_off_with_options(
+            VecOffSource::new(sample_off_records()),
+            "test://force-src",
+            Some("sha256:beef;size:1"),
+            RunOptions { force: true },
+        )
+        .await
+        .expect("force run");
+    // Same content → 2 upserts again (same barcodes update existing rows).
+    assert_eq!(stats.inserted, 2);
+}
+
+// ---------------------------------------------------------------------------
+// 2.3: unknown USDA data_type is dropped at the normalizer
+// ---------------------------------------------------------------------------
+
+/// 2.3: a USDA record with `data_type` outside the known set (e.g.
+/// `agricultural_acquisition`) is dropped at the normalizer with a warn
+/// log, and the IngestService bumps `records_skipped` for it.
+#[tokio::test]
+async fn usda_unknown_data_type_drops_and_skips() {
+    let (foods, _servings, batches, svc) = build_ingest_service();
+
+    let records = vec![
+        // Good record — should land.
+        UsdaFoodRecord {
+            fdc_id: 70001,
+            data_type: "foundation_food".into(),
+            description: "Good Foundation".into(),
+            food_portions: vec![],
+            energy_kcal_100g: Some(dec!(100)),
+            ..Default::default()
+        },
+        // Unknown data_type — should be dropped + counted as skipped.
+        UsdaFoodRecord {
+            fdc_id: 70002,
+            data_type: "agricultural_acquisition".into(),
+            description: "Unknown Type".into(),
+            food_portions: vec![],
+            energy_kcal_100g: Some(dec!(50)),
+            ..Default::default()
+        },
+    ];
+
+    let stats = svc
+        .run_usda(VecUsdaSource::new(records), "test://usda-unknown", None)
+        .await
+        .expect("pipeline finishes");
+
+    assert_eq!(stats.inserted, 1, "1 known data_type must land");
+    assert_eq!(
+        stats.skipped, 1,
+        "unknown data_type must be counted as skipped"
+    );
+
+    let batch_id = batches
+        .find_by_url("test://usda-unknown")
+        .expect("batch row");
+    let summary = batches.get(batch_id).expect("batch present");
+    assert_eq!(summary.records_seen, 2);
+    assert_eq!(summary.records_upserted, 1);
+    assert_eq!(summary.records_skipped, 1);
+
+    // The good record is queryable.
+    let hits = foods
+        .search(Uuid::nil(), "Good Foundation", 10, 0)
+        .await
+        .unwrap();
+    assert_eq!(hits.len(), 1);
+}
+
+/// 2.3: `is_known_usda_data_type` direct unit — confirms `dataType`
+/// values FDC actually emits but we don't ingest (e.g. experimental /
+/// agricultural acquisition) are rejected.
+#[test]
+fn usda_unknown_data_type_unit_dropped() {
+    let r = UsdaFoodRecord {
+        fdc_id: 70010,
+        data_type: "agricultural_acquisition".into(),
+        description: "Whatever".into(),
+        food_portions: vec![],
+        energy_kcal_100g: Some(dec!(100)),
+        ..Default::default()
+    };
+    assert!(
+        accept_and_normalize_usda(r).is_none(),
+        "unknown USDA data_type must drop"
+    );
 }

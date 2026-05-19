@@ -132,4 +132,33 @@ impl BatchRepository for PgBatchRepository {
             .map_err(map_sqlx)?;
         Ok(())
     }
+
+    /// Phase 2.1: SELECT the most-recently started `status='completed'`
+    /// batch with the given `source_url` AND `source_etag`. `None` etag is
+    /// short-circuited because we never want to dedupe on a missing etag
+    /// (would risk skipping a real re-import). Used by `IngestService`
+    /// to skip importing a file whose SHA-256 already matches a finished
+    /// batch.
+    async fn find_completed_batch(
+        &self,
+        source_url: &str,
+        source_etag: Option<&str>,
+    ) -> CoreResult<Option<FoodImportBatch>> {
+        let Some(etag) = source_etag else {
+            return Ok(None);
+        };
+        let sql = format!(
+            "SELECT {SELECT_COLS} FROM food_import_batches \
+             WHERE source_url = $1 AND source_etag = $2 AND status = 'completed' \
+             ORDER BY started_at DESC \
+             LIMIT 1"
+        );
+        let row: Option<BatchRow> = sqlx::query_as(&sql)
+            .bind(source_url)
+            .bind(etag)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(map_sqlx)?;
+        Ok(row.map(Into::into))
+    }
 }
