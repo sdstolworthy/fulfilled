@@ -1,12 +1,10 @@
 import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:fulfilled/widgets/quantity_stepper.dart';
 
 import '../../../domain/drafts.dart';
 import '../../../domain/unit.dart';
-import '../../../providers/draft_providers.dart';
 import '../../../theme/context_extensions.dart';
 import 'labeled_field.dart';
 
@@ -24,44 +22,63 @@ import 'labeled_field.dart';
 ///
 /// Validation per-row: `amount > 0` AND `kcal` non-null. Errors surface
 /// as inline "Required" hints under each field when [showErrors] is true.
-class ServingsSection extends ConsumerStatefulWidget {
-  const ServingsSection({super.key, this.showErrors = false});
+///
+/// Per the §4.4 passive-view rule this widget is pure presentation —
+/// it accepts the [servings] slice plus a callback bag, and never
+/// touches Riverpod. It remains a `StatefulWidget` only to own the
+/// `_expanded` set, which is local view state (which row's macros
+/// panel is open) and has no business in the draft model.
+class ServingsSection extends StatefulWidget {
+  const ServingsSection({
+    super.key,
+    required this.servings,
+    required this.onAddServing,
+    required this.onUpdateServingAt,
+    required this.onRemoveServingAt,
+    required this.onMarkDefaultAt,
+    this.showErrors = false,
+  });
+
+  /// Current draft serving list. Container reads
+  /// `customFoodDraftProvider.servings` and passes the value in.
+  final List<DraftServing> servings;
 
   /// Save was attempted; show inline "Required" rows for each missing
   /// per-row field.
   final bool showErrors;
 
+  /// Append an empty serving. Container wires this to
+  /// `customFoodDraftProvider.notifier.addServing()`.
+  final VoidCallback onAddServing;
+
+  /// Replace the serving at `index` with `next`. Container wires this
+  /// to `customFoodDraftProvider.notifier.updateServingAt`.
+  final void Function(int index, DraftServing next) onUpdateServingAt;
+
+  /// Remove the serving at `index`. Container wires this to
+  /// `customFoodDraftProvider.notifier.removeServingAt`; this widget
+  /// then prunes the local `_expanded` set so stale entries don't
+  /// shift open the next row.
+  final void Function(int index) onRemoveServingAt;
+
+  /// Atomically mark the serving at `index` as the new default,
+  /// clearing the flag on every other row. The wire enforces a
+  /// single-default invariant, so the container performs the
+  /// list rebuild via `customFoodDraftProvider.notifier.setServings`.
+  final void Function(int index) onMarkDefaultAt;
+
   @override
-  ConsumerState<ServingsSection> createState() => _ServingsSectionState();
+  State<ServingsSection> createState() => _ServingsSectionState();
 }
 
-class _ServingsSectionState extends ConsumerState<ServingsSection> {
+class _ServingsSectionState extends State<ServingsSection> {
   /// Which rows have their macros panel expanded. Index-keyed; stale
   /// entries (after a row is removed) are trimmed in [_pruneExpansion].
   final Set<int> _expanded = <int>{};
 
-  void _addServing() {
-    ref.read(customFoodDraftProvider.notifier).addServing();
-  }
-
-  void _updateAt(int i, DraftServing next) {
-    ref.read(customFoodDraftProvider.notifier).updateServingAt(i, next);
-  }
-
-  void _removeAt(int i) {
-    ref.read(customFoodDraftProvider.notifier).removeServingAt(i);
+  void _handleRemove(int i) {
+    widget.onRemoveServingAt(i);
     _pruneExpansion(removedAt: i);
-  }
-
-  void _markDefault(int i) {
-    // Atomic single-default flip: clear isDefault on every row, set on
-    // the picked one. Keeps the invariant the wire enforces.
-    final servings = ref.read(customFoodDraftProvider).servings;
-    final next = <DraftServing>[
-      for (var k = 0; k < servings.length; k++)
-        servings[k].copyWith(isDefault: k == i),
-    ];
-    ref.read(customFoodDraftProvider.notifier).setServings(next);
   }
 
   void _toggleExpanded(int i) {
@@ -90,8 +107,7 @@ class _ServingsSectionState extends ConsumerState<ServingsSection> {
 
   @override
   Widget build(BuildContext context) {
-    final draft = ref.watch(customFoodDraftProvider);
-    final servings = draft.servings;
+    final servings = widget.servings;
     final colors = context.colors;
     final radius = context.radius;
     final space = context.space;
@@ -117,7 +133,7 @@ class _ServingsSectionState extends ConsumerState<ServingsSection> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
-              _ServingsHeader(onAdd: _addServing),
+              _ServingsHeader(onAdd: widget.onAddServing),
               if (servings.isEmpty) ...<Widget>[
                 SizedBox(height: space.x3),
                 Text(
@@ -139,9 +155,9 @@ class _ServingsSectionState extends ConsumerState<ServingsSection> {
                     isFirst: i == 0,
                     isExpanded: _expanded.contains(i),
                     showErrors: widget.showErrors,
-                    onChanged: (s) => _updateAt(i, s),
-                    onRemove: () => _removeAt(i),
-                    onMarkDefault: () => _markDefault(i),
+                    onChanged: (s) => widget.onUpdateServingAt(i, s),
+                    onRemove: () => _handleRemove(i),
+                    onMarkDefault: () => widget.onMarkDefaultAt(i),
                     onToggleExpanded: () => _toggleExpanded(i),
                   ),
             ],

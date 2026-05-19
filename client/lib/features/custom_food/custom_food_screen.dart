@@ -78,6 +78,20 @@ class _CustomFoodScreenState extends ConsumerState<CustomFoodScreen> {
     return ref.read(customFoodDraftProvider) == snapshot;
   }
 
+  /// Atomic single-default flip for the servings list: clear
+  /// `isDefault` on every row, set it on the picked one. Keeps the
+  /// invariant the wire enforces. Lives here (not on the
+  /// [ServingsSection] leaf) per the §4.4 passive-view rule — the
+  /// leaf only emits the index, the container owns the rewrite.
+  void _markServingDefaultAt(int i) {
+    final servings = ref.read(customFoodDraftProvider).servings;
+    final next = <DraftServing>[
+      for (var k = 0; k < servings.length; k++)
+        servings[k].copyWith(isDefault: k == i),
+    ];
+    ref.read(customFoodDraftProvider.notifier).setServings(next);
+  }
+
   /// Map a DraftServing onto the wire-shaped ServingCreate. Asserts
   /// that required fields are present — the caller gates on
   /// `draft.isValid` first.
@@ -361,11 +375,36 @@ class _CustomFoodScreenState extends ConsumerState<CustomFoodScreen> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: <Widget>[
                     BasicsSection(
+                      name: draft.name,
+                      brand: draft.brand,
+                      barcode: draft.barcode,
                       showNameError: _showErrors,
                       autofocusName: !_isEditing,
+                      onNameChanged: ref
+                          .read(customFoodDraftProvider.notifier)
+                          .setName,
+                      onBrandChanged: ref
+                          .read(customFoodDraftProvider.notifier)
+                          .setBrand,
+                      onBarcodeChanged: ref
+                          .read(customFoodDraftProvider.notifier)
+                          .setBarcode,
                     ),
                     SizedBox(height: space.x5 - 2),
-                    ServingsSection(showErrors: _showErrors),
+                    ServingsSection(
+                      servings: draft.servings,
+                      showErrors: _showErrors,
+                      onAddServing: () => ref
+                          .read(customFoodDraftProvider.notifier)
+                          .addServing(),
+                      onUpdateServingAt: (i, next) => ref
+                          .read(customFoodDraftProvider.notifier)
+                          .updateServingAt(i, next),
+                      onRemoveServingAt: (i) => ref
+                          .read(customFoodDraftProvider.notifier)
+                          .removeServingAt(i),
+                      onMarkDefaultAt: _markServingDefaultAt,
+                    ),
                   ],
                 ),
               ),

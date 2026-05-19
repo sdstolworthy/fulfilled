@@ -1,20 +1,37 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../providers/draft_providers.dart';
 import '../../../theme/context_extensions.dart';
 import 'labeled_field.dart';
 
 /// "Basics" section of the custom-food form: name (required), brand
-/// (optional), barcode (optional). Field state lives on
-/// `customFoodDraftProvider`; this widget binds onChanged to the
-/// matching notifier method.
-class BasicsSection extends ConsumerWidget {
+/// (optional), barcode (optional).
+///
+/// Per the §4.4 passive-view rule this is a pure `StatelessWidget` —
+/// it knows nothing about Riverpod. The container watches
+/// `customFoodDraftProvider` and threads in the three current values
+/// plus one `onXxxChanged` callback per field.
+class BasicsSection extends StatelessWidget {
   const BasicsSection({
     super.key,
+    required this.name,
+    required this.brand,
+    required this.barcode,
+    required this.onNameChanged,
+    required this.onBrandChanged,
+    required this.onBarcodeChanged,
     this.showNameError = false,
     this.autofocusName = false,
   });
+
+  /// Current draft name. Empty string when nothing has been typed.
+  final String name;
+
+  /// Current draft brand. `null` when the user has cleared the field;
+  /// the field renders empty in either case.
+  final String? brand;
+
+  /// Current draft barcode. Same `null` vs empty semantics as [brand].
+  final String? barcode;
 
   /// Save was attempted and the name field is invalid. Drives the
   /// "Required" inline error per T-11.
@@ -27,14 +44,26 @@ class BasicsSection extends ConsumerWidget {
   /// architect §7.4).
   final bool autofocusName;
 
+  /// Fired when the user edits the name field. Container wires this
+  /// to `customFoodDraftProvider.notifier.setName`.
+  final ValueChanged<String> onNameChanged;
+
+  /// Fired when the user edits the brand field. The leaf normalises
+  /// empty strings to `null` before invoking; container wires this to
+  /// `customFoodDraftProvider.notifier.setBrand`.
+  final ValueChanged<String?> onBrandChanged;
+
+  /// Fired when the user edits the barcode field. Same `null` vs
+  /// empty normalisation as [onBrandChanged]. Container wires this to
+  /// `customFoodDraftProvider.notifier.setBarcode`.
+  final ValueChanged<String?> onBarcodeChanged;
+
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final draft = ref.watch(customFoodDraftProvider);
-    final notifier = ref.read(customFoodDraftProvider.notifier);
+  Widget build(BuildContext context) {
     final space = context.space;
 
     final nameError =
-        showNameError && draft.name.trim().isEmpty ? 'Required' : null;
+        showNameError && name.trim().isEmpty ? 'Required' : null;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -45,9 +74,9 @@ class BasicsSection extends ConsumerWidget {
           label: 'Name',
           errorText: nameError,
           child: _TextField(
-            value: draft.name,
+            value: name,
             placeholder: "e.g. Mom's lasagna",
-            onChanged: notifier.setName,
+            onChanged: onNameChanged,
             hasError: nameError != null,
             semanticsLabel: 'Food name',
             autofocus: autofocusName,
@@ -57,9 +86,9 @@ class BasicsSection extends ConsumerWidget {
         LabeledField(
           label: 'Brand (optional)',
           child: _TextField(
-            value: draft.brand ?? '',
+            value: brand ?? '',
             placeholder: 'Homemade',
-            onChanged: (v) => notifier.setBrand(v.isEmpty ? null : v),
+            onChanged: (v) => onBrandChanged(v.isEmpty ? null : v),
             semanticsLabel: 'Brand',
           ),
         ),
@@ -67,9 +96,9 @@ class BasicsSection extends ConsumerWidget {
         LabeledField(
           label: 'Barcode (optional)',
           child: _TextField(
-            value: draft.barcode ?? '',
+            value: barcode ?? '',
             placeholder: 'Scan or enter',
-            onChanged: (v) => notifier.setBarcode(v.isEmpty ? null : v),
+            onChanged: (v) => onBarcodeChanged(v.isEmpty ? null : v),
             semanticsLabel: 'Barcode',
           ),
         ),
