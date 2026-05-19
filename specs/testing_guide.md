@@ -8,7 +8,15 @@
 
 We're adopting the standard Flutter pyramid: **many unit tests**, **many widget tests**, **a small number of integration tests**. The widget-test layer is the workhorse — it runs under `flutter test` in a fake-async sandbox with no real network, no real timers, and no real platform channels, so every UI behavioural assertion belongs here unless it specifically needs a real device. Unit tests stay at the bottom for pure-Dart code (domain math, provider derivations, decoders). Integration tests live at the top and stay tiny — three to five flows max — because they're slow, brittle, and only useful for "is the app shaped right end-to-end."
 
-**The one hard rule: UI tests never touch real network or disk.** The seams that make this achievable here are: (1) every `Dio` call routes through repositories that accept a `useFixtures: bool` constructor flag for fully in-memory mode, plus a `FakeDioAdapter` (`test/data/fake_dio_adapter.dart`) for wire-shape tests; (2) every Hive box, secure-storage handle, and platform plugin sits behind a `Provider` that **throws** by default and is `overrideWithValue`d in tests (`authConfigBoxProvider`, `secureTokenStoreProvider`, `outboxBoxProvider`); (3) Riverpod's `ProviderScope(overrides: …)` is the canonical way to swap any dependency in a widget test — there are no module-level singletons to monkey-patch. If you find yourself reaching for `setMockMethodCallHandler` or constructing a real `Dio` in a widget test, stop: a seam is missing, and the right fix is to add it, not to plumb around it.
+**Two hard rules. Neither is negotiable.**
+
+1. **UI tests never touch real network or disk.** No real `Dio` calls, no real Hive boxes, no real `SharedPreferences`, no real platform channels. Every dependency that does IO sits behind a Riverpod-mediated seam that a test can swap.
+
+2. **Presentation widgets ("leaves") never import Riverpod.** They are pure functions of constructor parameters. A leaf widget test reads `pumpWidget(MyLeaf(data: …, onTap: () {}))` — no `ProviderScope`, no overrides, no setup. Riverpod lives one layer up, in *container* widgets (screens, sheets, dialogs) that read providers and pass plain data + callbacks down to the leaves.
+
+The seams that make rule 1 achievable here: every `Dio` call routes through repositories that accept a `useFixtures: bool` constructor flag for fully in-memory mode, plus a `FakeDioAdapter` (`test/data/fake_dio_adapter.dart`) for wire-shape tests; every Hive box, secure-storage handle, and platform plugin sits behind a `Provider` that **throws** by default and is `overrideWithValue`d in tests. The seam that makes rule 2 achievable: the container/presentation split (§4.4).
+
+If you find yourself reaching for `setMockMethodCallHandler`, constructing a real `Dio` in a widget test, or wrapping a leaf in `ProviderScope` to give it a fake provider, stop: a seam is missing or the leaf is doing too much. The right fix is to add the seam or split the widget, not to plumb around it.
 
 ---
 
@@ -19,8 +27,8 @@ We're adopting the standard Flutter pyramid: **many unit tests**, **many widget 
 | Pure domain logic | `lib/domain/` (projection model, units, decimal/rounding, calorie estimates, food/serving builders) | Unit | Heavy — one file per logic-bearing module, table tests where the model is approximate (see `weight_projection_sweep_test.dart`) | **Good.** `test/domain/` is the healthiest subtree. Mostly green, no quarantines outside one stray `food_created_at_test.dart`. |
 | Repositories | `lib/repositories/` (Dio + Hive seams) | Repo-level | One test file per repo against `FakeDioAdapter`; assertions on **wire shape** (method, path, query, body) and **decoder behaviour** (404 → `FoodNotFoundError`, 409 propagates) | **Mixed.** `_harness.dart` + `goal_repository_test.dart` show the pattern. `food_repository_test.dart` is currently `@Skip`-quarantined post-Ask-10 — the wire shape changed and the tests haven't been rebaselined. `weight_repository`, `goal_repository`, `profile_repository` **do not have** a `useFixtures` flag (food + log do); that's a known gap. |
 | Riverpod providers | `lib/providers/` (compute/derive over repos) | Unit | One per derived provider; build a `ProviderContainer`, override deps with `overrideWith` / `overrideWithValue`, read the provider, assert | **Thin.** `test/providers/` has three files. `calories_burned_provider_test.dart` is the canonical shape (overrides upstream `meProvider` + `currentWeightKgProvider`, asserts on the derived value). Many derived providers (`goalProjectionProvider`, the `daySummaryProvider` family, the food list providers) have no provider-level coverage at all — their behaviour is only exercised indirectly through screen tests, which is the wrong level. |
-| Widget leaves | `lib/features/*/widgets/`, `lib/widgets/` | Widget | One test per leaf; mount in `MaterialApp` + (if it reads providers) `ProviderScope` with fakes; pump, simulate input, assert rendered output | **Good for un-stateful leaves** (`search_result_row_test.dart`, `primary_button_test.dart`, `quantity_stepper_test.dart`). The `widget/` and `widgets/` directories together hold ~25 leaf tests, most still green. |
-| Screen-level widgets | `lib/features/*_screen.dart` | Widget | One file per screen, covering the happy path + one error/empty branch; provider overrides wired top-down | **Largely broken.** `today_screen_test.dart`, `onboarding_screen_test.dart`, `food_detail_screen_test.dart`, `search_screen_test.dart`, `weight_screen_test.dart`, `goals_screen_test.dart`, `my_foods_screen_test.dart`, `quick_add_sheet_test.dart`, `log_entry_sheet_test.dart` are all `@Skip`-quarantined. Rebuilding this layer is the biggest open testing investment. |
+| **Presentation widgets (leaves)** | `lib/features/*/widgets/`, `lib/widgets/` | Widget | One per leaf; mount in `MaterialApp` only; pass data via constructor params; pump, simulate input, assert rendered output. **No `ProviderScope`. No `ConsumerWidget` in leaf source. No `ref.watch`.** | **Currently mixed.** `search_result_row.dart`, `primary_button.dart`, `quantity_stepper.dart` are already presentation-shaped (pure constructor inputs) and their tests are correctly Riverpod-free. ~25 other widgets under `features/*/widgets/` still extend `ConsumerWidget` and must be split (see §4.4). |
+| **Container widgets** | `lib/features/*_screen.dart`, sheets, dialogs, top-level views | Widget | One file per screen, covering the happy path + one error/empty branch; provider overrides wired top-down at this layer **only** | **Largely broken.** `today_screen_test.dart`, `onboarding_screen_test.dart`, `food_detail_screen_test.dart`, `search_screen_test.dart`, `weight_screen_test.dart`, `goals_screen_test.dart`, `my_foods_screen_test.dart`, `quick_add_sheet_test.dart`, `log_entry_sheet_test.dart` are all `@Skip`-quarantined. Rebuilding this layer is the biggest open testing investment. |
 | Routing | `lib/routing/app_router.dart` | Widget (router-as-system-under-test) | One file per redirect rule + one per `pathFor*` helper | **Healthy.** `auth_redirect_test.dart` is quarantined but the newer `onboarding_redirect_test.dart`, `barcode_resolve_test.dart`, `foods_new_precedence_test.dart`, `path_for_day_test.dart` follow the pattern (override `meProvider` / `authTokenProvider`, build the router, assert on `routerDelegate.currentConfiguration.uri.path`). |
 | End-to-end happy paths | (would-be) `integration_test/` | Integration | A handful — `log a food on /today`, `scan a barcode → food detail`, `sign in → onboarding → today`. Real device. | **None.** `client/test/integration/.gitkeep` references "log-a-food, scan-a-barcode" as planned, but no `integration_test/` directory exists. That's a finding, not a silent gap. The team should write the first one alongside the next major UX flow. |
 
@@ -106,7 +114,7 @@ In production, `main.dart` opens the box and installs `authConfigBoxProvider.ove
 
 The same pattern applies to `outboxBoxProvider` (`lib/data/outbox/log_outbox_notifier.dart`) and `secureTokenStoreProvider` (`lib/data/secure_token_store.dart`). For the secure token store, `test/data/fake_secure_token_store.dart` already exists — extend `SecureTokenStore` and override the provider with an instance.
 
-**Anti-pattern:** reading a `Hive.box('foo')` static directly from a widget. There's currently one offender (`login_controller.dart:337`) where `box.get(AuthConfigKey.baseUrl)` is read directly — that read should route through `baseUrlProvider` so the test seam is one-way. Adding the indirection is a precondition for cleanly testing the login form's URL prefill.
+**Anti-pattern:** reading a `Hive.box('foo')` static directly from a widget. There used to be one offender (`login_controller.dart:337`); closed in commit `b89524f`. A repo-wide audit (`specs/persistence_audit.md`, `specs/io_deps_audit.md`) confirms zero direct UI → IO dependencies remain. The corollary under rule 2: even *container* widgets should rarely reach into a raw box — they should read a notifier (`baseUrlProvider`, `lastUsernameProvider`) that internally wraps the box. The box is an implementation detail of the `data/` layer; UI consumes the notifier.
 
 ---
 
@@ -246,6 +254,59 @@ This is the only place we exercise the Dio path. Everything above it (providers,
 
 ### 4.4 Widget test (leaf) — no providers, pure render
 
+**The principle.** A leaf is a `StatelessWidget` (or `StatefulWidget` for purely-local state like a `TextEditingController`) whose only inputs are constructor parameters: plain data + callbacks. It imports nothing from `package:flutter_riverpod`. Its build method does not call `ref.watch` or `ref.read`. Its test sets up a `MaterialApp` for theme + directionality and passes the data in directly:
+
+```dart
+await tester.pumpWidget(MaterialApp(home: MyLeaf(data: …, onTap: () {})));
+```
+
+**If the leaf you're about to test extends `ConsumerWidget`, split it first.** The split is mechanical. Before:
+
+```dart
+class _ProjectionRow extends ConsumerWidget {
+  const _ProjectionRow({super.key});
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final projection = ref.watch(goalProjectionProvider);
+    if (projection == null) return const SizedBox.shrink();
+    return Text(_copyFor(projection));
+  }
+}
+```
+
+After — a pure presentation widget that knows nothing about Riverpod:
+
+```dart
+class ProjectionRow extends StatelessWidget {
+  const ProjectionRow({super.key, required this.projection});
+  final GoalProjection? projection;
+  @override
+  Widget build(BuildContext context) {
+    if (projection == null) return const SizedBox.shrink();
+    return Text(_copyFor(projection!));
+  }
+}
+```
+
+…and a thin `Consumer` lifted into the parent container that reads the provider and passes the value down:
+
+```dart
+class WeightSummaryCard extends ConsumerWidget {
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final projection = ref.watch(goalProjectionProvider);
+    return Column(children: <Widget>[
+      // ...other rows...
+      ProjectionRow(projection: projection),
+    ]);
+  }
+}
+```
+
+The screen / sheet / dialog at the top of the feature is the container. Every leaf below it consumes data via constructor params. Riverpod stops at the container boundary; nothing past that line knows the framework exists.
+
+**Why this pays off.** The leaf test below uses no `ProviderScope`, no `overrideWithValue`, no provider scaffolding. It can't accidentally hit network or disk because it never sees the seam that could.
+
 Template: `test/features/search/search_result_row_test.dart`. The leaf reads its inputs as constructor arguments, so we don't need a `ProviderScope` — only `MaterialApp` for theme + directionality.
 
 ```dart
@@ -297,7 +358,9 @@ void main() {
 
 Notes: one `pump()` — no animation, no `Future.delayed`. If you use `pumpAndSettle` here it works, but it's louder than needed. Save `pumpAndSettle` for transitions and snackbars.
 
-### 4.5 Widget test (screen) — `ProviderScope` overrides, top-down
+### 4.5 Widget test (container/screen) — `ProviderScope` overrides, top-down
+
+Containers — screens, sheets, dialogs — are the **only** place `ProviderScope` and provider overrides appear in widget tests. The container's job is to read providers, transform `AsyncValue<T>` into renderable state, and pass plain data + callbacks down to its child leaves. The test asserts on the container's branching behaviour (loading → skeleton, error → message, data → real render) by overriding the provider it reads.
 
 Template: the pattern from `test/routing/onboarding_redirect_test.dart`, adapted for a screen with overridden Future-shaped providers. Below is the shape we want the rebuilt `food_detail_screen_test.dart` to follow.
 
@@ -444,14 +507,17 @@ To install the hook: `git config core.hooksPath .githooks`. (One-time, repo-loca
 
 Each item below has been seen in this repo or is a known failure mode of Flutter widget tests:
 
+- **Don't make a leaf widget a `ConsumerWidget`.** Leaves under `lib/features/*/widgets/` and `lib/widgets/` must be `StatelessWidget` / `StatefulWidget` and take all their inputs as constructor parameters. If you find yourself wanting `ref.watch` inside a leaf, lift that read into the parent container and pass the value down. A leaf importing `package:flutter_riverpod` is the failure mode the §4.4 split exists to prevent.
+- **Don't wrap a leaf widget in `ProviderScope` in its test.** If the leaf needs `ProviderScope` to render, the leaf is doing too much. Split it (§4.4). The test should look like `pumpWidget(MaterialApp(home: MyLeaf(data: ..., onTap: () {})))` — nothing more.
 - **Don't `await tester.pumpAndSettle()` on a screen with an infinite animation.** `pumpAndSettle` waits until no frames are scheduled; an `AnimationController.repeat()` or a `Lottie` loop will hang it until the 10-minute timeout. Use `pump(Duration(milliseconds: N))` with a known duration instead.
 - **Don't construct a repository in a widget test without `useFixtures: true` or a `FakeDioAdapter`.** A `FoodRepository(api)` with the production default hits whatever URL `apiBaseUrlProvider` resolves to — non-deterministic, almost always wrong in tests. Use the provider override; never `new FoodRepository(...)` from a widget test.
-- **Don't read Hive directly from a widget under test.** Wrap the read in a `StateNotifierProvider` (see `baseUrlProvider`) and override the notifier in tests. The one remaining offender (`login_controller.dart:337`) is on the cleanup list.
+- **Don't read Hive, `SharedPreferences`, `FlutterSecureStorage`, or any other concrete persistence API directly from any UI file** — screen *or* leaf. Go through a notifier provider in a container; the leaf takes the resolved value. Audit baseline: `specs/persistence_audit.md` + `specs/io_deps_audit.md` (zero direct UI→IO deps as of `b89524f`).
 - **Don't reach into private state via `#__internal__` or reflection.** If you need a hook for tests, add a deliberate public seam. `setMockLatencyForTesting()` and `@visibleForTesting List<TextSpan> highlightSpansForTest(...)` are the right patterns.
 - **Don't un-skip the `@Skip('Quarantined post Ask 10 …')` tests.** They were testing implementation details (rendered kcal strings, fixture-mode counts) pinned to a wire shape that no longer holds. Un-skipping them as-is will produce green tests that lie about the code. Replace them — write a fresh test that asserts a behaviour the code under test actually upholds today.
 - **Don't mock `Dio` itself.** The interceptor stack (auth header, 401-sweep, error mapping) is part of the system under test for repo tests. Swap `dio.httpClientAdapter` instead.
 - **Don't use `await for` over a stream inside `testWidgets`.** Fake async deadlocks. Use `expectLater(stream, emitsInOrder([...]))`.
 - **Don't put `Image.network` in a widget under test without an `ImageProvider` seam.** It hangs forever (no real network). Either swap to `Image.asset` in production, or accept an `ImageProvider` parameter and inject a fake.
+- **Don't read `DateTime.now()` from a leaf** if the rendered output depends on it ("logged 3 minutes ago"). The container computes "now" and passes it in as a parameter, or passes the already-formatted string. The leaf is pure.
 
 ---
 
