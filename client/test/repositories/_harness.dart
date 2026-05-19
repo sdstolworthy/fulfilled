@@ -11,7 +11,6 @@ import 'package:fulfilled/repositories/goal_repository.dart';
 import 'package:fulfilled/repositories/log_repository.dart';
 import 'package:fulfilled/repositories/profile_repository.dart';
 import 'package:fulfilled/repositories/weight_repository.dart';
-import 'package:fulfilled/repositories/_fixtures.dart';
 
 /// Construct an `ApiClient` for repo tests. The `Dio` instance is
 /// real; tests that need to assert on the wire swap its
@@ -50,11 +49,9 @@ void resetRepositoriesForTest() {
   WeightRepository.resetForTesting();
   LogRepository.resetForTesting();
   ProfileRepository.resetForTesting();
-  setMockClockForTesting(null);
   setMockLatencyForTesting();
 }
 
 void teardownRepositoriesForTest() {
   clearMockLatencyForTesting();
-  setMockClockForTesting(null);
 }

@@ -1,43 +1,34 @@
 // MOCK ONLY — deletable with the rest of the seed fixtures.
 //
-// Audit-fix F2: the clock + simple Decimal helper used to live in a
-// 1300-line god-module alongside seed data for five domains. A weight
-// test that pinned time leaked into goal / food / log seeds. Splitting
-// out this small file lets each per-domain fixture file import only
-// what it needs, and gives the eventual clock-injection refactor (F3)
-// a single seam to retarget.
+// Audit-fix F3 (clock half): the `_clockOverride` global + the
+// `setMockClockForTesting` setter used to live here so tests could pin
+// "today" before constructing seed data. No test ever actually did
+// pin it — every call site was `setMockClockForTesting(null)` in
+// `tearDown`, resetting state that was never set. The audit's
+// concern was real (top-level mutable, state-leak across tests) but
+// the fix isn't injection-into-every-repository; it's deleting the
+// unused machinery. If a future test actually needs to pin time, the
+// cleanest reintroduction is a `Zone` override (lexically scoped, no
+// shared mutable), not a top-level setter.
+//
+// Latency monkey-patch in `_mock_latency.dart` is a separate concern
+// — see TODO there.
 
 import 'package:decimal/decimal.dart';
 
-/// Test-controllable clock. Top-level mutable for now — F3 will lift
-/// this into an explicit constructor parameter on each fixture
-/// builder so tests no longer reach into a shared global to pin time.
-DateTime Function()? _clockOverride;
-
-DateTime mockNow() => (_clockOverride ?? DateTime.now)();
-
-DateTime mockToday() {
-  final n = mockNow();
-  return DateTime(n.year, n.month, n.day);
-}
-
-void setMockClockForTesting(DateTime Function()? clock) {
-  _clockOverride = clock;
-}
-
-/// `n` days before [mockToday], at 00:00:00 local. Public so each
-/// per-domain fixture file can share it without a library-private
-/// duplicate.
+/// `n` days before today (local-midnight), used by seed-data builders
+/// to time-stamp foods/logs/weights at deterministic offsets from
+/// "now". Public so each per-domain fixture file can share it.
 DateTime daysAgo(int days) {
-  final t = mockToday();
-  return DateTime(t.year, t.month, t.day - days);
+  final n = DateTime.now();
+  return DateTime(n.year, n.month, n.day - days);
 }
 
-/// `n` days before [mockToday], at the given local hour/minute. Same
-/// public rationale as [daysAgo].
+/// `n` days before today, at the given local hour/minute. Same
+/// rationale as [daysAgo].
 DateTime dayAt(int days, int hour, int minute) {
-  final t = mockToday();
-  return DateTime(t.year, t.month, t.day - days, hour, minute);
+  final n = DateTime.now();
+  return DateTime(n.year, n.month, n.day - days, hour, minute);
 }
 
 /// `Decimal.parse(v)` — a one-character shorthand made common enough
