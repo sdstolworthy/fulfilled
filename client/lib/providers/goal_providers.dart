@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../domain/calories/estimate.dart';
 import '../domain/day_summary.dart';
 import '../domain/goal.dart';
+import '../domain/weight_projection.dart';
 import 'profile_providers.dart';
 import 'repository_providers.dart';
 import 'weight_providers.dart';
@@ -76,6 +77,34 @@ final effectiveActiveGoalTargetsProvider =
     activityLevel: user.activityLevel,
     direction: goal.direction,
     rateKgPerWeek: goal.rateKgPerWeek ?? Decimal.zero,
+  );
+});
+
+/// **Derived** ETA at which the user will reach the active goal's
+/// target weight at their currently observed trajectory.
+///
+/// Cross-tier seam: composes [activeGoalProvider] (target weight) and
+/// [weightHistoryProvider] (current weight + 28-day trajectory). The
+/// math itself lives in `lib/domain/weight_projection.dart` so it's
+/// testable without a `ProviderContainer`.
+///
+/// Returns `null` when no projection makes sense at all — no active
+/// goal, no `targetWeightKg`, or history loading/errored. Otherwise
+/// always returns a [GoalProjection]; the [GoalProjection.kind] field
+/// encodes whether the ETA is meaningful (onTrack), already met
+/// (reached), trending the wrong direction (offTrack), too flat to
+/// project (flat), or short on data (insufficientData). Renderers
+/// branch on `kind`; never directly on `eta`.
+final goalProjectionProvider = Provider<GoalProjection?>((ref) {
+  final history = ref.watch(weightHistoryProvider).valueOrNull;
+  final goal = ref.watch(activeGoalProvider).valueOrNull;
+  if (history == null || goal == null) return null;
+  final target = goal.targetWeightKg;
+  if (target == null) return null;
+  return projectGoal(
+    history: history,
+    targetKg: target,
+    now: DateTime.now(),
   );
 });
 

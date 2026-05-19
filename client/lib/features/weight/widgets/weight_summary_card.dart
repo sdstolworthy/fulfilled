@@ -1,11 +1,13 @@
 import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart' hide TextDirection;
 
 import '../../../domain/enums.dart';
 import '../../../domain/goal.dart';
 import '../../../domain/units/weight.dart';
 import '../../../domain/weight.dart';
+import '../../../domain/weight_projection.dart';
 import '../../../providers/goal_providers.dart';
 import '../../../providers/profile_providers.dart';
 import '../../../providers/weight_providers.dart';
@@ -43,6 +45,7 @@ class WeightSummaryCard extends ConsumerWidget {
     final historyAsync = ref.watch(weightHistoryProvider);
     final goalAsync = ref.watch(activeGoalProvider);
     final unit = ref.watch(weightUnitProvider);
+    final projection = ref.watch(goalProjectionProvider);
 
     return Padding(
       padding: EdgeInsets.fromLTRB(
@@ -60,6 +63,7 @@ class WeightSummaryCard extends ConsumerWidget {
               orElse: () => null,
             ),
             unit: unit,
+            projection: projection,
           ),
           loading: () => const _SummarySkeleton(),
           error: (_, __) => const _SummarySkeleton(),
@@ -89,16 +93,22 @@ class _Card extends StatelessWidget {
 }
 
 class _Body extends StatelessWidget {
-  const _Body({required this.history, required this.goal, required this.unit});
+  const _Body({
+    required this.history,
+    required this.goal,
+    required this.unit,
+    required this.projection,
+  });
 
   final List<WeightEntry> history;
   final Goal? goal;
   final WeightUnit unit;
+  final GoalProjection? projection;
 
   @override
   Widget build(BuildContext context) {
     if (history.isEmpty) {
-      return _EmptyHero(goal: goal, unit: unit);
+      return _EmptyHero(goal: goal, unit: unit, projection: projection);
     }
     // history is newest-first per repository contract.
     final now = history.first;
@@ -160,6 +170,12 @@ class _Body extends StatelessWidget {
             ),
           ],
         ),
+        if (projection != null) ...<Widget>[
+          SizedBox(height: context.space.x3),
+          Divider(height: 1, color: context.colors.line2),
+          SizedBox(height: context.space.x3),
+          _ProjectionRow(projection: projection!, unit: unit),
+        ],
       ],
     );
   }
@@ -359,9 +375,14 @@ class _Stat extends StatelessWidget {
 }
 
 class _EmptyHero extends StatelessWidget {
-  const _EmptyHero({required this.goal, required this.unit});
+  const _EmptyHero({
+    required this.goal,
+    required this.unit,
+    required this.projection,
+  });
   final Goal? goal;
   final WeightUnit unit;
+  final GoalProjection? projection;
 
   @override
   Widget build(BuildContext context) {
@@ -420,8 +441,99 @@ class _EmptyHero extends StatelessWidget {
             ),
           ],
         ),
+        if (projection != null) ...<Widget>[
+          SizedBox(height: context.space.x3),
+          Divider(height: 1, color: context.colors.line2),
+          SizedBox(height: context.space.x3),
+          _ProjectionRow(projection: projection!, unit: unit),
+        ],
       ],
     );
+  }
+}
+
+// ─── Projection row ────────────────────────────────────────────────────────
+
+class _ProjectionRow extends StatelessWidget {
+  const _ProjectionRow({required this.projection, required this.unit});
+
+  final GoalProjection projection;
+  final WeightUnit unit;
+
+  @override
+  Widget build(BuildContext context) {
+    final copy = _projectionCopy(projection, unit);
+    final isOnTrack = projection.kind == ProjectionKind.onTrack;
+    final colour = isOnTrack ? context.colors.accent : context.colors.ink2;
+    return Semantics(
+      label: copy.semantics,
+      excludeSemantics: true,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: <Widget>[
+          Text(
+            'PROJECTED',
+            style: context.text.eyebrow.copyWith(color: context.colors.ink2),
+          ),
+          SizedBox(width: context.space.x2),
+          Expanded(
+            child: Text(
+              copy.headline,
+              style: context.text.bodyStrong.copyWith(color: colour),
+              overflow: TextOverflow.ellipsis,
+              maxLines: 2,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ProjectionCopy {
+  const _ProjectionCopy({required this.headline, required this.semantics});
+  final String headline;
+  final String semantics;
+}
+
+_ProjectionCopy _projectionCopy(GoalProjection p, WeightUnit unit) {
+  final target = formatWeightWithUnit(p.targetKg, unit);
+  switch (p.kind) {
+    case ProjectionKind.onTrack:
+      final dateLabel = DateFormat.yMMMd().format(p.eta!);
+      final weeks = p.weeksAway ?? 0;
+      final weekSuffix = weeks == 1 ? 'wk' : 'wks';
+      final headline = weeks <= 0
+          ? '$target by $dateLabel'
+          : '$target by $dateLabel · ≈$weeks $weekSuffix';
+      return _ProjectionCopy(
+        headline: headline,
+        semantics: 'Projected to reach $target by $dateLabel, '
+            'about $weeks ${weeks == 1 ? 'week' : 'weeks'} away.',
+      );
+    case ProjectionKind.reached:
+      return _ProjectionCopy(
+        headline: 'At goal weight',
+        semantics: 'You are at your goal weight of $target.',
+      );
+    case ProjectionKind.offTrack:
+      return _ProjectionCopy(
+        headline: 'Trending away from $target',
+        semantics: 'Current trajectory is moving away from your '
+            'goal weight of $target.',
+      );
+    case ProjectionKind.flat:
+      return _ProjectionCopy(
+        headline: 'Trend too flat to project',
+        semantics: 'Recent weight has not changed enough to project a '
+            'date for reaching $target.',
+      );
+    case ProjectionKind.insufficientData:
+      return _ProjectionCopy(
+        headline: 'Log more weights to project',
+        semantics: 'Not enough recent weight history to project a date '
+            'for reaching $target.',
+      );
   }
 }
 
