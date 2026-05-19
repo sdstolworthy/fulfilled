@@ -2,6 +2,7 @@ use chrono::{DateTime, NaiveDate, Utc};
 use rust_decimal::Decimal;
 use uuid::Uuid;
 
+use crate::domain::meal::Meal;
 use crate::domain::serving::ServingDraft;
 use crate::domain::unit::Unit;
 
@@ -181,6 +182,29 @@ pub struct UserFoodSummary {
     /// search row can render "Logged Tue · 4× · 1 slice (296 kcal)"
     /// without re-fetching `/foods/:id`.
     pub last_serving: Option<ServingPreview>,
+    /// Meal slot recorded on the caller's most-recent `food_log_entries`
+    /// row for this food (e.g. `Meal::Lunch`). Sourced directly from
+    /// the log row, not from any serving.
+    ///
+    /// **Invariant**: non-null iff `last_logged_at` is non-null iff
+    /// `last_quantity` is non-null. The food has either been logged
+    /// (all three present) or not (all three absent).
+    ///
+    /// Contrast with `last_serving`: `last_serving` can be `None` on a
+    /// logged food when the referenced serving was subsequently deleted
+    /// (`ON DELETE SET NULL`). `last_meal` and `last_quantity` live on
+    /// the log row itself and are therefore never nulled out by a
+    /// serving deletion.
+    pub last_meal: Option<Meal>,
+    /// Serving multiplier recorded on the caller's most-recent
+    /// `food_log_entries` row (e.g. `2.0` means "logged 2× the
+    /// serving's canonical amount"). NOT a re-statement of
+    /// `last_serving.amount`.
+    ///
+    /// **Invariant**: non-null iff `last_logged_at` is non-null iff
+    /// `last_meal` is non-null. See `last_meal` doc for full invariant
+    /// explanation and contrast with `last_serving`.
+    pub last_quantity: Option<Decimal>,
 }
 
 /// Service-layer composition: a search hit paired with optional

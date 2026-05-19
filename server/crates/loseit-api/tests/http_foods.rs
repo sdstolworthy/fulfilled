@@ -1356,6 +1356,38 @@ fn make_log_entry(food_id: Uuid, day: NaiveDate, serving_id: Option<Uuid>) -> Pe
     }
 }
 
+/// Builder companion to [`make_log_entry`] that lets callers specify
+/// `meal` and `quantity` explicitly. All other fields match the defaults
+/// from [`make_log_entry`].
+fn make_log_entry_with(
+    food_id: Uuid,
+    day: NaiveDate,
+    serving_id: Option<Uuid>,
+    meal: Meal,
+    quantity: Decimal,
+) -> PersistedLogEntry {
+    PersistedLogEntry {
+        food_id,
+        serving_id,
+        consumed_on: day,
+        meal,
+        quantity,
+        entered_amount: quantity,
+        entered_unit: DomainUnit::Serving,
+        snapshot: NutritionSnapshot {
+            calories_kcal: Decimal::from(140),
+            protein_g: None,
+            carbs_g: None,
+            fat_g: None,
+            fiber_g: None,
+            sugar_g: None,
+            sodium_mg: None,
+            saturated_fat_g: None,
+        },
+        note: None,
+    }
+}
+
 /// Find a hit by name. Helps tests survive ranking changes — assertions
 /// always target the food the test seeded.
 fn find_hit_by_name<'a>(results: &'a [Value], name: &str) -> &'a Value {
@@ -1676,4 +1708,141 @@ async fn test_log_count_uses_zero_not_null_for_unlogged() {
         "log_count must be a JSON number for unlogged foods (got {lc})",
     );
     assert_eq!(lc.as_i64(), Some(0));
+}
+
+// ===========================================================================
+// F6-T4: last_meal + last_quantity on search-hit enrichment.
+// ===========================================================================
+
+#[tokio::test]
+async fn test_search_enrichment_carries_meal_and_quantity() {
+    // Seed one OFF food + one log entry with Meal::Lunch and quantity=2.0.
+    // Assert the search hit carries last_meal="lunch" and last_quantity="2.0".
+    let (app, _alice) = build_test_app_with(move |foods, _s, logs, alice| {
+        let foods = foods.clone();
+        let logs = logs.clone();
+        Box::pin(async move {
+            let id = seed_off_food(&foods, "F6-MQ-1", "F6 Lunch Rice", Some("Brand")).await;
+            let day = NaiveDate::from_ymd_opt(2026, 5, 14).unwrap();
+            logs.create(
+                alice,
+                &make_log_entry_with(id, day, None, Meal::Lunch, Decimal::new(20, 1)),
+            )
+            .await
+            .unwrap();
+        })
+    })
+    .await;
+
+    let resp = app
+        .oneshot(authed_request(
+            "GET",
+            "/api/v1/foods/search?q=F6%20Lunch%20Rice",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = read_json(resp.into_body()).await;
+    let results = body["results"].as_array().unwrap();
+    let hit = find_hit_by_name(results, "F6 Lunch Rice");
+
+    assert_eq!(
+        hit["last_meal"].as_str(),
+        Some("lunch"),
+        "last_meal must be the string 'lunch'",
+    );
+    assert_eq!(
+        hit["last_quantity"].as_str(),
+        Some("2.0"),
+        "last_quantity must be Decimal-as-string '2.0'",
+    );
+}
+
+#[tokio::test]
+async fn test_search_enrichment_null_meal_and_quantity_for_cold_food() {
+    // Seed an OFF food with no log entry. Assert last_meal and
+    // last_quantity are both null on the search hit.
+    let (app, _alice) = build_test_app_with(|foods, _s, _l, _u| {
+        let foods = foods.clone();
+        Box::pin(async move {
+            seed_off_food(&foods, "F6-NULL-1", "F6 Cold Tofu", Some("Brand")).await;
+        })
+    })
+    .await;
+
+    let resp = app
+        .oneshot(authed_request(
+            "GET",
+            "/api/v1/foods/search?q=F6%20Cold%20Tofu",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = read_json(resp.into_body()).await;
+    let results = body["results"].as_array().unwrap();
+    let hit = find_hit_by_name(results, "F6 Cold Tofu");
+
+    assert!(
+        hit["last_meal"].is_null(),
+        "last_meal must be null for unlogged foods",
+    );
+    assert!(
+        hit["last_quantity"].is_null(),
+        "last_quantity must be null for unlogged foods",
+    );
+}
+
+#[tokio::test]
+async fn test_enrichment_keeps_meal_and_quantity_when_serving_deleted() {
+    // Log entry with serving_id = None (mirrors ON DELETE SET NULL after
+    // a serving deletion). last_serving must be null, but last_meal and
+    // last_quantity must carry the values from the log row.
+    let (app, _alice) = build_test_app_with(move |foods, _s, logs, alice| {
+        let foods = foods.clone();
+        let logs = logs.clone();
+        Box::pin(async move {
+            let id = seed_off_food(
+                &foods,
+                "F6-DEL-1",
+                "F6 Deleted Serving Pasta",
+                Some("Brand"),
+            )
+            .await;
+            let day = NaiveDate::from_ymd_opt(2026, 5, 9).unwrap();
+            logs.create(
+                alice,
+                &make_log_entry_with(id, day, None, Meal::Dinner, Decimal::new(15, 1)),
+            )
+            .await
+            .unwrap();
+        })
+    })
+    .await;
+
+    let resp = app
+        .oneshot(authed_request(
+            "GET",
+            "/api/v1/foods/search?q=F6%20Deleted%20Serving",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = read_json(resp.into_body()).await;
+    let results = body["results"].as_array().unwrap();
+    let hit = find_hit_by_name(results, "F6 Deleted Serving Pasta");
+
+    assert!(
+        hit["last_serving"].is_null(),
+        "last_serving must be null when serving_id is None on the log entry",
+    );
+    assert_eq!(
+        hit["last_meal"].as_str(),
+        Some("dinner"),
+        "last_meal must still carry 'dinner' even when serving is gone",
+    );
+    assert_eq!(
+        hit["last_quantity"].as_str(),
+        Some("1.5"),
+        "last_quantity must still carry '1.5' even when serving is gone",
+    );
 }

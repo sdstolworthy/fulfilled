@@ -174,6 +174,8 @@ mod tests {
                 log_count: 3,
                 last_logged_at: Some(date),
                 last_serving: None,
+                last_meal: None,
+                last_quantity: None,
             },
         );
         let reader = StubReader::new(preloaded);

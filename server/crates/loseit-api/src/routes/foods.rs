@@ -20,6 +20,7 @@ use axum::routing::{get, patch, post};
 use axum::{Json, Router};
 use chrono::NaiveDate;
 use loseit_core::domain::unit::Unit;
+use loseit_core::domain::Meal;
 use loseit_core::domain::{
     Food, FoodDraft, FoodKind, FoodPatch, FoodSearchHitWithSignals, FoodSource, NutriscoreGrade,
     Serving, ServingDraft, ServingPatch, ServingPreview, ServingSource,
@@ -214,6 +215,19 @@ struct FoodSearchHitResponse {
     /// `kcal` so the search row can render the caller-specific calorie
     /// count without a `/foods/:id` round-trip.
     last_serving: Option<ServingPreviewResponse>,
+    /// Meal slot from the caller's most-recent log entry (`"breakfast"`,
+    /// `"lunch"`, `"dinner"`, or `"snack"`). `null` when the food has
+    /// never been logged. Non-null iff `last_logged_at` is non-null —
+    /// unlike `last_serving`, this can never be nulled by a serving
+    /// deletion (it lives on the log row itself).
+    last_meal: Option<&'static str>,
+    /// Serving multiplier from the caller's most-recent log entry —
+    /// the quantity factor (e.g. `"2.0"` means "2× the serving's
+    /// canonical amount"). NOT a re-statement of `last_serving.amount`.
+    /// Wire-encoded as a Decimal-as-string for consistency with
+    /// `last_serving.kcal` / `amount`. `null` when the food has never
+    /// been logged.
+    last_quantity: Option<Decimal>,
 }
 
 impl From<FoodSearchHitWithSignals> for FoodSearchHitResponse {
@@ -222,13 +236,15 @@ impl From<FoodSearchHitWithSignals> for FoodSearchHitResponse {
         // Derive the top-level kcal from the default serving BEFORE
         // moving `h.default_serving` into the response.
         let calories_per_serving = h.default_serving.as_ref().map(|s| s.kcal);
-        let (last_logged_at, log_count, last_serving) = match w.signals {
+        let (last_logged_at, log_count, last_serving, last_meal, last_quantity) = match w.signals {
             Some(s) => (
                 s.last_logged_at,
                 s.log_count,
                 s.last_serving.map(Into::into),
+                s.last_meal.map(Meal::as_str),
+                s.last_quantity,
             ),
-            None => (None, 0, None),
+            None => (None, 0, None, None, None),
         };
         Self {
             id: h.id,
@@ -241,6 +257,8 @@ impl From<FoodSearchHitWithSignals> for FoodSearchHitResponse {
             last_logged_at,
             log_count,
             last_serving,
+            last_meal,
+            last_quantity,
         }
     }
 }

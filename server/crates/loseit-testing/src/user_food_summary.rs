@@ -104,6 +104,8 @@ impl UserFoodSummaryReader for InMemoryUserFoodSummaryReader {
                     log_count: count,
                     last_logged_at: Some(latest.consumed_on),
                     last_serving,
+                    last_meal: Some(latest.meal),
+                    last_quantity: Some(latest.quantity),
                 },
             );
         }

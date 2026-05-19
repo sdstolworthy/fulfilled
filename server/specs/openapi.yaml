@@ -1492,6 +1492,27 @@ components:
             `ON DELETE SET NULL` on `food_log_entries`). Carries the
             caller-specific kcal so the search row can render that
             value without a `/foods/:id` round-trip.
+        last_meal:
+          oneOf:
+            - $ref: "#/components/schemas/Meal"
+            - type: "null"
+          description: |
+            Meal slot the caller used on the most-recent log entry for
+            this food. `null` when the food has never been logged.
+            Sourced from the same `food_log_entries` row as
+            `last_logged_at`, so this is non-null iff `last_logged_at`
+            is non-null — note this differs from `last_serving`, which
+            can be null on a logged food when the serving was later
+            deleted.
+        last_quantity:
+          $ref: "#/components/schemas/NullableDecimal"
+          description: |
+            `quantity` from the caller's most-recent log entry — the
+            serving-multiplier (e.g. `"2.0"` for "2 slices"), NOT a
+            re-statement of `last_serving.amount`. `null` when the
+            food has never been logged. Wire-encoded as a Decimal-
+            as-string for consistency with `last_serving.kcal` /
+            `amount`.
 
     Paginated:
       type: object

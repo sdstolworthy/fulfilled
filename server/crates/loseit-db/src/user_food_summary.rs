@@ -7,10 +7,11 @@
 
 use async_trait::async_trait;
 use chrono::NaiveDate;
+use loseit_core::domain::meal::Meal;
 use loseit_core::domain::unit::Unit;
 use loseit_core::domain::{ServingPreview, UserFoodSummary};
 use loseit_core::service::UserFoodSummaryReader;
-use loseit_core::CoreResult;
+use loseit_core::{CoreError, CoreResult};
 use rust_decimal::Decimal;
 use sqlx::PgPool;
 use std::collections::HashMap;
@@ -60,6 +61,8 @@ impl UserFoodSummaryReader for PgUserFoodSummaryReader {
             Uuid,
             i64,
             NaiveDate,
+            String,
+            Decimal,
             Option<Uuid>,
             Option<String>,
             Option<Decimal>,
@@ -71,6 +74,8 @@ impl UserFoodSummaryReader for PgUserFoodSummaryReader {
                 food_id,
                 cnt::bigint AS log_count,
                 last_logged_at,
+                last_meal,
+                last_quantity,
                 last_serving_id,
                 last_serving_label,
                 last_serving_amount,
@@ -81,6 +86,8 @@ impl UserFoodSummaryReader for PgUserFoodSummaryReader {
                     l.food_id,
                     COUNT(*)     OVER (PARTITION BY l.food_id) AS cnt,
                     l.consumed_on                              AS last_logged_at,
+                    l.meal                                     AS last_meal,
+                    l.quantity                                 AS last_quantity,
                     l.serving_id                               AS last_serving_id,
                     s.label                                    AS last_serving_label,
                     s.amount                                   AS last_serving_amount,
@@ -105,6 +112,8 @@ impl UserFoodSummaryReader for PgUserFoodSummaryReader {
             food_id,
             log_count,
             last_logged_at,
+            meal_str,
+            quantity,
             last_serving_id,
             last_serving_label,
             last_serving_amount,
@@ -112,6 +121,13 @@ impl UserFoodSummaryReader for PgUserFoodSummaryReader {
             last_serving_kcal,
         ) in rows
         {
+            // Parse the meal string from the log row. This column is NOT NULL
+            // in the schema and constrained to known values by a CHECK, so
+            // failure here means database corruption — loud failure is correct.
+            let parsed_meal: Meal = meal_str.parse().map_err(|_| {
+                CoreError::internal(format!("invalid meal '{meal_str}' in food_log_entries"))
+            })?;
+
             // Build the preview only when every required column is
             // present. `serving_id` being NULL means either the log
             // entry had no serving or the FK was nulled by a delete;
@@ -145,6 +161,8 @@ impl UserFoodSummaryReader for PgUserFoodSummaryReader {
                     log_count: i32::try_from(log_count).unwrap_or(i32::MAX),
                     last_logged_at: Some(last_logged_at),
                     last_serving,
+                    last_meal: Some(parsed_meal),
+                    last_quantity: Some(quantity),
                 },
             );
         }
