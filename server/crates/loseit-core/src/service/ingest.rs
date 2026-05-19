@@ -59,6 +59,13 @@ pub struct OffFoodRecord {
     /// means the source didn't tell us when the row was last touched;
     /// we conservatively keep it (no signal = no drop).
     pub last_modified_t: Option<i64>,
+    /// OFF `data_quality_errors_tags` — the moderation flow's flags for
+    /// data the contributor mis-entered (e.g. `en:nutrition-value-very-
+    /// high-for-category`, `en:energy-value-in-kcal-may-be-in-kj`). A
+    /// non-empty list means OFF itself already knows this row is bad.
+    /// The normaliser drops these with a warn log that includes the
+    /// tags so operators can see which classes of error dominate.
+    pub data_quality_errors_tags: Vec<String>,
 }
 
 /// A single USDA food portion. `gram_weight` is the canonical mass;
@@ -347,15 +354,49 @@ pub fn compute_stale_cutoff(stale_after_years: u32) -> Option<i64> {
 
 /// 4.4-aware OFF normaliser. Drops rows whose `last_modified_t` is older
 /// than `opts.stale_cutoff` (when set) in addition to the §7.1 rules.
+///
+/// Every drop path emits `tracing::info!` under target
+/// `loseit_ingest::off_drop` with a `reason` field so operators can
+/// categorize the skipped-row counter by cause (`empty_code`,
+/// `quality_tags`, `stale`, `obsolete`, `no_nutrition_data`,
+/// `all_zero`, `no_kcal_no_serving`, …). Implausible-kcal/macro/sodium
+/// drops keep their existing `warn!` calls — those are surprising
+/// data; everything else is expected filter behavior.
 pub fn accept_and_normalize_off_with_opts(
     mut record: OffFoodRecord,
     opts: &OffNormalizeOpts,
 ) -> Option<FoodDraftWithServings> {
     // §7.1 rule 1: drop if code or product_name empty.
     if record.code.trim().is_empty() {
+        tracing::info!(target: "loseit_ingest::off_drop", reason = "empty_code", "drop");
         return None;
     }
     if record.product_name.trim().is_empty() {
+        tracing::info!(
+            target: "loseit_ingest::off_drop",
+            reason = "empty_product_name",
+            barcode = %record.code,
+            "drop"
+        );
+        return None;
+    }
+
+    // OFF moderation flow already flagged this row. The full HF parquet
+    // ships this column; the slim "flat" subset doesn't (empty vec there,
+    // so this is a no-op on flat dumps). Tags include
+    // `en:energy-value-in-kcal-may-be-in-kj`,
+    // `en:nutrition-value-very-high-for-category`, etc. — exactly the
+    // rows our `(0, 900]` kcal clamp also catches by accident. Dropping
+    // them here turns a 4-digit kcal typo into a named, source-tagged
+    // skip rather than a downstream warn.
+    if !record.data_quality_errors_tags.is_empty() {
+        tracing::info!(
+            target: "loseit_ingest::off_drop",
+            reason = "quality_tags",
+            barcode = %record.code,
+            tags = ?record.data_quality_errors_tags,
+            "drop"
+        );
         return None;
     }
 
@@ -364,6 +405,14 @@ pub fn accept_and_normalize_off_with_opts(
     // so that older OFF dumps without the column aren't silently nuked.
     if let (Some(cutoff), Some(t)) = (opts.stale_cutoff, record.last_modified_t) {
         if t < cutoff {
+            tracing::info!(
+                target: "loseit_ingest::off_drop",
+                reason = "stale",
+                barcode = %record.code,
+                last_modified_t = t,
+                cutoff,
+                "drop"
+            );
             return None;
         }
     }
@@ -372,6 +421,12 @@ pub fn accept_and_normalize_off_with_opts(
     // deletion. `obsolete == true` is the explicit boolean column; the
     // `states_tags` array carries the same signal in a few flavours.
     if record.obsolete == Some(true) {
+        tracing::info!(
+            target: "loseit_ingest::off_drop",
+            reason = "obsolete_flag",
+            barcode = %record.code,
+            "drop"
+        );
         return None;
     }
     if record
@@ -379,12 +434,24 @@ pub fn accept_and_normalize_off_with_opts(
         .iter()
         .any(|t| t == "en:to-be-deleted" || t == "en:obsolete")
     {
+        tracing::info!(
+            target: "loseit_ingest::off_drop",
+            reason = "states_tags",
+            barcode = %record.code,
+            "drop"
+        );
         return None;
     }
 
     // 1.7: drop rows the contributor explicitly flagged as no-nutrition.
     if let Some(flag) = record.no_nutrition_data.as_deref() {
         if flag.trim().eq_ignore_ascii_case("on") {
+            tracing::info!(
+                target: "loseit_ingest::off_drop",
+                reason = "no_nutrition_data",
+                barcode = %record.code,
+                "drop"
+            );
             return None;
         }
     }
@@ -460,6 +527,12 @@ pub fn accept_and_normalize_off_with_opts(
         && macros_all_zero_or_none(&record.saturated_fat_100g);
     if kcal_zero_or_missing && all_macros_zero {
         // No nutrition signal at all — drop the row outright.
+        tracing::info!(
+            target: "loseit_ingest::off_drop",
+            reason = "all_zero",
+            barcode = %record.code,
+            "drop"
+        );
         return None;
     }
 
@@ -476,14 +549,34 @@ pub fn accept_and_normalize_off_with_opts(
     // Since OFF only gives us per-100g data (no per-serving nutrition fields), we
     // require per-100g to have at least kcal present to compute serving nutrition.
     if record.energy_kcal_100g.is_none() && !has_per_100g {
+        tracing::info!(
+            target: "loseit_ingest::off_drop",
+            reason = "no_nutrition_signal",
+            barcode = %record.code,
+            "drop"
+        );
         return None;
     }
     // If we have no per-100g kcal and can't build any serving, drop.
     if record.energy_kcal_100g.is_none() && parsed_serving.is_none() {
+        tracing::info!(
+            target: "loseit_ingest::off_drop",
+            reason = "no_kcal_no_serving",
+            barcode = %record.code,
+            "drop"
+        );
         return None;
     }
     // Must have kcal_100g to emit any serving (OFF only provides per-100g nutrition).
-    let kcal_100g = record.energy_kcal_100g?;
+    let Some(kcal_100g) = record.energy_kcal_100g else {
+        tracing::info!(
+            target: "loseit_ingest::off_drop",
+            reason = "no_kcal_after_clamp",
+            barcode = %record.code,
+            "drop"
+        );
+        return None;
+    };
 
     let quality_score = score(&record);
     let nutriscore_grade = record
@@ -1901,6 +1994,36 @@ mod tests {
         for s in &out.servings {
             assert!(s.fat_g.is_none());
         }
+    }
+
+    /// OFF row with a non-empty `data_quality_errors_tags` is dropped
+    /// — the upstream classifier already flagged it as bad data.
+    #[test]
+    fn off_data_quality_errors_tags_drops_row() {
+        let r = OffFoodRecord {
+            code: "DQ001".into(),
+            product_name: "Bad kcal entry".into(),
+            energy_kcal_100g: Some(dec!(200)),
+            data_quality_errors_tags: vec![
+                "en:energy-value-in-kcal-may-be-in-kj".into(),
+                "en:nutrition-value-very-high-for-category".into(),
+            ],
+            ..Default::default()
+        };
+        assert!(accept_and_normalize_off(r).is_none());
+    }
+
+    /// Empty `data_quality_errors_tags` does not drop.
+    #[test]
+    fn off_empty_data_quality_errors_tags_passes() {
+        let r = OffFoodRecord {
+            code: "DQ002".into(),
+            product_name: "Clean".into(),
+            energy_kcal_100g: Some(dec!(200)),
+            data_quality_errors_tags: vec![],
+            ..Default::default()
+        };
+        assert!(accept_and_normalize_off(r).is_some());
     }
 
     /// 1.6: OFF row tagged `en:to-be-deleted` is dropped.

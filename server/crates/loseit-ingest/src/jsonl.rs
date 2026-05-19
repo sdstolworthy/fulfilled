@@ -112,6 +112,9 @@ struct OffRaw {
     /// contributor edit. Used by `accept_and_normalize_off_with_opts` to
     /// drop rows that have been stale for more than `--stale-after-years`.
     last_modified_t: Option<i64>,
+    /// OFF `data_quality_errors_tags` — moderation flags for rows the
+    /// upstream classifier already knows are bad. Non-empty list → drop.
+    data_quality_errors_tags: Vec<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -294,6 +297,7 @@ impl OffRaw {
             obsolete: self.obsolete,
             no_nutrition_data: self.no_nutrition_data,
             last_modified_t: self.last_modified_t,
+            data_quality_errors_tags: self.data_quality_errors_tags,
         })
     }
 }

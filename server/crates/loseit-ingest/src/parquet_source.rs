@@ -61,6 +61,11 @@ const PROJECTED_COLUMNS: &[&str] = &[
     // this as either `int64` (seconds since epoch) or `timestamp[s]`;
     // the decoder handles both.
     "last_modified_t",
+    // OFF moderation flags for known-bad rows. Decoded the same way
+    // as `states_tags`: List<String> in full dumps, pipe-separated
+    // string in some flattened exports. Absent on the slim "flat"
+    // subset — silently omitted by the projection mask above.
+    "data_quality_errors_tags",
 ];
 
 pub struct ParquetSource {
@@ -196,10 +201,46 @@ fn decode_batch(batch: &arrow::record_batch::RecordBatch) -> Result<Vec<OffFoodR
             // newer ones; handle all three. The downstream normaliser
             // treats the field as Unix seconds.
             "last_modified_t" => decode_last_modified(col, &mut out),
+            "data_quality_errors_tags" => decode_data_quality_errors_tags(col, &mut out),
             _ => {}
         }
     }
     Ok(out)
+}
+
+/// Decode `data_quality_errors_tags` with the same flexibility as
+/// `states_tags`: List<String> in modern OFF parquet, pipe-separated
+/// string in some flattened exports.
+fn decode_data_quality_errors_tags(col: &Arc<dyn Array>, out: &mut [OffFoodRecord]) {
+    if let Some(arr) = col.as_any().downcast_ref::<arrow::array::ListArray>() {
+        for (i, row) in out.iter_mut().enumerate().take(arr.len()) {
+            if arr.is_null(i) {
+                continue;
+            }
+            let values = arr.value(i);
+            let mut tags = Vec::new();
+            if let Some(strings) = values.as_any().downcast_ref::<arrow::array::StringArray>() {
+                for j in 0..strings.len() {
+                    if !strings.is_null(j) {
+                        tags.push(strings.value(j).to_string());
+                    }
+                }
+            }
+            row.data_quality_errors_tags = tags;
+        }
+    } else if let Some(arr) = col.as_any().downcast_ref::<arrow::array::StringArray>() {
+        for i in 0..arr.len().min(out.len()) {
+            if !arr.is_null(i) {
+                let tags: Vec<String> = arr
+                    .value(i)
+                    .split('|')
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string())
+                    .collect();
+                out[i].data_quality_errors_tags = tags;
+            }
+        }
+    }
 }
 
 /// 4.4: decode `last_modified_t` as Unix-second `i64`. Falls through
