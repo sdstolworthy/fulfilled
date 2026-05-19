@@ -10,10 +10,19 @@
 | 4 — quality polish + cross-source dedup | landed | this commit |
 | 5 — license/app wire-up | gated on FE audit | — |
 
-**Known test gaps** (live Postgres required, no fixture in repo yet):
-- Phase 3 savepoint rollback path — food N fails, foods 1..N-1 and N+1..M still persist. In-memory `FoodRepository` doesn't model transactions, so the service-layer skip-and-log contract is covered (`off_ingest_skip_and_log_on_row_failure`) but the savepoint mechanics are not.
-- Phase 3 `COPY` round-trip with edge characters in `label` (comma, newline, quote, emoji). CSV encoder is unit-tested; wire-level round-trip is not.
-Building a Pg test fixture in `loseit-db` is the natural next step before the first prod import.
+**Live-DB test gaps — closed in `798d55a`** (`crates/loseit-db/tests/pg_writer.rs`,
+gated `#[ignore]` so `cargo test --workspace` stays clean without a DB).
+Run with:
+```
+DATABASE_URL=postgres://loseit:loseit@localhost:5432/loseit \
+  cargo test -p loseit-db --test pg_writer -- --ignored
+```
+
+Pinned scenarios:
+- Phase 3.1/3.2 savepoint rollback — `savepoint_rollback_isolates_one_bad_food`
+- Phase 3.3 COPY round-trip with comma/newline/quote/emoji label — `copy_round_trips_csv_escape_demons_in_label`
+- Phase 4.3 xmax=0 INSERT vs UPDATE split — `xmax_split_separates_inserts_from_merges`
+- Phase 4.1 cross-source GTIN dedup (USDA wins) — `cross_source_dedup_usda_wins_over_off`
 
 **2026-05-19 smoke-import correction — fix 1.2 was based on wrong research:**
 The research agent originally claimed FDC Branded foods report `foodNutrients[]` per-serving, requiring a `amount / servingSize * 100` rescale. The smoke import against real FDC data falsified this:
