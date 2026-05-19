@@ -18,12 +18,18 @@
 # server-only commit can still break client code via shared specs,
 # and the analyzer is fast (~3 s) compared to clippy.
 #
-# We DO isolate the index before running analyzers: unstaged tracked
-# changes and untracked files are stashed for the duration of the
-# hook, so the tools see exactly what's about to be committed.
+# We DO isolate untracked files before running analyzers: they get
+# stashed for the duration of the hook so the tools don't see them.
 # Without this, a WIP test scratchpad sitting in the working tree
 # can block an otherwise clean commit with its own analyzer noise.
-# The stash is always popped on exit so user state is preserved.
+# Unstaged tracked changes are left in place — they're part of the
+# operator's WIP and analyze should still catch issues in them. The
+# stash is always popped on exit so user state is preserved.
+#
+# We intentionally do NOT use `git stash push --keep-index` here:
+# that records the staged index in the stash, which then conflicts
+# with the just-committed HEAD when the trap tries to pop. Stashing
+# untracked-only avoids the conflict entirely.
 #
 # Escape hatch: `git commit --no-verify` skips this hook. Use sparingly
 # — the strict mode exists to keep tree green, not to harass.
@@ -43,25 +49,25 @@ red()    { printf '\033[31m%s\033[0m\n' "$*" >&2; }
 green()  { printf '\033[32m%s\033[0m\n' "$*"; }
 yellow() { printf '\033[33m%s\033[0m\n' "$*"; }
 
-# ─── Isolate the index ─────────────────────────────────────────────────
-# Stash anything that isn't staged (modified-but-unstaged tracked
-# files + all untracked files). The trap ensures we always pop on
-# exit so the user's WIP is preserved even on hook failure.
-stash_sha=""
-if ! git diff --quiet || [ -n "$(git ls-files --others --exclude-standard)" ]; then
-  before=$(git rev-parse --quiet --verify refs/stash 2>/dev/null || true)
-  if git stash push --keep-index --include-untracked --message "pre-commit-isolate" >/dev/null 2>&1; then
-    after=$(git rev-parse --quiet --verify refs/stash 2>/dev/null || true)
-    if [ -n "$after" ] && [ "$before" != "$after" ]; then
-      stash_sha=$after
-    fi
+# ─── Stash untracked files ─────────────────────────────────────────────
+# Only untracked files — tracked diffs (staged or unstaged) stay
+# put. Pop happens on EXIT trap so user state is restored even on
+# hook failure. Restricting the stash via pathspec avoids the
+# stash-vs-committed-HEAD conflict that --keep-index would trigger.
+untracked_stashed=0
+if [ -n "$(git ls-files --others --exclude-standard)" ]; then
+  if git ls-files --others --exclude-standard -z \
+       | xargs -0 git stash push --include-untracked --quiet --message pre-commit-untracked -- 2>/dev/null; then
+    untracked_stashed=1
   fi
 fi
 
 restore_stash() {
-  if [ -n "$stash_sha" ]; then
-    if ! git stash pop "$stash_sha" >/dev/null 2>&1; then
-      yellow "pre-commit: warning — could not auto-pop stash $stash_sha"
+  if [ "$untracked_stashed" -eq 1 ]; then
+    # The stash we pushed lands at stash@{0}; pre-commit runs serially
+    # so nothing else mutates the stash list between push and pop.
+    if ! git stash pop --quiet stash@{0} 2>/dev/null; then
+      yellow "pre-commit: could not auto-pop untracked-stash"
       yellow "  recover manually: git stash list / git stash pop"
     fi
   fi
