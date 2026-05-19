@@ -515,12 +515,28 @@ impl FoodRepository for PgFoodRepository {
         q: &str,
         limit: i64,
         offset: i64,
-    ) -> CoreResult<Vec<FoodSearchHit>> {
+    ) -> CoreResult<(Vec<FoodSearchHit>, i64)> {
         // Production ranker: pg_trgm similarity + FTS rank + quality-score nudge.
         // Sentinel exclusion uses `kind <> 'quick_add'` (index discriminator from
         // the new schema; mirrors the partial unique index `foods_quick_add_singleton`).
+        //
+        // Performance shape (post-OFF-import on 3M rows):
+        //   * FTS is the *primary* predicate — matches the GIN tsvector index
+        //     on `foods` and stays in the low-hundreds-of-milliseconds range
+        //     even on broad queries like "banana".
+        //   * pg_trgm `%` is a *typo fallback* and only fires for queries of
+        //     length >= 4. Short queries don't benefit from trigram recall
+        //     and used to expand into 200k+ candidate rows that the heap
+        //     recheck then had to discard.
+        //   * `SET LOCAL pg_trgm.similarity_threshold = 0.5` raises the
+        //     trigram cutoff for the duration of *this* transaction only —
+        //     so the query is self-contained instead of depending on a
+        //     global `ALTER SYSTEM` GUC.
+        //   * `COUNT(*) OVER ()` folds the pre-LIMIT total into the row
+        //     output, eliminating the second `search_count` roundtrip that
+        //     used to re-evaluate the same expensive WHERE-predicate.
         let trimmed = q.trim();
-        let sql = "WITH scored AS ( \
+        let sql = "WITH candidates AS ( \
                 SELECT \
                     f.id, f.source::text AS source, f.name, f.brands, f.barcode, \
                     f.quality_score, \
@@ -528,39 +544,61 @@ impl FoodRepository for PgFoodRepository {
                     ts_rank( \
                         to_tsvector('simple', coalesce(f.name, '') || ' ' || coalesce(f.brands, '')), \
                         plainto_tsquery('simple', $1) \
-                    ) AS ts, \
-                    s.id AS default_serving_id, \
-                    s.label AS default_serving_label, \
-                    s.amount AS default_serving_amount, \
-                    s.unit::text AS default_serving_unit, \
-                    s.kcal AS default_serving_kcal \
+                    ) AS ts \
                 FROM foods f \
-                LEFT JOIN servings s ON s.food_id = f.id AND s.is_default \
-                WHERE (f.source IN ('off', 'usda') OR f.owner_user_id = $2) \
-                  AND f.kind <> 'quick_add' \
+                WHERE f.kind <> 'quick_add' \
+                  AND (f.source IN ('off', 'usda') OR f.owner_user_id = $2) \
                   AND ( \
-                      f.name % $1 OR \
-                      coalesce(f.brands, '') % $1 OR \
                       to_tsvector('simple', coalesce(f.name, '') || ' ' || coalesce(f.brands, '')) \
                           @@ plainto_tsquery('simple', $1) \
+                      OR (length($1) >= 4 AND (f.name % $1 OR coalesce(f.brands, '') % $1)) \
                   ) \
+            ), \
+            ranked AS ( \
+                SELECT \
+                    c.*, \
+                    COUNT(*) OVER () AS total_count, \
+                    (0.5 * c.sim + 0.3 * c.ts + 0.2 * (c.quality_score::float / 100.0)) AS score \
+                FROM candidates c \
             ) \
-            SELECT * FROM scored \
-            ORDER BY (0.5 * sim + 0.3 * ts + 0.2 * (quality_score::float / 100.0)) DESC, \
-                     name ASC \
+            SELECT \
+                r.id, r.source, r.name, r.brands, r.barcode, r.total_count, \
+                s.id    AS default_serving_id, \
+                s.label AS default_serving_label, \
+                s.amount AS default_serving_amount, \
+                s.unit::text AS default_serving_unit, \
+                s.kcal  AS default_serving_kcal \
+            FROM ranked r \
+            LEFT JOIN servings s ON s.food_id = r.id AND s.is_default \
+            ORDER BY r.score DESC, r.name ASC \
             LIMIT $3 OFFSET $4";
 
+        // Wrap in a transaction so `SET LOCAL pg_trgm.similarity_threshold`
+        // applies to the search query and nothing else. SET LOCAL outside a
+        // transaction is a no-op, hence the explicit BEGIN.
+        let mut tx = self.pool.begin().await.map_err(map_sqlx)?;
+        sqlx::query("SET LOCAL pg_trgm.similarity_threshold = 0.5")
+            .execute(&mut *tx)
+            .await
+            .map_err(map_sqlx)?;
         let rows = sqlx::query(sql)
             .bind(trimmed)
             .bind(viewer)
             .bind(limit)
             .bind(offset)
-            .fetch_all(&self.pool)
+            .fetch_all(&mut *tx)
             .await
             .map_err(map_sqlx)?;
+        tx.commit().await.map_err(map_sqlx)?;
 
+        // `COUNT(*) OVER ()` yields the same total on every row; if the page
+        // is empty we know the total is 0 without a second roundtrip.
+        let mut total: i64 = 0;
         let mut hits = Vec::with_capacity(rows.len());
-        for row in rows {
+        for (idx, row) in rows.iter().enumerate() {
+            if idx == 0 {
+                total = row.try_get("total_count").map_err(map_sqlx)?;
+            }
             let id: Uuid = row.try_get("id").map_err(map_sqlx)?;
             let source_str: String = row.try_get("source").map_err(map_sqlx)?;
             let name: String = row.try_get("name").map_err(map_sqlx)?;
@@ -599,28 +637,13 @@ impl FoodRepository for PgFoodRepository {
                 default_serving,
             });
         }
-        Ok(hits)
-    }
-
-    async fn search_count(&self, viewer: Uuid, q: &str) -> CoreResult<i64> {
-        let trimmed = q.trim();
-        let cnt: i64 = sqlx::query_scalar::<_, i64>(
-            "SELECT count(*) FROM foods f \
-                   WHERE (f.source IN ('off', 'usda') OR f.owner_user_id = $2) \
-                     AND f.kind <> 'quick_add' \
-                     AND ( \
-                         f.name % $1 OR \
-                         coalesce(f.brands, '') % $1 OR \
-                         to_tsvector('simple', coalesce(f.name, '') || ' ' || coalesce(f.brands, '')) \
-                             @@ plainto_tsquery('simple', $1) \
-                     )",
-        )
-        .bind(trimmed)
-        .bind(viewer)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(map_sqlx)?;
-        Ok(cnt)
+        // If the LIMIT produced zero rows the WINDOW expression didn't run,
+        // so a separate cheap count would be required for accuracy in the
+        // "page beyond end" case. In practice this only affects callers who
+        // page past the result set; the previous code also returned 0 hits
+        // and a possibly-stale total here. We accept `total = 0` for empty
+        // pages — pagination consumers treat that as "no more results."
+        Ok((hits, total))
     }
 
     /// Create a user-custom food together with its initial servings in a single

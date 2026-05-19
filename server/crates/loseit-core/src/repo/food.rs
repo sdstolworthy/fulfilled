@@ -72,15 +72,22 @@ pub trait FoodRepository: Send + Sync + 'static {
 
     async fn find_by_barcode(&self, viewer: Uuid, barcode: &str) -> CoreResult<Option<Food>>;
 
+    /// Paginated text search across `foods`. Returns the hit page **and**
+    /// the pre-`LIMIT` total count in a single repository call so callers
+    /// don't have to issue a second predicate-matching roundtrip just to
+    /// drive pagination.
+    ///
+    /// The Pg implementation folds `COUNT(*) OVER ()` into the ranked
+    /// CTE so the same WHERE-predicate is evaluated once per call — the
+    /// previous `search` + `search_count` pair scanned the trgm/FTS
+    /// index path twice per request, doubling DB time post-OFF-import.
     async fn search(
         &self,
         viewer: Uuid,
         q: &str,
         limit: i64,
         offset: i64,
-    ) -> CoreResult<Vec<FoodSearchHit>>;
-
-    async fn search_count(&self, viewer: Uuid, q: &str) -> CoreResult<i64>;
+    ) -> CoreResult<(Vec<FoodSearchHit>, i64)>;
 
     /// Create a user-custom food together with its initial servings in a
     /// single transaction. At least one serving is required (service-validated

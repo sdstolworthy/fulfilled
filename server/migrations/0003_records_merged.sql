@@ -12,5 +12,10 @@
 -- Default 0 so older batches (started before this migration ran) read
 -- back cleanly. Bigint to match the other `records_*` columns.
 
+-- IF NOT EXISTS: ingest binaries (which run migrations) and the API binary
+-- (which validates `_sqlx_migrations`) can be on different release cycles —
+-- the API refuses to start if it sees a "future" migration row it doesn't
+-- know about. Making this idempotent lets us re-apply or hand-roll the
+-- ADD COLUMN out of sequence without trapping a stale API binary on prod.
 ALTER TABLE food_import_batches
-    ADD COLUMN records_merged BIGINT NOT NULL DEFAULT 0;
+    ADD COLUMN IF NOT EXISTS records_merged BIGINT NOT NULL DEFAULT 0;

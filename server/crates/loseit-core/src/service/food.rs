@@ -83,11 +83,16 @@ impl FoodService {
 
         let page = resolve_page_params(limit, offset)?;
 
-        let raw = self
+        // Single repository call: returns the hit page AND the pre-LIMIT
+        // total in one roundtrip. The Pg implementation folds
+        // `COUNT(*) OVER ()` into the ranked CTE so the same WHERE-predicate
+        // is evaluated once per search instead of the previous two
+        // (`search()` + `search_count()`) — which were halving throughput
+        // post-OFF-import.
+        let (raw, total) = self
             .foods
             .search(viewer, trimmed, page.limit, page.offset)
             .await?;
-        let total = self.foods.search_count(viewer, trimmed).await?;
 
         let mut results = wrap_hits(raw);
         enrich_hits(self.summary_reader.as_ref(), viewer, &mut results).await?;

@@ -110,7 +110,7 @@ impl FoodRepository for InMemoryFoodRepository {
         q: &str,
         limit: i64,
         offset: i64,
-    ) -> CoreResult<Vec<FoodSearchHit>> {
+    ) -> CoreResult<(Vec<FoodSearchHit>, i64)> {
         let needle = q.to_lowercase();
         let foods: Vec<Food> = {
             let store = self.by_id.lock().unwrap();
@@ -138,6 +138,7 @@ impl FoodRepository for InMemoryFoodRepository {
             matches
         };
 
+        let total = foods.len() as i64;
         let servings_guard = self.servings.lock().unwrap().clone();
 
         let mut out: Vec<FoodSearchHit> = Vec::new();
@@ -154,26 +155,7 @@ impl FoodRepository for InMemoryFoodRepository {
             };
             out.push(hit_from(&food, default_serving));
         }
-        Ok(out)
-    }
-
-    async fn search_count(&self, viewer: Uuid, q: &str) -> CoreResult<i64> {
-        let needle = q.to_lowercase();
-        let store = self.by_id.lock().unwrap();
-        let n = store
-            .values()
-            .filter(|f| is_visible(f, viewer))
-            .filter(|f| f.name != QUICK_ADD_SENTINEL_NAME)
-            .filter(|f| {
-                let mut haystack = f.name.to_lowercase();
-                if let Some(b) = &f.brands {
-                    haystack.push(' ');
-                    haystack.push_str(&b.to_lowercase());
-                }
-                haystack.contains(&needle)
-            })
-            .count();
-        Ok(n as i64)
+        Ok((out, total))
     }
 
     /// Create a user-custom food together with its initial servings. Enforces

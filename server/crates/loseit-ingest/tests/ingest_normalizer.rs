@@ -583,7 +583,7 @@ async fn usda_ingest_service_round_trip_2_records() {
     assert!(milk.is_none(), "USDA foods have no barcode");
 
     // Verify via search.
-    let milk_list = foods
+    let (milk_list, _milk_total) = foods
         .search(Uuid::nil(), "Whole Milk", 10, 0)
         .await
         .unwrap();
@@ -880,7 +880,7 @@ async fn usda_unknown_data_type_drops_and_skips() {
     assert_eq!(summary.records_skipped, 1);
 
     // The good record is queryable.
-    let hits = foods
+    let (hits, _total) = foods
         .search(Uuid::nil(), "Good Foundation", 10, 0)
         .await
         .unwrap();

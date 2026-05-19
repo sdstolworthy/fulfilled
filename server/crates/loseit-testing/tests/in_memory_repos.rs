@@ -112,14 +112,16 @@ async fn test_in_memory_food_repo_search_respects_visibility() {
     .await
     .expect("create");
 
-    let alice_hits = repo.search(alice, "kale", 50, 0).await.expect("search");
+    let (alice_hits, alice_total) = repo.search(alice, "kale", 50, 0).await.expect("search");
     assert_eq!(alice_hits.len(), 1, "owner sees their custom in search");
+    assert_eq!(alice_total, 1, "owner total reflects their visible match");
 
-    let bob_hits = repo.search(bob, "kale", 50, 0).await.expect("search");
+    let (bob_hits, bob_total) = repo.search(bob, "kale", 50, 0).await.expect("search");
     assert!(bob_hits.is_empty(), "non-owner must not see private custom");
-
-    let bob_count = repo.search_count(bob, "kale").await.expect("count");
-    assert_eq!(bob_count, 0);
+    assert_eq!(
+        bob_total, 0,
+        "non-owner total is zero (search returns hits + total in one call)"
+    );
 }
 
 #[tokio::test]
@@ -1160,15 +1162,13 @@ async fn search_excludes_quick_add_sentinel() {
         .await
         .expect("create real food");
 
-    let hits = foods.search(alice, "quick", 50, 0).await.expect("search");
+    let (hits, count) = foods.search(alice, "quick", 50, 0).await.expect("search");
     assert_eq!(hits.len(), 1, "sentinel must be excluded from search");
     assert_eq!(hits[0].name, "Quick oats");
-
-    let count = foods
-        .search_count(alice, "quick")
-        .await
-        .expect("search_count");
-    assert_eq!(count, 1, "search_count must also exclude the sentinel");
+    assert_eq!(
+        count, 1,
+        "the bundled total returned by search must also exclude the sentinel"
+    );
 }
 
 #[tokio::test]
