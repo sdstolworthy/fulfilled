@@ -77,37 +77,26 @@ class _KeyboardShortcutsState extends State<KeyboardShortcuts> {
     super.dispose();
   }
 
-  /// True when a text field currently owns primary focus. Used by the
-  /// raw `onKeyEvent` path's `g _` two-key sequence carve-out (the
-  /// `CharacterActivator`-backed `/` and `n` shortcuts now handle the
-  /// editable-skip case themselves, so this check is only load-bearing
-  /// for the raw-event path).
+  /// True when a text field currently owns primary focus. Every
+  /// character-keyed shortcut (`/`, `n`, `g _`) is editable-gated by
+  /// this check.
   ///
   /// The naive check (`primaryFocus.context.widget is EditableText`)
-  /// breaks when a `TextField` is constructed with an external
-  /// `FocusNode` (e.g. `searchFieldFocusNodeProvider` → search field):
-  /// the FocusNode's `.context` resolves to the `Focus` widget that
-  /// wraps `EditableText`, not the `EditableText` itself, so the
-  /// `is EditableText` check returns false even when the field is
-  /// actively being typed into. We walk the descendant tree from the
-  /// focus context looking for an `EditableText` so external-FocusNode
-  /// fields are detected too.
+  /// breaks for `TextField`s constructed with an external `FocusNode`
+  /// (e.g. `searchFieldFocusNodeProvider` → search field). When that
+  /// `FocusNode` becomes primary, `.context` resolves to a `Focus`
+  /// widget that lives **inside** `EditableText.build`, not to the
+  /// `EditableText` itself. The previous implementation walked the
+  /// focus context's *descendants* looking for `EditableText` — but
+  /// `EditableText` is the *ancestor* of its own internal `Focus`, so
+  /// the descendant walk never found it, and every character-keyed
+  /// shortcut hijacked the keystroke. Walking ancestors fixes it.
   bool get _editableFocused {
     final focused = FocusManager.instance.primaryFocus;
     final ctx = focused?.context;
     if (ctx == null) return false;
     if (ctx.widget is EditableText) return true;
-    bool found = false;
-    void visit(Element el) {
-      if (found) return;
-      if (el.widget is EditableText) {
-        found = true;
-        return;
-      }
-      el.visitChildren(visit);
-    }
-    ctx.visitChildElements(visit);
-    return found;
+    return ctx.findAncestorWidgetOfExactType<EditableText>() != null;
   }
 
   void _focusSearchOrPush(BuildContext context) {
