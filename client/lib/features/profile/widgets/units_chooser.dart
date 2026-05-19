@@ -1,11 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../domain/enums.dart';
-import '../../../domain/user.dart';
 import '../../../form_factor/form_factor.dart';
-import '../../../providers/profile_providers.dart';
-import '../../../providers/repository_providers.dart';
 import '../../../theme/context_extensions.dart';
 import '../../../widgets/activity_option.dart';
 import '../../../widgets/primary_button.dart';
@@ -30,6 +26,12 @@ import 'weight_unit_chooser.dart';
 /// sections stacked vertically (architect §5.8 — explicit: stacked,
 /// not side-by-side). Same multi-select-in-place behaviour.
 ///
+/// **Pure presentation leaf** (see `specs/testing_guide.md` §4.4). The
+/// row handlers await container-supplied [onWeightSave] /
+/// [onHeightSave] callbacks; the container reads
+/// `profileRepositoryProvider` and `meProvider` and performs the
+/// PATCH + invalidate cycle there.
+///
 /// **T-24 Case 1** — the row handlers PATCH then update local
 /// `selected*` state. `/me` is the source; the sheet is the editor; it
 /// pops on the "Done" footer (or swipe-down). The underlying Units row
@@ -42,25 +44,28 @@ import 'weight_unit_chooser.dart';
 /// what PM's "editing one preference doesn't dismiss the other" rule
 /// encodes.
 Future<void> showUnitsChooser(
-  BuildContext context,
-  WidgetRef ref, {
+  BuildContext context, {
   required WeightUnit initialWeight,
   required HeightUnit initialHeight,
+  required Future<void> Function(WeightUnit value) onWeightSave,
+  required Future<void> Function(HeightUnit value) onHeightSave,
 }) {
   final formFactor = FormFactor.of(context);
   if (formFactor.isCompact) {
     return _showCompactSheet(
       context,
-      ref,
       initialWeight: initialWeight,
       initialHeight: initialHeight,
+      onWeightSave: onWeightSave,
+      onHeightSave: onHeightSave,
     );
   }
   return _showExpandedPopup(
     context,
-    ref,
     initialWeight: initialWeight,
     initialHeight: initialHeight,
+    onWeightSave: onWeightSave,
+    onHeightSave: onHeightSave,
   );
 }
 
@@ -69,10 +74,11 @@ Future<void> showUnitsChooser(
 // ---------------------------------------------------------------------------
 
 Future<void> _showCompactSheet(
-  BuildContext context,
-  WidgetRef ref, {
+  BuildContext context, {
   required WeightUnit initialWeight,
   required HeightUnit initialHeight,
+  required Future<void> Function(WeightUnit value) onWeightSave,
+  required Future<void> Function(HeightUnit value) onHeightSave,
 }) {
   return showModalBottomSheet<void>(
     context: context,
@@ -85,10 +91,12 @@ Future<void> _showCompactSheet(
     ),
     builder: (sheetContext) => SafeArea(
       top: false,
-      child: _UnitsChooserBody(
+      child: UnitsChooserBody(
         initialWeight: initialWeight,
         initialHeight: initialHeight,
         showGrabber: true,
+        onWeightSave: onWeightSave,
+        onHeightSave: onHeightSave,
       ),
     ),
   );
@@ -101,10 +109,11 @@ Future<void> _showCompactSheet(
 // ---------------------------------------------------------------------------
 
 Future<void> _showExpandedPopup(
-  BuildContext context,
-  WidgetRef ref, {
+  BuildContext context, {
   required WeightUnit initialWeight,
   required HeightUnit initialHeight,
+  required Future<void> Function(WeightUnit value) onWeightSave,
+  required Future<void> Function(HeightUnit value) onHeightSave,
 }) {
   return showDialog<void>(
     context: context,
@@ -115,10 +124,12 @@ Future<void> _showExpandedPopup(
       ),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 360),
-        child: _UnitsChooserBody(
+        child: UnitsChooserBody(
           initialWeight: initialWeight,
           initialHeight: initialHeight,
           showGrabber: false,
+          onWeightSave: onWeightSave,
+          onHeightSave: onHeightSave,
         ),
       ),
     ),
@@ -129,22 +140,32 @@ Future<void> _showExpandedPopup(
 // Body — shared between the compact sheet and the expanded popup.
 // ---------------------------------------------------------------------------
 
-class _UnitsChooserBody extends ConsumerStatefulWidget {
-  const _UnitsChooserBody({
+/// Stateful presentation body shared by the compact sheet and the
+/// expanded dialog. Owns the locally-mirrored selection per axis and a
+/// global `_saving` lock that prevents two PATCHes racing the same
+/// `meProvider`. On failure, only the just-tapped axis rolls back; the
+/// other section is left alone (PM acceptance §2.1).
+class UnitsChooserBody extends StatefulWidget {
+  const UnitsChooserBody({
     required this.initialWeight,
     required this.initialHeight,
     required this.showGrabber,
+    required this.onWeightSave,
+    required this.onHeightSave,
+    super.key,
   });
 
   final WeightUnit initialWeight;
   final HeightUnit initialHeight;
   final bool showGrabber;
+  final Future<void> Function(WeightUnit value) onWeightSave;
+  final Future<void> Function(HeightUnit value) onHeightSave;
 
   @override
-  ConsumerState<_UnitsChooserBody> createState() => _UnitsChooserBodyState();
+  State<UnitsChooserBody> createState() => _UnitsChooserBodyState();
 }
 
-class _UnitsChooserBodyState extends ConsumerState<_UnitsChooserBody> {
+class _UnitsChooserBodyState extends State<UnitsChooserBody> {
   late WeightUnit _selectedWeight = widget.initialWeight;
   late HeightUnit _selectedHeight = widget.initialHeight;
 
@@ -157,7 +178,7 @@ class _UnitsChooserBodyState extends ConsumerState<_UnitsChooserBody> {
   /// the PATCH so the user can keep editing the other axis (PM
   /// acceptance §2.1). `meProvider` invalidation is what flips the
   /// downstream `weightUnitProvider` / `heightUnitProvider` on the
-  /// next frame.
+  /// next frame — both happen inside [UnitsChooserBody.onWeightSave].
   Future<void> _selectWeight(WeightUnit picked) async {
     if (_saving) return;
     if (picked == _selectedWeight) return;
@@ -168,9 +189,7 @@ class _UnitsChooserBodyState extends ConsumerState<_UnitsChooserBody> {
     });
     final messenger = ScaffoldMessenger.maybeOf(context);
     try {
-      final repo = ref.read(profileRepositoryProvider);
-      await repo.update(UserPatch(weightUnit: picked));
-      ref.invalidate(meProvider);
+      await widget.onWeightSave(picked);
       if (!mounted) return;
       setState(() => _saving = false);
     } catch (_) {
@@ -198,9 +217,7 @@ class _UnitsChooserBodyState extends ConsumerState<_UnitsChooserBody> {
     });
     final messenger = ScaffoldMessenger.maybeOf(context);
     try {
-      final repo = ref.read(profileRepositoryProvider);
-      await repo.update(UserPatch(heightUnit: picked));
-      ref.invalidate(meProvider);
+      await widget.onHeightSave(picked);
       if (!mounted) return;
       setState(() => _saving = false);
     } catch (_) {

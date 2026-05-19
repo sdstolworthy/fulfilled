@@ -8,6 +8,7 @@ import '../../../domain/units/energy.dart';
 import '../../../domain/units/weight.dart';
 import '../../../domain/user.dart';
 import '../../../providers/profile_providers.dart';
+import '../../../providers/repository_providers.dart';
 import '../../../providers/weight_providers.dart';
 import '../../../theme/context_extensions.dart';
 import '../../../widgets/number_text.dart';
@@ -473,7 +474,15 @@ class GoalProfilePrereqs extends ConsumerWidget {
           icon: Icons.person_outline,
           label: 'Sex',
           value: 'Set',
-          onTap: () => showSexPicker(context, initial: user.sex),
+          onTap: () => showSexPicker(
+            context,
+            initial: user.sex,
+            onSave: (picked) async {
+              final repo = ref.read(profileRepositoryProvider);
+              await repo.update(UserPatch(sex: picked));
+              ref.invalidate(meProvider);
+            },
+          ),
         );
       case GoalPrereqField.birthDate:
         return SettingsRow(
@@ -510,6 +519,11 @@ class GoalProfilePrereqs extends ConsumerWidget {
           onTap: () => showActivityLevelPicker(
             context,
             initial: user.activityLevel,
+            onSave: (picked) async {
+              final repo = ref.read(profileRepositoryProvider);
+              await repo.update(UserPatch(activityLevel: picked));
+              ref.invalidate(meProvider);
+            },
           ),
         );
     }

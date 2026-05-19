@@ -1,10 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../domain/enums.dart';
-import '../../../domain/user.dart';
-import '../../../providers/profile_providers.dart';
-import '../../../providers/repository_providers.dart';
 import '../../../theme/context_extensions.dart';
 import 'editor_footer.dart';
 import 'editor_host.dart';
@@ -12,26 +8,49 @@ import 'editor_host.dart';
 /// Pick `Sex` for the authenticated user. Three options, rendered as
 /// large radio rows so the touch target clears T-06.
 ///
-/// On save: PATCH `/me` via `profileRepository.update(UserPatch)`,
-/// invalidate `meProvider`, dismiss the editor.
-Future<void> showSexPicker(BuildContext context, {required Sex? initial}) {
+/// **Pure presentation leaf** — see `specs/testing_guide.md` §4.4. The
+/// widget owns purely-local "selected / saving / error" state but
+/// imports no providers. The `onSave` callback is supplied by the
+/// container (`ProfileScreen` / `GoalEditorBody`) and performs the
+/// repo write + `meProvider` invalidation; if it throws, the leaf
+/// renders an inline error and keeps the sheet open.
+///
+/// [showSexPicker] is a thin shell helper — it mounts the leaf inside
+/// the profile editor sheet/dialog. The caller (which has `ref` in
+/// scope) supplies [onSave].
+Future<void> showSexPicker(
+  BuildContext context, {
+  required Sex? initial,
+  required Future<void> Function(Sex value) onSave,
+}) {
   return showProfileEditor<void>(
     context: context,
     title: 'Sex',
-    builder: (sheetContext) => SexPicker(initial: initial),
+    builder: (sheetContext) => SexPicker(initial: initial, onSave: onSave),
   );
 }
 
-class SexPicker extends ConsumerStatefulWidget {
-  const SexPicker({required this.initial, super.key});
+/// Stateful presentation leaf for the Sex picker. Holds the user's
+/// in-progress selection plus the `_saving` / `_error` UI flags. The
+/// actual repo write + provider invalidation are owned by the
+/// container — passed in via [onSave]. A throw from [onSave] flips
+/// the leaf into the inline-error branch; success pops the editor.
+class SexPicker extends StatefulWidget {
+  const SexPicker({required this.initial, required this.onSave, super.key});
 
+  /// Initial selection (from the user record). `null` means "no
+  /// selection yet" — the user can pick any value and Save.
   final Sex? initial;
 
+  /// Container-supplied save handler. Throws on failure; the leaf
+  /// catches and renders an inline error.
+  final Future<void> Function(Sex value) onSave;
+
   @override
-  ConsumerState<SexPicker> createState() => _SexPickerState();
+  State<SexPicker> createState() => _SexPickerState();
 }
 
-class _SexPickerState extends ConsumerState<SexPicker> {
+class _SexPickerState extends State<SexPicker> {
   Sex? _value;
   bool _saving = false;
   String? _error;
@@ -42,13 +61,14 @@ class _SexPickerState extends ConsumerState<SexPicker> {
     _value = widget.initial;
   }
 
-  /// T-24 Case 1 — pop-to-source.
-  ///
-  /// `/me` is the source; the user expects the picked sex to render on
-  /// the Body row they tapped from. PATCH `/me` fires before pop, then
-  /// `meProvider` invalidation drives the profile re-read (T-18).
+  /// T-24 Case 1 — pop-to-source. `/me` is the source; the user
+  /// expects the picked sex to render on the Body row they tapped
+  /// from. The container's `onSave` callback does the PATCH +
+  /// `meProvider` invalidation; on success we pop so the source row
+  /// re-renders against the new value (T-18).
   Future<void> _save() async {
-    if (_value == null || _value == widget.initial) {
+    final picked = _value;
+    if (picked == null || picked == widget.initial) {
       Navigator.of(context).pop();
       return;
     }
@@ -57,11 +77,9 @@ class _SexPickerState extends ConsumerState<SexPicker> {
       _error = null;
     });
     try {
-      final repo = ref.read(profileRepositoryProvider);
-      await repo.update(UserPatch(sex: _value));
-      ref.invalidate(meProvider);
+      await widget.onSave(picked);
       if (mounted) Navigator.of(context).pop();
-    } catch (e) {
+    } catch (_) {
       if (mounted) {
         setState(() {
           _saving = false;

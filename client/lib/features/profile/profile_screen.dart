@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
+import '../../data/auth_config.dart';
 import '../../data/auth_token.dart';
 import '../../domain/enums.dart';
 import '../../domain/goal.dart';
@@ -15,6 +16,7 @@ import '../../domain/user.dart';
 import '../../providers/food_providers.dart';
 import '../../providers/goal_providers.dart';
 import '../../providers/profile_providers.dart';
+import '../../providers/repository_providers.dart';
 import '../../providers/weight_providers.dart';
 import '../../repositories/goal_repository.dart';
 import '../../routing/routes.dart';
@@ -127,6 +129,20 @@ class _ProfileBody extends ConsumerWidget {
     // record. Read it through the dedicated provider so weight
     // writes propagate without a `meProvider` invalidate.
     final currentKg = ref.watch(currentWeightKgProvider).valueOrNull;
+    // The server-URL row is a pure leaf; resolve the URL here so it
+    // takes a `url: String?` constructor param (§4.4).
+    final serverUrl = ref.watch(baseUrlProvider);
+
+    // Shared "PATCH /me + invalidate meProvider" handler, parameterised
+    // over the `UserPatch` shape each picker emits. The pickers are
+    // pure presentation; the container owns the repo write +
+    // invalidation. Rethrows on failure so the leaf can render its
+    // inline error / SnackBar.
+    Future<void> patchMe(UserPatch patch) async {
+      final repo = ref.read(profileRepositoryProvider);
+      await repo.update(patch);
+      ref.invalidate(meProvider);
+    }
 
     return ListView(
       padding: EdgeInsets.only(
@@ -160,7 +176,11 @@ class _ProfileBody extends ConsumerWidget {
               icon: Icons.person_outline,
               label: 'Sex',
               value: _sexLabel(user.sex),
-              onTap: () => showSexPicker(context, initial: user.sex),
+              onTap: () => showSexPicker(
+                context,
+                initial: user.sex,
+                onSave: (picked) => patchMe(UserPatch(sex: picked)),
+              ),
             ),
             SettingsRow(
               icon: Icons.calendar_today_outlined,
@@ -208,6 +228,8 @@ class _ProfileBody extends ConsumerWidget {
               onTap: () => showActivityLevelPicker(
                 context,
                 initial: user.activityLevel,
+                onSave: (picked) =>
+                    patchMe(UserPatch(activityLevel: picked)),
               ),
             ),
           ],
@@ -246,9 +268,12 @@ class _ProfileBody extends ConsumerWidget {
                   'height ${user.heightUnit.longLabel}. Tap to change.',
               onTap: () => showUnitsChooser(
                 context,
-                ref,
                 initialWeight: user.weightUnit,
                 initialHeight: user.heightUnit,
+                onWeightSave: (picked) =>
+                    patchMe(UserPatch(weightUnit: picked)),
+                onHeightSave: (picked) =>
+                    patchMe(UserPatch(heightUnit: picked)),
               ),
             ),
           ],
@@ -278,7 +303,7 @@ class _ProfileBody extends ConsumerWidget {
         // stray `SettingsCard` divider with no row below it.
         // Informational only; the user changes server via sign-out
         // → sign-in on the login screen (PM §10 anti-recommendation 10).
-        const ServerUrlRow(),
+        ServerUrlRow(url: serverUrl),
 
         SizedBox(height: space.x4),
 

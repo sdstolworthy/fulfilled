@@ -1,11 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../domain/enums.dart';
-import '../../../domain/user.dart';
 import '../../../form_factor/form_factor.dart';
-import '../../../providers/profile_providers.dart';
-import '../../../providers/repository_providers.dart';
 import '../../../theme/context_extensions.dart';
 import '../../../widgets/activity_option.dart';
 
@@ -16,17 +12,17 @@ import '../../../widgets/activity_option.dart';
 ///   [ActivityOption]-shaped rows — kilograms, pounds, stones & pounds.
 /// - On `medium` / `expanded`, an anchored popup menu (T-15).
 ///
-/// The chooser body is shared across form factors — only the shell
-/// differs. On selection the chooser PATCHes `weight_unit` through
-/// [ProfileRepository.update], invalidates [meProvider], and closes.
-/// The downstream [weightUnitProvider] flips on the next frame, so
-/// every weight-rendering widget refreshes (T-18).
+/// **Pure presentation leaf** (see `specs/testing_guide.md` §4.4). The
+/// leaf imports no providers; on selection it awaits the container's
+/// [onSave] callback, which PATCHes `weight_unit` via
+/// `profileRepositoryProvider` and invalidates `meProvider`. The
+/// downstream [weightUnitProvider] flips on the next frame so every
+/// weight-rendering widget refreshes (T-18).
 ///
 /// T-24 Case 1 — pop-to-source (both form-factor branches). `/me` is
 /// the source; the compact sheet calls `navigator.pop()` after the
 /// PATCH lands, and the expanded `showMenu` flow pops itself when the
-/// user taps an item. The downstream `weightUnitProvider` re-derives
-/// from the invalidated `meProvider` on the next frame.
+/// user taps an item.
 ///
 /// Failure path: keep the chooser open and surface a SnackBar
 /// (`"Couldn't update unit. Try again."`).
@@ -36,15 +32,15 @@ import '../../../widgets/activity_option.dart';
 /// uses it (T-23 — the lifted-widget inventory is the architect's
 /// component list; this chooser isn't in it).
 Future<void> showWeightUnitChooser(
-  BuildContext context,
-  WidgetRef ref, {
+  BuildContext context, {
   required WeightUnit initial,
+  required Future<void> Function(WeightUnit value) onSave,
 }) {
   final formFactor = FormFactor.of(context);
   if (formFactor.isCompact) {
-    return _showCompactSheet(context, ref, initial: initial);
+    return _showCompactSheet(context, initial: initial, onSave: onSave);
   }
-  return _showExpandedMenu(context, ref, initial: initial);
+  return _showExpandedMenu(context, initial: initial, onSave: onSave);
 }
 
 // ---------------------------------------------------------------------------
@@ -52,9 +48,9 @@ Future<void> showWeightUnitChooser(
 // ---------------------------------------------------------------------------
 
 Future<void> _showCompactSheet(
-  BuildContext context,
-  WidgetRef ref, {
+  BuildContext context, {
   required WeightUnit initial,
+  required Future<void> Function(WeightUnit value) onSave,
 }) {
   return showModalBottomSheet<void>(
     context: context,
@@ -67,28 +63,36 @@ Future<void> _showCompactSheet(
     ),
     builder: (sheetContext) => SafeArea(
       top: false,
-      child: _WeightUnitChooserBody(initial: initial),
+      child: WeightUnitChooserBody(initial: initial, onSave: onSave),
     ),
   );
 }
 
-class _WeightUnitChooserBody extends ConsumerStatefulWidget {
-  const _WeightUnitChooserBody({required this.initial});
+/// Stateful presentation body for the compact-form bottom sheet.
+/// Owns the in-flight `_saving` flag + the locally-mirrored selection.
+/// On failure rolls back and surfaces a SnackBar; on success pops to
+/// source.
+class WeightUnitChooserBody extends StatefulWidget {
+  const WeightUnitChooserBody({
+    required this.initial,
+    required this.onSave,
+    super.key,
+  });
 
   final WeightUnit initial;
+  final Future<void> Function(WeightUnit value) onSave;
 
   @override
-  ConsumerState<_WeightUnitChooserBody> createState() =>
-      _WeightUnitChooserBodyState();
+  State<WeightUnitChooserBody> createState() => _WeightUnitChooserBodyState();
 }
 
-class _WeightUnitChooserBodyState
-    extends ConsumerState<_WeightUnitChooserBody> {
+class _WeightUnitChooserBodyState extends State<WeightUnitChooserBody> {
   late WeightUnit _value = widget.initial;
   bool _saving = false;
 
   Future<void> _select(WeightUnit picked) async {
     if (_saving) return;
+    final previous = _value;
     setState(() {
       _value = picked;
       _saving = true;
@@ -96,14 +100,15 @@ class _WeightUnitChooserBodyState
     final navigator = Navigator.of(context);
     final messenger = ScaffoldMessenger.maybeOf(context);
     try {
-      final repo = ref.read(profileRepositoryProvider);
-      await repo.update(UserPatch(weightUnit: picked));
-      ref.invalidate(meProvider);
+      await widget.onSave(picked);
       if (!mounted) return;
       navigator.pop();
     } catch (_) {
       if (!mounted) return;
-      setState(() => _saving = false);
+      setState(() {
+        _value = previous;
+        _saving = false;
+      });
       messenger?.showSnackBar(
         const SnackBar(
           content: Text("Couldn't update unit. Try again."),
@@ -167,9 +172,9 @@ class _WeightUnitChooserBodyState
 // ---------------------------------------------------------------------------
 
 Future<void> _showExpandedMenu(
-  BuildContext context,
-  WidgetRef ref, {
+  BuildContext context, {
   required WeightUnit initial,
+  required Future<void> Function(WeightUnit value) onSave,
 }) async {
   final overlay =
       Overlay.of(context).context.findRenderObject() as RenderBox?;
@@ -210,9 +215,7 @@ Future<void> _showExpandedMenu(
   );
   if (picked == null || picked == initial) return;
   try {
-    final repo = ref.read(profileRepositoryProvider);
-    await repo.update(UserPatch(weightUnit: picked));
-    ref.invalidate(meProvider);
+    await onSave(picked);
   } catch (_) {
     messenger?.showSnackBar(
       const SnackBar(

@@ -1,11 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../domain/enums.dart';
-import '../../../domain/user.dart';
 import '../../../form_factor/form_factor.dart';
-import '../../../providers/profile_providers.dart';
-import '../../../providers/repository_providers.dart';
 import '../../../theme/context_extensions.dart';
 import '../../../widgets/activity_option.dart';
 
@@ -21,29 +17,29 @@ import '../../../widgets/activity_option.dart';
 ///   rows — Centimeters and Feet & inches.
 /// - On `medium` / `expanded`, an anchored popup menu (T-15).
 ///
-/// On selection the chooser PATCHes `height_unit` through
-/// [ProfileRepository.update], invalidates [meProvider], and closes.
-/// The downstream [heightUnitProvider] flips on the next frame, so
+/// **Pure presentation leaf** (see `specs/testing_guide.md` §4.4).
+/// The leaf imports no providers. On selection it awaits the
+/// container-supplied [onSave] callback, which performs the PATCH
+/// against `profileRepositoryProvider` and `ref.invalidate(meProvider)`
+/// — the downstream [heightUnitProvider] flips on the next frame so
 /// every height-rendering widget refreshes (T-18).
 ///
 /// **T-24 Case 1 — pop-to-source.** `/me` is the source; the compact
 /// sheet calls `navigator.pop()` after the PATCH lands, and the
 /// expanded `showMenu` flow pops itself when the user taps an item.
-/// The downstream `heightUnitProvider` re-derives from the invalidated
-/// `meProvider` on the next frame.
 ///
 /// Failure path: keep the chooser open and surface a SnackBar
 /// (`"Couldn't update unit. Try again."`).
 Future<void> showHeightUnitChooser(
-  BuildContext context,
-  WidgetRef ref, {
+  BuildContext context, {
   required HeightUnit initial,
+  required Future<void> Function(HeightUnit value) onSave,
 }) {
   final formFactor = FormFactor.of(context);
   if (formFactor.isCompact) {
-    return _showCompactSheet(context, ref, initial: initial);
+    return _showCompactSheet(context, initial: initial, onSave: onSave);
   }
-  return _showExpandedMenu(context, ref, initial: initial);
+  return _showExpandedMenu(context, initial: initial, onSave: onSave);
 }
 
 // ---------------------------------------------------------------------------
@@ -51,9 +47,9 @@ Future<void> showHeightUnitChooser(
 // ---------------------------------------------------------------------------
 
 Future<void> _showCompactSheet(
-  BuildContext context,
-  WidgetRef ref, {
+  BuildContext context, {
   required HeightUnit initial,
+  required Future<void> Function(HeightUnit value) onSave,
 }) {
   return showModalBottomSheet<void>(
     context: context,
@@ -66,31 +62,41 @@ Future<void> _showCompactSheet(
     ),
     builder: (sheetContext) => SafeArea(
       top: false,
-      child: _HeightUnitChooserBody(initial: initial),
+      child: HeightUnitChooserBody(initial: initial, onSave: onSave),
     ),
   );
 }
 
-class _HeightUnitChooserBody extends ConsumerStatefulWidget {
-  const _HeightUnitChooserBody({required this.initial});
+/// Stateful presentation body for the compact-form bottom sheet.
+/// Owns the in-flight `_saving` flag + the locally-mirrored selection
+/// (the visual selection updates eagerly on tap so the chooser feels
+/// responsive while the PATCH is in flight). On failure rolls back
+/// and surfaces a SnackBar; on success pops to source.
+class HeightUnitChooserBody extends StatefulWidget {
+  const HeightUnitChooserBody({
+    required this.initial,
+    required this.onSave,
+    super.key,
+  });
 
   final HeightUnit initial;
+  final Future<void> Function(HeightUnit value) onSave;
 
   @override
-  ConsumerState<_HeightUnitChooserBody> createState() =>
-      _HeightUnitChooserBodyState();
+  State<HeightUnitChooserBody> createState() => _HeightUnitChooserBodyState();
 }
 
-class _HeightUnitChooserBodyState
-    extends ConsumerState<_HeightUnitChooserBody> {
+class _HeightUnitChooserBodyState extends State<HeightUnitChooserBody> {
   late HeightUnit _value = widget.initial;
   bool _saving = false;
 
-  /// T-24 Case 1 — pop-to-source. `/me` is the source; the chooser
-  /// PATCHes `height_unit`, invalidates `meProvider`, then pops so the
-  /// underlying Units row re-renders with the freshly persisted unit.
+  /// T-24 Case 1 — pop-to-source. The container's `onSave` callback
+  /// PATCHes `height_unit` + invalidates `meProvider`; we then pop so
+  /// the underlying Units row re-renders with the freshly persisted
+  /// unit.
   Future<void> _select(HeightUnit picked) async {
     if (_saving) return;
+    final previous = _value;
     setState(() {
       _value = picked;
       _saving = true;
@@ -98,14 +104,15 @@ class _HeightUnitChooserBodyState
     final navigator = Navigator.of(context);
     final messenger = ScaffoldMessenger.maybeOf(context);
     try {
-      final repo = ref.read(profileRepositoryProvider);
-      await repo.update(UserPatch(heightUnit: picked));
-      ref.invalidate(meProvider);
+      await widget.onSave(picked);
       if (!mounted) return;
       navigator.pop();
     } catch (_) {
       if (!mounted) return;
-      setState(() => _saving = false);
+      setState(() {
+        _value = previous;
+        _saving = false;
+      });
       messenger?.showSnackBar(
         const SnackBar(
           content: Text("Couldn't update unit. Try again."),
@@ -169,9 +176,9 @@ class _HeightUnitChooserBodyState
 // ---------------------------------------------------------------------------
 
 Future<void> _showExpandedMenu(
-  BuildContext context,
-  WidgetRef ref, {
+  BuildContext context, {
   required HeightUnit initial,
+  required Future<void> Function(HeightUnit value) onSave,
 }) async {
   final overlay =
       Overlay.of(context).context.findRenderObject() as RenderBox?;
@@ -212,9 +219,7 @@ Future<void> _showExpandedMenu(
   );
   if (picked == null || picked == initial) return;
   try {
-    final repo = ref.read(profileRepositoryProvider);
-    await repo.update(UserPatch(heightUnit: picked));
-    ref.invalidate(meProvider);
+    await onSave(picked);
   } catch (_) {
     messenger?.showSnackBar(
       const SnackBar(
