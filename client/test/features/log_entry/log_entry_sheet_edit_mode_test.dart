@@ -264,17 +264,15 @@ void main() {
       await tester.pump(const Duration(milliseconds: 50));
 
       expect(repo.lastUpdateId, existing.id);
-      final patch = repo.lastUpdatePatch!;
-      expect(patch.quantity, isNotNull);
-      expect(patch.quantity, Decimal.parse('1.52'));
-      // Everything else is sparse — the user touched nothing else.
-      expect(patch.servingId, isNull);
-      expect(patch.consumedOn, isNull);
-      expect(patch.meal, isNull);
-      expect(patch.note, isNull);
-      expect(patch.clearNote, isFalse);
-      // food_id is never modelled; assert at the wire too.
-      expect(patch.toJson().containsKey('food_id'), isFalse);
+      // Assert on the wire shape, not the LogPatch field-by-field. The
+      // server's contract is the JSON body — internal field renames or
+      // additions to `LogPatch` that don't change the wire should leave
+      // this test green. Sparse-patch semantics: only the diff appears
+      // on the wire, and `food_id` is never emitted (immutable).
+      expect(
+        repo.lastUpdatePatch!.toJson(),
+        equals(<String, dynamic>{'quantity': '1.52'}),
+      );
     },
   );
 
@@ -303,14 +301,14 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
 
-    final patch = repo.lastUpdatePatch!;
-    expect(patch.note, isNull);
-    expect(patch.clearNote, isTrue);
-    // Wire shape: `"note": null` is the explicit clear signal.
-    final json = patch.toJson();
-    expect(json.containsKey('note'), isTrue);
-    expect(json['note'], isNull);
-    expect(json.containsKey('food_id'), isFalse);
+    // Wire shape: `"note": null` is the explicit clear signal — the
+    // only field that may carry a JSON `null` in a LogPatch. The user
+    // didn't touch quantity / serving / meal / date here, so the patch
+    // is `{"note": null}` and nothing else.
+    expect(
+      repo.lastUpdatePatch!.toJson(),
+      equals(<String, dynamic>{'note': null}),
+    );
   });
 
   testWidgets(
@@ -337,12 +335,13 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 50));
 
-      final patch = repo.lastUpdatePatch!;
-      expect(patch.note, isNull);
-      expect(patch.clearNote, isFalse);
-      final json = patch.toJson();
-      expect(json.containsKey('note'), isFalse);
-      expect(json.containsKey('food_id'), isFalse);
+      // Wire shape: only the diff (quantity) is emitted. Empty seed +
+      // empty form is "unchanged" — neither `note` nor `note: null`
+      // appears in the JSON.
+      expect(
+        repo.lastUpdatePatch!.toJson(),
+        equals(<String, dynamic>{'quantity': '1.52'}),
+      );
     },
   );
 
