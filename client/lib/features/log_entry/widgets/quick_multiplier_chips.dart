@@ -1,21 +1,38 @@
 import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../theme/context_extensions.dart';
-import '../log_entry_sheet.dart' show quantityProvider;
 
 /// Quick-multiplier chips (0.5×, 1×, 1.5×, 2×, 3×) shown beneath the
-/// log-entry sheet's `QuantityStepper`. Tapping a chip writes the
-/// multiplier to [quantityProvider]; the chip whose value equals the
-/// current quantity renders selected.
+/// log-entry sheet's `QuantityStepper`. Tapping a chip invokes
+/// [onSelected] with the multiplier; the chip whose value equals
+/// [currentQuantity] renders selected.
+///
+/// **Pure presentation widget** — all inputs arrive via constructor
+/// parameters (see `specs/testing_guide.md` §4.4). The container
+/// (`log_entry_sheet.dart`) reads `quantityProvider` and supplies
+/// [currentQuantity] + an [onSelected] callback that writes the new
+/// value back through the notifier.
 ///
 /// **Screen-04-specific composition** — intentionally NOT lifted to
 /// `lib/widgets/`. The chips are a sibling widget to the canonical
 /// `QuantityStepper`; the inventory entry's `quickMultipliers` slot is
 /// reserved for a future inline variant. See dev_tickets.md T-002.
-class QuickMultiplierChips extends ConsumerWidget {
-  const QuickMultiplierChips({super.key});
+class QuickMultiplierChips extends StatelessWidget {
+  const QuickMultiplierChips({
+    super.key,
+    required this.currentQuantity,
+    required this.onSelected,
+  });
+
+  /// Currently-selected serving multiplier. The chip whose value equals
+  /// this renders with the selected affordance (accent fill + selected
+  /// semantics flag). Sourced by the container from `quantityProvider`.
+  final Decimal currentQuantity;
+
+  /// Fired when the user taps a chip. The container wires this to
+  /// `ref.read(quantityProvider.notifier).state = value`.
+  final ValueChanged<Decimal> onSelected;
 
   static final List<Decimal> _values = <Decimal>[
     Decimal.parse('0.5'),
@@ -26,8 +43,7 @@ class QuickMultiplierChips extends ConsumerWidget {
   ];
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final current = ref.watch(quantityProvider);
+  Widget build(BuildContext context) {
     final space = context.space;
     return Row(
       children: <Widget>[
@@ -36,9 +52,8 @@ class QuickMultiplierChips extends ConsumerWidget {
           Expanded(
             child: _Chip(
               value: _values[i],
-              selected: _values[i] == current,
-              onTap: () =>
-                  ref.read(quantityProvider.notifier).state = _values[i],
+              selected: _values[i] == currentQuantity,
+              onTap: () => onSelected(_values[i]),
             ),
           ),
         ],

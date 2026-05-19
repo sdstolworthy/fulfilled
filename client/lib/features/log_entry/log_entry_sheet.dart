@@ -709,7 +709,11 @@ class _LogEntrySheetBodyState extends ConsumerState<LogEntrySheetBody> {
                     onUnitChanged: (u) => setState(() => _enteredUnit = u),
                   ),
                   SizedBox(height: space.x2),
-                  const QuickMultiplierChips(),
+                  QuickMultiplierChips(
+                    currentQuantity: quantity,
+                    onSelected: (v) =>
+                        ref.read(quantityProvider.notifier).state = v,
+                  ),
                   SizedBox(height: space.x4 + 2),
                   const _SectionLabel(text: 'MEAL'),
                   SizedBox(height: space.x2),
