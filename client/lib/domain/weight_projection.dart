@@ -7,14 +7,14 @@ import 'weight.dart';
 /// Projection of when the user will hit their target weight under their
 /// observed intake.
 ///
-/// **Model:** Mifflin-St Jeor BMR + Forbes-partitioned two-compartment
-/// (fat / fat-free mass) dynamic update, iterated daily until the
-/// projected weight crosses the target or a 730-day horizon is hit.
-/// A scalar `k` fitted to the trailing 14–28 day window absorbs
-/// Mifflin error + chronic intake under-reporting in one shot. See
-/// `specs/weight_projection_research.md` §5 — that is the canonical
-/// derivation; the code below references it ("see §5.6") rather than
-/// re-deriving anything.
+/// **Model:** Mifflin-St Jeor BMR + Hall-style PAA (`δ × W`) + Forbes-
+/// partitioned two-compartment (fat / fat-free mass) dynamic update,
+/// iterated daily until the projected weight crosses the target or a
+/// 730-day horizon is hit. A scalar `k` fitted to the trailing
+/// 14–28 day window absorbs Mifflin error + chronic intake under-
+/// reporting in one shot. See `specs/weight_projection_research.md`
+/// §5 for the broader derivation; the TDEE term diverges from §5.3
+/// in one place — see [_simulate] for the rationale.
 ///
 /// **Why the inner loop uses `double`, not `Decimal`.** The model is
 /// approximate (±15–25 % per the research §1). The inner loop performs
@@ -190,13 +190,21 @@ GoalProjection projectGoal({
   // young men and pathologically high on very obese older women.
   final bf0 = (bfPercent / 100.0).clamp(0.08, 0.55).toDouble();
 
-  final palMultiplier = _palFor(activityLevel);
+  final deltaPaa = _hallDeltaFor(activityLevel);
 
   // Calibration window — trailing 14–28 days of intake. See research
   // §5.5 and §6.1 ("intake sparsity"). We use the trailing-window
   // median (7-day-median trick) as the projected future intake.
-  final calibration =
-      _calibrate(history: history, intake: intake, now: now);
+  final calibration = _calibrate(
+    history: history,
+    intake: intake,
+    now: now,
+    weightKg: currentKgD,
+    heightCm: heightCmD,
+    ageYears: age,
+    sex: sex,
+    deltaPaa: deltaPaa,
+  );
   final meanIntakeKcal = calibration.meanIntakeKcal;
   final kScalar = calibration.k;
   final isLowConfidence = calibration.lowConfidence;
@@ -210,7 +218,7 @@ GoalProjection projectGoal({
             heightCm: heightCmD,
             ageYears: age,
             sex: sex,
-            pal: palMultiplier,
+            deltaPaa: deltaPaa,
             kScalar: 0.95,
             intakeForTef: 2000.0,
           ) *
@@ -224,7 +232,7 @@ GoalProjection projectGoal({
     heightCm: heightCmD,
     sex: sex,
     ageYears: age,
-    pal: palMultiplier,
+    deltaPaa: deltaPaa,
     intakeKcal: assumedIntake,
     kScalar: kScalar,
     targetKg: targetKg.toDouble(),
@@ -318,6 +326,11 @@ _Calibration _calibrate({
   required List<WeightEntry> history,
   required List<IntakeDay> intake,
   required DateTime now,
+  required double weightKg,
+  required double heightCm,
+  required int ageYears,
+  required Sex sex,
+  required double deltaPaa,
 }) {
   // Intake window — 14 most recent days of available log data.
   // §6.1 requires ≥ 10 logged days in the last 14 for calibration.
@@ -393,38 +406,77 @@ _Calibration _calibrate({
       lowConfidence: true,
     );
   }
-  final observedDeltaKg =
-      usable.last.weightKg.toDouble() - usable.first.weightKg.toDouble();
+  // §6.1 — water-weight noise on single observations is ±0.5 kg even
+  // for honest daily weighers. Compute ΔW from the median of the
+  // trailing and leading thirds of the usable window so a single
+  // noisy day doesn't pivot the fit. Window size adapts to entry
+  // count: 7 entries each side for daily weighers, fewer (≥ 1) for
+  // weekly-cadence users. Span used in the rate calc is the gap
+  // between the medians of the two window date-ranges.
+  final windowSize = (usable.length ~/ 3).clamp(1, 7);
+  final headWindow = usable.take(windowSize).toList();
+  final tailWindow =
+      usable.reversed.take(windowSize).toList().reversed.toList();
+  final headMedianKg = _medianKg(headWindow);
+  final tailMedianKg = _medianKg(tailWindow);
+  final headCenter = headWindow[headWindow.length ~/ 2].recordedOn;
+  final tailCenter = tailWindow[tailWindow.length ~/ 2].recordedOn;
+  final smoothedSpanDays = tailCenter.difference(headCenter).inDays;
+  if (smoothedSpanDays < 7) {
+    return _Calibration(
+      k: 0.95,
+      meanIntakeKcal: meanIntake,
+      lowConfidence: true,
+    );
+  }
+  final observedDeltaKg = tailMedianKg - headMedianKg;
 
-  // The calibration uses the user's current profile by way of the
-  // caller — but we don't have it inside this helper. Rather than
-  // plumb it through, we approximate the slope dΔW/dk locally:
-  // a typical "kg per unit-k over N days" sensitivity is
-  // ~0.05 × spanDays × pal × bmr/2000 kg. Without the profile in
-  // hand the safest approximation is the linearised form below,
-  // which is accurate to ~5 % across the constrained `k` band.
+  // Linearise the forward model around `k = 1` and solve for the `k`
+  // that matches the observed ΔW over the window:
   //
-  // Concretely: we assume the user's intake roughly matches some
-  // multiple of their TDEE. A `k = 1` user with no observed
-  // deficit would see ΔW = 0; the residual scales linearly with
-  // the deficit-driven mass change. Empirically a 7700-kcal-per-kg
-  // sensitivity is the right ballpark for a 7-to-28-day window
-  // — long enough that adaptive thermogenesis isn't dominant but
-  // short enough that asymptote dynamics haven't kicked in.
+  //   balance(k) = intake − tef − k × activeEnergy
+  //   ΔW(k)     = balance(k) × span / ρ_eff
+  //   solve     ΔW(k) == observed
   //
-  // residual(k) = predicted_balance(k) × span / 7700 − observed
-  // predicted_balance(k) = intake − k × baselineTdee
+  // `activeEnergy = BMR + δ·W` — the part of TDEE that the scalar
+  // `k` modulates (TEF is intake-driven and AT is small over a
+  // 14-day window, so neither belongs inside the k-scaled term).
   //
-  // We don't know baselineTdee without sex/height/age, so fall
-  // back to a heuristic of intake/0.95 (i.e. assume the user is
-  // currently in a small deficit at k = 1). This is good enough
-  // — k absorbs the residual error in the forward projection.
-  final baselineTdee = meanIntake! / 0.95;
-  // Solve: (meanIntake − k × baselineTdee) × spanDays / 7700 == observedDeltaKg
-  // → k = (meanIntake − observedDeltaKg × 7700 / spanDays) / baselineTdee
+  // `ρ_eff` is the per-user effective energy density of mass change,
+  // derived from the Forbes partition + tissue densities the forward
+  // sim uses. A fixed 7700 kcal/kg overstates ρ_eff by ~40 % for
+  // typical body comps, which silently inflates the implied deficit
+  // and over-corrects `k`. The Deurenberg-seeded F₀ gives a good
+  // first estimate: at F=30 kg, ρ_eff ≈ 4500; at F=10 kg, ρ_eff ≈
+  // 3400; at F=50 kg, ρ_eff ≈ 5500.
+  final bmr0 = 10.0 * weightKg +
+      6.25 * heightCm -
+      5.0 * ageYears +
+      _mifflinSexConstant(sex);
+  final activeEnergy = bmr0 + deltaPaa * weightKg;
+  final tef = 0.10 * meanIntake!;
+
+  // Deurenberg seed (same as the projection path) → ρ_eff.
+  final bmi0 = weightKg / ((heightCm / 100.0) * (heightCm / 100.0));
+  final sexFactorBF = switch (sex) {
+    Sex.male => 1.0,
+    Sex.female => 0.0,
+    Sex.other => 0.5,
+  };
+  final bf0Frac =
+      ((1.20 * bmi0 + 0.23 * ageYears - 10.8 * sexFactorBF - 5.4) / 100.0)
+          .clamp(0.08, 0.55)
+          .toDouble();
+  final f0 = bf0Frac * weightKg;
+  final pPartition = 10.4 / (10.4 + f0);
+  // ρ_eff = 1 / ((1-p)/ρ_F + p/ρ_L). Energy densities in §5.1.
+  final rhoEff = 1.0 /
+      ((1.0 - pPartition) / 9440.0 + pPartition / 1800.0);
+
   final implied = (meanIntake -
-          observedDeltaKg * 7700.0 / spanDays) /
-      baselineTdee;
+          tef -
+          observedDeltaKg * rhoEff / smoothedSpanDays) /
+      activeEnergy;
   final kFit = implied.clamp(0.7, 1.3).toDouble();
 
   return _Calibration(
@@ -435,6 +487,15 @@ _Calibration _calibrate({
 }
 
 DateTime _dateOf(DateTime d) => DateTime(d.year, d.month, d.day);
+
+double _medianKg(List<WeightEntry> entries) {
+  final values = <double>[
+    for (final e in entries) e.weightKg.toDouble(),
+  ]..sort();
+  final n = values.length;
+  if (n.isOdd) return values[n ~/ 2];
+  return 0.5 * (values[n ~/ 2 - 1] + values[n ~/ 2]);
+}
 
 // ─── Simulation ────────────────────────────────────────────────────────────
 
@@ -460,13 +521,27 @@ class _SimResult {
 
 /// Per research §5.6 — Forbes-partitioned two-compartment dynamic
 /// update, iterated daily.
+///
+/// **TDEE form deviates from research §5.3.** §5.3 specifies
+/// `TDEE = k·PAL·BMR + 0.10·intake − AT`. A synthetic-user sweep
+/// (see `test/domain/weight_projection_sweep_test.dart`) showed
+/// that form predicting ~2-4× faster loss than NIH BWP + literature
+/// norms across every test case — the `PAL × BMR` product amplifies
+/// Mifflin's 10 kcal/kg/day weight-sensitivity by ~1.55×, but the
+/// real physiology of physical-activity expenditure scales with
+/// mass at a flatter slope. We instead use Hall's PAA form:
+/// `TDEE = k·(BMR + δ·W) + 0.10·intake − AT` with δ keyed to
+/// activity level (5/9/13/17/21 kcal/kg/day across the ladder, per
+/// Hall 2011 Lancet + Hall 2010 AJCN). Same TDEE *level* at the
+/// starting weight, more accurate dTDEE/dW as the user converges
+/// on their equilibrium weight.
 _SimResult _simulate({
   required double startWeightKg,
   required double bf0,
   required double heightCm,
   required Sex sex,
   required int ageYears,
-  required double pal,
+  required double deltaPaa,
   required double intakeKcal,
   required double kScalar,
   required double targetKg,
@@ -502,7 +577,7 @@ _SimResult _simulate({
   for (var day = 1; day <= horizon; day += 1) {
     final bmr = 10.0 * W + 6.25 * heightCm - 5.0 * ageYears + sexConst;
     final at = beta * (startW - W > 0 ? (startW - W) : 0.0);
-    final tdee = kScalar * pal * bmr + 0.10 * intakeKcal - at;
+    final tdee = kScalar * (bmr + deltaPaa * W) + 0.10 * intakeKcal - at;
     var balance = intakeKcal - tdee;
     if (balance < minBalance) balance = minBalance;
     if (balance > maxBalance) balance = maxBalance;
@@ -597,18 +672,22 @@ double _mifflinSexConstant(Sex s) {
   }
 }
 
-double _palFor(ActivityLevel level) {
+/// Hall's activity-keyed PAA coefficient (kcal/kg/day). Sources:
+/// Hall 2011 Lancet, Hall 2010 AJCN. Sedentary ≈ 5, very-active
+/// adult ≈ 21. The ladder interpolates linearly between the two
+/// to match our 5-level activity enum.
+double _hallDeltaFor(ActivityLevel level) {
   switch (level) {
     case ActivityLevel.sedentary:
-      return 1.2;
+      return 5.0;
     case ActivityLevel.light:
-      return 1.375;
+      return 9.0;
     case ActivityLevel.moderate:
-      return 1.55;
+      return 13.0;
     case ActivityLevel.active:
-      return 1.725;
+      return 17.0;
     case ActivityLevel.veryActive:
-      return 1.9;
+      return 21.0;
   }
 }
 
@@ -617,7 +696,7 @@ double _initialTdee({
   required double heightCm,
   required int ageYears,
   required Sex sex,
-  required double pal,
+  required double deltaPaa,
   required double kScalar,
   required double intakeForTef,
 }) {
@@ -625,7 +704,7 @@ double _initialTdee({
       6.25 * heightCm -
       5.0 * ageYears +
       _mifflinSexConstant(sex);
-  return kScalar * pal * bmr + 0.10 * intakeForTef;
+  return kScalar * (bmr + deltaPaa * weightKg) + 0.10 * intakeForTef;
 }
 
 // ─── Decimal helpers ───────────────────────────────────────────────────────
