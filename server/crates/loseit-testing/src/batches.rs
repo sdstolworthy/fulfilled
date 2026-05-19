@@ -49,6 +49,7 @@ impl BatchRepository for InMemoryBatchRepository {
             source_etag: source_etag.map(|s| s.to_string()),
             records_seen: 0,
             records_upserted: 0,
+            records_merged: 0,
             records_skipped: 0,
             status: BatchStatus::Running,
             error: None,
@@ -62,23 +63,29 @@ impl BatchRepository for InMemoryBatchRepository {
         id: Uuid,
         seen: u64,
         upserted: u64,
+        merged: u64,
         skipped: u64,
     ) -> CoreResult<()> {
         let mut store = self.by_id.lock().unwrap();
         let batch = store.get_mut(&id).ok_or(loseit_core::CoreError::NotFound)?;
         batch.records_seen += seen as i64;
         batch.records_upserted += upserted as i64;
+        batch.records_merged += merged as i64;
         batch.records_skipped += skipped as i64;
         Ok(())
     }
 
     async fn finish(&self, id: Uuid, stats: UpsertStats) -> CoreResult<()> {
+        // Counters were kept current by `bump_counts`; we only flip the
+        // status here (mirrors the Pg semantics so reruns share behaviour).
         let mut store = self.by_id.lock().unwrap();
         let batch = store.get_mut(&id).ok_or(loseit_core::CoreError::NotFound)?;
         batch.status = BatchStatus::Completed;
         batch.completed_at = Some(Utc::now());
-        batch.records_upserted = (stats.inserted + stats.updated) as i64;
-        batch.records_skipped = stats.skipped as i64;
+        // `UpsertStats` doesn't carry `merged` separately yet; we leave
+        // `records_merged` as already-bumped by `bump_counts`. Tests that
+        // assert on the merged count read it from the in-memory row.
+        let _ = stats;
         Ok(())
     }
 

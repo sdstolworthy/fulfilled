@@ -815,12 +815,17 @@ async fn off_ingest_force_bypasses_short_circuit() {
             VecOffSource::new(sample_off_records()),
             "test://force-src",
             Some("sha256:beef;size:1"),
-            RunOptions { force: true },
+            RunOptions {
+                force: true,
+                ..Default::default()
+            },
         )
         .await
         .expect("force run");
-    // Same content → 2 upserts again (same barcodes update existing rows).
-    assert_eq!(stats.inserted, 2);
+    // Same content → 2 merged updates (Phase 4.3 splits inserts vs.
+    // dedup-merges; same barcodes hit `ON CONFLICT DO UPDATE`).
+    assert_eq!(stats.inserted, 0);
+    assert_eq!(stats.updated, 2);
 }
 
 // ---------------------------------------------------------------------------
@@ -899,4 +904,144 @@ fn usda_unknown_data_type_unit_dropped() {
         accept_and_normalize_usda(r).is_none(),
         "unknown USDA data_type must drop"
     );
+}
+
+// ---------------------------------------------------------------------------
+// 4.1: cross-source GTIN dedup — OFF then USDA Branded → single row
+// ---------------------------------------------------------------------------
+
+/// 4.1: an OFF row with barcode `X` followed by a USDA Branded row with
+/// `gtinUpc = X` must collapse to a single `foods` row, with `source =
+/// 'usda'` (curated > crowd-sourced) and `records_merged` bumped to 1
+/// on the second batch.
+#[tokio::test]
+async fn cross_source_gtin_merges_off_into_usda() {
+    let (foods, _servings, batches, svc) = build_ingest_service();
+
+    // Pass 1: OFF row with barcode 0049000028911.
+    let off_records = vec![OffFoodRecord {
+        code: "0049000028911".into(),
+        product_name: "Coca-Cola (OFF)".into(),
+        energy_kcal_100g: Some(dec!(39)),
+        protein_100g: Some(dec!(0)),
+        carbs_100g: Some(dec!(10)),
+        fat_100g: Some(dec!(0)),
+        ..Default::default()
+    }];
+    let off_stats = svc
+        .run_off(VecOffSource::new(off_records), "test://off-pass", None)
+        .await
+        .expect("OFF pass");
+    assert_eq!(off_stats.inserted, 1);
+    assert_eq!(off_stats.updated, 0);
+
+    // The OFF row is now in the repo as source=Off, barcode preserved.
+    let off_food = foods
+        .find_by_barcode(Uuid::nil(), "0049000028911")
+        .await
+        .unwrap()
+        .expect("OFF row landed");
+    assert_eq!(off_food.source, FoodSource::Off);
+    let off_food_id = off_food.id;
+
+    // Pass 2: USDA Branded row with the same GTIN as gtinUpc.
+    let usda_records = vec![UsdaFoodRecord {
+        fdc_id: 1234567,
+        data_type: "Branded".into(), // real FDC casing
+        description: "Coca-Cola Classic".into(),
+        brand_owner: Some("The Coca-Cola Company".into()),
+        food_portions: vec![],
+        energy_kcal_100g: Some(dec!(39)),
+        protein_100g: Some(dec!(0)),
+        carbs_100g: Some(dec!(10.4)),
+        fat_100g: Some(dec!(0)),
+        gtin_upc: Some("0049000028911".into()),
+        ..Default::default()
+    }];
+    let usda_stats = svc
+        .run_usda(VecUsdaSource::new(usda_records), "test://usda-pass", None)
+        .await
+        .expect("USDA pass");
+    assert_eq!(usda_stats.inserted, 0, "should not be a fresh insert");
+    assert_eq!(usda_stats.updated, 1, "should count as a merged update");
+
+    // Still exactly one row at that barcode, now USDA-sourced + fdc_id
+    // stamped + same id as the OFF row.
+    let merged = foods
+        .find_by_barcode(Uuid::nil(), "0049000028911")
+        .await
+        .unwrap()
+        .expect("merged row present");
+    assert_eq!(merged.id, off_food_id, "row id must be stable across merge");
+    assert_eq!(merged.source, FoodSource::Usda, "USDA wins on conflict");
+    assert_eq!(merged.fdc_id, Some(1234567));
+    assert_eq!(merged.name, "Coca-Cola Classic");
+
+    // Phase 4.3 — the second batch's bookkeeping reflects the merge.
+    use loseit_core::domain::BatchStatus;
+    let batch_id = batches
+        .find_by_url("test://usda-pass")
+        .expect("usda batch present");
+    let batch = batches.get(batch_id).expect("batch row");
+    assert_eq!(batch.status, BatchStatus::Completed);
+    assert_eq!(batch.records_seen, 1);
+    assert_eq!(batch.records_upserted, 0);
+    assert_eq!(batch.records_merged, 1);
+    assert_eq!(batch.records_skipped, 0);
+}
+
+/// 4.3: re-importing the same OFF row twice (with a fresh source_url to
+/// bypass the etag short-circuit) reports `merged = 1` on the second pass.
+#[tokio::test]
+async fn off_reimport_counts_as_merged() {
+    let (_foods, _servings, batches, svc) = build_ingest_service();
+
+    let records = vec![OffFoodRecord {
+        code: "M001".into(),
+        product_name: "Repeat".into(),
+        energy_kcal_100g: Some(dec!(100)),
+        ..Default::default()
+    }];
+
+    // First import — fresh insert.
+    let s1 = svc
+        .run_off(VecOffSource::new(records.clone()), "test://merge-1", None)
+        .await
+        .expect("first import");
+    assert_eq!(s1.inserted, 1);
+    assert_eq!(s1.updated, 0);
+
+    // Second import — same barcode → merged. Use a different source_url
+    // so the etag short-circuit doesn't fire (etag is None anyway, but
+    // matching source_url + None etag is fine — the short-circuit
+    // requires a non-None etag).
+    let s2 = svc
+        .run_off(VecOffSource::new(records), "test://merge-2", None)
+        .await
+        .expect("second import");
+    assert_eq!(s2.inserted, 0);
+    assert_eq!(s2.updated, 1, "second pass must be merged, not inserted");
+
+    let bid = batches.find_by_url("test://merge-2").unwrap();
+    let b = batches.get(bid).unwrap();
+    assert_eq!(b.records_merged, 1);
+    assert_eq!(b.records_upserted, 0);
+}
+
+/// 4.1 + leading-zero preservation: end-to-end through
+/// `accept_and_normalize_usda` → repo, the GTIN's leading zero survives
+/// byte-identical.
+#[test]
+fn usda_branded_gtin_byte_identical_through_normalize() {
+    let r = UsdaFoodRecord {
+        fdc_id: 1234568,
+        data_type: "branded_food".into(),
+        description: "Branded".into(),
+        food_portions: vec![],
+        energy_kcal_100g: Some(dec!(100)),
+        gtin_upc: Some("0049000028911".into()),
+        ..Default::default()
+    };
+    let out = accept_and_normalize_usda(r).expect("should accept");
+    assert_eq!(out.draft.barcode.as_deref(), Some("0049000028911"));
 }

@@ -36,6 +36,10 @@ pub struct FoodImportBatch {
     pub source_etag: Option<String>,
     pub records_seen: i64,
     pub records_upserted: i64,
+    /// Phase 4.3: count of UPSERTs that hit `ON CONFLICT DO UPDATE`
+    /// rather than inserting a fresh row. Includes cross-source GTIN
+    /// dedup (4.1) and same-source re-imports. New column in 0003.
+    pub records_merged: i64,
     pub records_skipped: i64,
     pub status: BatchStatus,
     pub error: Option<String>,

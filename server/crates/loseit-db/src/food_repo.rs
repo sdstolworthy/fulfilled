@@ -162,43 +162,101 @@ async fn insert_serving_in_tx(
     row_to_serving(&row)
 }
 
+/// Outcome of `write_one_external_food_in_tx`.
+enum FoodWriteResult {
+    /// Row was freshly INSERTed (xmax = 0 on RETURNING).
+    Inserted,
+    /// Row already existed and the `ON CONFLICT DO UPDATE` branch fired.
+    /// Phase 4.3: counted toward `BatchWriteOutcome.merged`, including
+    /// the cross-source GTIN dedup case (4.1 — USDA Branded merging into
+    /// a prior OFF row).
+    Merged,
+    /// Non-error skip (today only: USDA `data_type` missing/unrecognised).
+    /// The savepoint hasn't touched any state and we RELEASE it.
+    Skipped,
+}
+
 /// Phase 3 single-food writer used by `upsert_external_food_batch`.
 ///
 /// Runs the food UPSERT, the per-food `DELETE FROM servings`, and the bulk
 /// serving load (`COPY ... FROM STDIN`) inside the caller's transaction
-/// (typically nested under a `SAVEPOINT food_<n>`). Returns:
-/// - `Ok(true)` on a clean upsert,
-/// - `Ok(false)` for non-error skips (USDA `data_type` unrecognised — this
-///   matches the previous behaviour where the row was logged + dropped),
-/// - `Err(...)` on any SQL error; the caller is expected to ROLLBACK to the
-///   savepoint and continue with the next food (skip-and-log per Phase 1.5).
+/// (typically nested under a `SAVEPOINT food_<n>`). Returns a
+/// [`FoodWriteResult`] so the caller can split fresh inserts from
+/// cross-source merges in `BatchWriteOutcome`.
+///
+/// Phase 4.1 + 4.3 conflict-key selection:
+///   - If `draft.barcode` is set, conflict on `(barcode)`. This covers
+///     both OFF (always has barcode) and USDA Branded (gtinUpc stamped
+///     onto barcode upstream) — and lets the two sources collapse onto
+///     a single row when they share a GTIN.
+///   - Otherwise the row is USDA non-Branded (Foundation / SR Legacy /
+///     Survey); conflict on `(fdc_id)`.
+///
+/// Phase 4.1 USDA-wins policy:
+///   - When the barcode-keyed UPSERT enters the DO UPDATE branch and the
+///     incoming row is USDA, we set `foods.source = 'usda'` and stamp the
+///     fdc_id / data_type. A prior OFF row is upgraded to USDA.
+///   - When the incoming row is OFF and the existing row is already USDA,
+///     we DO NOT overwrite (the UPDATE clause matches everything but the
+///     `source` column, so the row's source stays `usda`).
 async fn write_one_external_food_in_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     batch_id: Uuid,
     rec: &FoodDraftWithServings,
-) -> CoreResult<bool> {
+) -> CoreResult<FoodWriteResult> {
     let draft = &rec.draft;
 
-    // The source identity invariant means OFF foods conflict on `barcode`
-    // (partial unique index) and USDA foods conflict on `fdc_id` (partial
-    // unique index); ingest enforces this split.
-    let food_id: Uuid = if draft.barcode.is_some() {
+    // 4.1 + 4.3: branch on whether the draft has a barcode. USDA Branded
+    // now arrives here with both `barcode` and `fdc_id`; we route those
+    // to the barcode-conflict path so cross-source dedup works.
+    let (food_id, was_insert): (Uuid, bool) = if let Some(barcode) = draft.barcode.as_deref() {
+        let incoming_source: &str = if draft.fdc_id.is_some() {
+            "usda"
+        } else {
+            "off"
+        };
+        let db_data_type: Option<&'static str> =
+            draft.data_type.as_deref().and_then(normalise_data_type);
+        // Reject USDA Branded whose data_type is unparseable — the
+        // CHECK constraint would do this for us, but failing here keeps
+        // the per-row skip counter accurate.
+        if incoming_source == "usda" && db_data_type.is_none() {
+            tracing::warn!(
+                fdc_id = ?draft.fdc_id,
+                barcode = %barcode,
+                raw_data_type = ?draft.data_type,
+                "skipping USDA Branded food: data_type missing or unrecognised"
+            );
+            return Ok(FoodWriteResult::Skipped);
+        }
+        // 4.3: `xmax = 0` on RETURNING is true for fresh INSERTs and
+        // false for the DO UPDATE branch. We thread that boolean back
+        // so the caller can split merges from inserts.
         let sql = "INSERT INTO foods ( \
-                source, barcode, name, brands, categories_tags, \
+                source, barcode, fdc_id, data_type, name, brands, categories_tags, \
                 nutriscore_grade, quality_score, last_import_batch_id \
              ) VALUES ( \
-                'off', $1, $2, $3, $4, $5, $6, $7 \
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10 \
              ) \
              ON CONFLICT (barcode) WHERE barcode IS NOT NULL DO UPDATE SET \
+                source               = CASE \
+                    WHEN EXCLUDED.source = 'usda' THEN 'usda' \
+                    ELSE foods.source \
+                END, \
+                fdc_id               = COALESCE(EXCLUDED.fdc_id, foods.fdc_id), \
+                data_type            = COALESCE(EXCLUDED.data_type, foods.data_type), \
                 name                 = EXCLUDED.name, \
                 brands               = EXCLUDED.brands, \
                 categories_tags      = EXCLUDED.categories_tags, \
                 nutriscore_grade     = EXCLUDED.nutriscore_grade, \
                 quality_score        = EXCLUDED.quality_score, \
                 last_import_batch_id = EXCLUDED.last_import_batch_id \
-             RETURNING id";
-        sqlx::query_scalar::<_, Uuid>(sql)
-            .bind(draft.barcode.as_deref())
+             RETURNING id, (xmax = 0) AS inserted";
+        let row = sqlx::query(sql)
+            .bind(incoming_source)
+            .bind(barcode)
+            .bind(draft.fdc_id)
+            .bind(db_data_type)
             .bind(&draft.name)
             .bind(draft.brands.as_deref())
             .bind(&draft.categories_tags)
@@ -207,7 +265,10 @@ async fn write_one_external_food_in_tx(
             .bind(batch_id)
             .fetch_one(&mut **tx)
             .await
-            .map_err(map_sqlx)?
+            .map_err(map_sqlx)?;
+        let id: Uuid = row.try_get("id").map_err(map_sqlx)?;
+        let inserted: bool = row.try_get("inserted").map_err(map_sqlx)?;
+        (id, inserted)
     } else {
         let fdc_id = match draft.fdc_id {
             Some(id) => id,
@@ -225,7 +286,7 @@ async fn write_one_external_food_in_tx(
                     raw_data_type = ?draft.data_type,
                     "skipping USDA food: data_type missing or unrecognised"
                 );
-                return Ok(false);
+                return Ok(FoodWriteResult::Skipped);
             }
         };
         let sql = "INSERT INTO foods ( \
@@ -242,8 +303,8 @@ async fn write_one_external_food_in_tx(
                 nutriscore_grade     = EXCLUDED.nutriscore_grade, \
                 quality_score        = EXCLUDED.quality_score, \
                 last_import_batch_id = EXCLUDED.last_import_batch_id \
-             RETURNING id";
-        sqlx::query_scalar::<_, Uuid>(sql)
+             RETURNING id, (xmax = 0) AS inserted";
+        let row = sqlx::query(sql)
             .bind(fdc_id)
             .bind(db_data_type)
             .bind(&draft.name)
@@ -254,7 +315,10 @@ async fn write_one_external_food_in_tx(
             .bind(batch_id)
             .fetch_one(&mut **tx)
             .await
-            .map_err(map_sqlx)?
+            .map_err(map_sqlx)?;
+        let id: Uuid = row.try_get("id").map_err(map_sqlx)?;
+        let inserted: bool = row.try_get("inserted").map_err(map_sqlx)?;
+        (id, inserted)
     };
 
     // Atomic serving replace inside the same savepoint.
@@ -268,7 +332,11 @@ async fn write_one_external_food_in_tx(
         copy_servings_in_tx(tx, food_id, &rec.servings).await?;
     }
 
-    Ok(true)
+    Ok(if was_insert {
+        FoodWriteResult::Inserted
+    } else {
+        FoodWriteResult::Merged
+    })
 }
 
 /// Stream serving rows into Postgres via `COPY ... FROM STDIN` instead of
@@ -727,7 +795,7 @@ impl FoodRepository for PgFoodRepository {
             }
 
             match write_one_external_food_in_tx(&mut tx, batch_id, rec).await {
-                Ok(true) => {
+                Ok(FoodWriteResult::Inserted) => {
                     if let Err(err) = sqlx::query(&format!("RELEASE SAVEPOINT {savepoint}"))
                         .execute(&mut *tx)
                         .await
@@ -736,7 +804,18 @@ impl FoodRepository for PgFoodRepository {
                     }
                     outcome.upserted += 1;
                 }
-                Ok(false) => {
+                Ok(FoodWriteResult::Merged) => {
+                    // 4.3: ON CONFLICT branch fired — count as merged
+                    // rather than upserted. Same release semantics.
+                    if let Err(err) = sqlx::query(&format!("RELEASE SAVEPOINT {savepoint}"))
+                        .execute(&mut *tx)
+                        .await
+                    {
+                        return Err(map_sqlx(err));
+                    }
+                    outcome.merged += 1;
+                }
+                Ok(FoodWriteResult::Skipped) => {
                     // Non-error skip (e.g. USDA data_type unrecognised). The
                     // savepoint hasn't written anything but we still RELEASE
                     // it so the outer transaction stays clean.

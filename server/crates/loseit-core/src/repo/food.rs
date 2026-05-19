@@ -40,11 +40,22 @@ pub struct FoodDraftWithServings {
 ///
 /// Phase 1.5: per-row failures used to abort the entire chunk via `?`
 /// bubble; they now no-op the offending food and the batch carries on.
+///
+/// Phase 4.3: `upserted` now counts fresh inserts only; `merged` counts
+/// rows where the `ON CONFLICT` clause UPDATEd an existing row. The
+/// `(xmax = 0)` RETURNING trick on the Pg writer distinguishes the two
+/// without a second round-trip. Cross-source GTIN dedup (4.1) is the
+/// motivating case: a USDA Branded row whose `gtinUpc` matches a
+/// previously-imported OFF row UPDATEs in place rather than inserting.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct BatchWriteOutcome {
-    /// Foods successfully upserted into the `foods` table together with
-    /// their serving rows.
+    /// Foods that were freshly INSERTed into the `foods` table.
     pub upserted: u64,
+    /// Foods whose UPSERT triggered the ON CONFLICT branch and UPDATEd
+    /// an existing row. This includes both same-source updates (re-import
+    /// of the same dump) and cross-source merges (4.1 — OFF row updated
+    /// by a USDA Branded import with the same GTIN).
+    pub merged: u64,
     /// Foods that failed mid-write and were skipped. Each gets a
     /// `tracing::warn!` line; we don't surface them individually here
     /// because the batch counts are usually all the caller cares about.

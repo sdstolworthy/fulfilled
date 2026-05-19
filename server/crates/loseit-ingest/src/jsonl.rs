@@ -108,6 +108,10 @@ struct OffRaw {
     /// 1.7: OFF `no_nutrition_data` — string `"on"` means the row has no
     /// nutrition info per the contributor.
     no_nutrition_data: Option<String>,
+    /// 4.4: OFF `last_modified_t` — Unix epoch seconds of the most recent
+    /// contributor edit. Used by `accept_and_normalize_off_with_opts` to
+    /// drop rows that have been stale for more than `--stale-after-years`.
+    last_modified_t: Option<i64>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -289,6 +293,7 @@ impl OffRaw {
             states_tags: self.states_tags,
             obsolete: self.obsolete,
             no_nutrition_data: self.no_nutrition_data,
+            last_modified_t: self.last_modified_t,
         })
     }
 }

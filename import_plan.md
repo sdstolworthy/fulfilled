@@ -7,7 +7,7 @@
 | 1 — correctness blockers | landed | `27b5da7` |
 | 2 — operational robustness | landed | `75261fa` |
 | 3 — throughput | landed | `8b5bddf` |
-| 4 — quality polish + cross-source dedup | pending | — |
+| 4 — quality polish + cross-source dedup | landed | this commit |
 | 5 — license/app wire-up | gated on FE audit | — |
 
 **Known test gaps** (live Postgres required, no fixture in repo yet):

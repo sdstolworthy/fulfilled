@@ -53,6 +53,12 @@ pub struct OffFoodRecord {
     /// contributor told OFF the product has no nutrition info available.
     /// See 1.7 in `import_plan.md`.
     pub no_nutrition_data: Option<String>,
+    /// 4.4: OFF `last_modified_t` — Unix epoch seconds of the last
+    /// contributor edit. Used by the normaliser to drop rows that have
+    /// been stale for more than `RunOptions.stale_after_years`. `None`
+    /// means the source didn't tell us when the row was last touched;
+    /// we conservatively keep it (no signal = no drop).
+    pub last_modified_t: Option<i64>,
 }
 
 /// A single USDA food portion. `gram_weight` is the canonical mass;
@@ -101,6 +107,14 @@ pub struct UsdaFoodRecord {
     pub serving_size: Option<Decimal>,
     /// Unit for `serving_size`.
     pub serving_size_unit: Option<String>,
+    /// 4.1: USDA Branded GTIN (UPC-A or EAN-13). Stamped onto
+    /// `FoodDraft.barcode` by `accept_and_normalize_usda` so that the
+    /// same product imported from both OFF and USDA collapses to a
+    /// single `foods` row via `foods_barcode_unique`. `None` for
+    /// Foundation / SR Legacy / Survey (which never have a GTIN) and
+    /// for Branded rows where the FDC export shipped the field empty
+    /// or non-numeric.
+    pub gtin_upc: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -293,13 +307,65 @@ fn clamp_macro_field(slot: &mut Option<Decimal>, ext_id: &str, field: &str) {
 
 /// Convert a raw [`OffFoodRecord`] into a [`FoodDraftWithServings`], or
 /// `None` if the record fails minimum-viable validation (§7.1).
-pub fn accept_and_normalize_off(mut record: OffFoodRecord) -> Option<FoodDraftWithServings> {
+///
+/// Backwards-compatible wrapper: calls [`accept_and_normalize_off_with_opts`]
+/// with the default options (no stale-row drop). Prefer the
+/// `_with_opts` form when you want to honour 4.4 cutoffs.
+pub fn accept_and_normalize_off(record: OffFoodRecord) -> Option<FoodDraftWithServings> {
+    accept_and_normalize_off_with_opts(record, &OffNormalizeOpts::default())
+}
+
+/// 4.4: per-call knobs threaded through the OFF normaliser. `stale_cutoff`
+/// is the inclusive Unix-epoch threshold below which a row is dropped
+/// (`record.last_modified_t < stale_cutoff` → drop). `None` disables the
+/// drop, matching the default + `--stale-after-years 0` operator override.
+#[derive(Debug, Clone, Default)]
+pub struct OffNormalizeOpts {
+    /// Unix seconds; rows with `last_modified_t < stale_cutoff` are
+    /// dropped. `None` → no drop.
+    pub stale_cutoff: Option<i64>,
+}
+
+/// 4.4: convert `--stale-after-years N` into an absolute Unix-second
+/// cutoff. `N == 0` returns `None` ("never drop"). Uses
+/// `SystemTime::now()` so test fixtures need to manufacture timestamps
+/// relative to wall-clock; the predicate itself is exercised in unit
+/// tests via [`OffNormalizeOpts.stale_cutoff`] direct injection.
+pub fn compute_stale_cutoff(stale_after_years: u32) -> Option<i64> {
+    if stale_after_years == 0 {
+        return None;
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    // 365.25 days * 86400 s/day ≈ 31_557_600 s/yr. Integer math is
+    // adequate here (we tolerate a few days of slop near the boundary).
+    let span = (stale_after_years as i64) * 31_557_600;
+    Some(now.saturating_sub(span))
+}
+
+/// 4.4-aware OFF normaliser. Drops rows whose `last_modified_t` is older
+/// than `opts.stale_cutoff` (when set) in addition to the §7.1 rules.
+pub fn accept_and_normalize_off_with_opts(
+    mut record: OffFoodRecord,
+    opts: &OffNormalizeOpts,
+) -> Option<FoodDraftWithServings> {
     // §7.1 rule 1: drop if code or product_name empty.
     if record.code.trim().is_empty() {
         return None;
     }
     if record.product_name.trim().is_empty() {
         return None;
+    }
+
+    // 4.4: stale-row drop. We act only on rows that *have* a timestamp;
+    // a missing `last_modified_t` is treated as "no signal, keep the row"
+    // so that older OFF dumps without the column aren't silently nuked.
+    if let (Some(cutoff), Some(t)) = (opts.stale_cutoff, record.last_modified_t) {
+        if t < cutoff {
+            return None;
+        }
     }
 
     // 1.6: drop rows the OFF moderation flow has retired or marked for
@@ -584,6 +650,42 @@ fn is_known_usda_data_type(raw: &str) -> bool {
     )
 }
 
+/// 4.1: case-insensitive multi-form check for USDA Branded. Real FDC JSON
+/// ships `dataType: "Branded"` (PascalCase); the CSV export and our
+/// internal canonical form use `"branded_food"`. We accept either. Used
+/// by the GTIN stamping path so Branded rows from any source surface
+/// their gtinUpc on `FoodDraft.barcode`.
+fn is_usda_branded(raw: &str) -> bool {
+    matches!(
+        raw.trim().to_ascii_lowercase().as_str(),
+        "branded" | "branded_food"
+    )
+}
+
+/// 4.1 + 4.2: sanity-clean a USDA `gtinUpc` for use as a barcode. FDC CSV
+/// exports sometimes ship the field with a leading `'` (Excel "force
+/// text" escape) or trailing whitespace; we trim and reject anything
+/// that isn't pure digits. Returns `Some(cleaned)` when the input is a
+/// non-empty digit string, `None` otherwise. The string form is kept
+/// verbatim — no zero-padding, no integer round-trip — so leading
+/// zeros survive end-to-end.
+fn sanitize_gtin(raw: &str, fdc_id: i64) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed.bytes().all(|b| b.is_ascii_digit()) {
+        Some(trimmed.to_string())
+    } else {
+        tracing::warn!(
+            fdc_id = fdc_id,
+            gtin_upc = %raw,
+            "USDA gtinUpc contains non-digit characters; nulling barcode but keeping food"
+        );
+        None
+    }
+}
+
 /// Convert a raw [`UsdaFoodRecord`] into a [`FoodDraftWithServings`], or
 /// `None` if the record fails minimum-viable validation (§7.2 rule 5).
 pub fn accept_and_normalize_usda(mut record: UsdaFoodRecord) -> Option<FoodDraftWithServings> {
@@ -752,10 +854,25 @@ pub fn accept_and_normalize_usda(mut record: UsdaFoodRecord) -> Option<FoodDraft
     } else {
         Some(record.data_type.trim().to_string())
     };
+
+    // 4.1: only Branded USDA rows can carry a GTIN; Foundation / SR Legacy
+    // / Survey rows have no consumer SKU so we never stamp one even if
+    // some upstream tool inexplicably populated `gtinUpc`. `is_usda_branded`
+    // is case-insensitive to handle real FDC JSON (`"Branded"`) and our
+    // canonical form (`"branded_food"`) alike — see 2026-05-19 smoke import.
+    let barcode = if is_usda_branded(&record.data_type) {
+        record
+            .gtin_upc
+            .as_deref()
+            .and_then(|raw| sanitize_gtin(raw, record.fdc_id))
+    } else {
+        None
+    };
+
     let draft = FoodDraft {
         name: record.description.trim().to_string(),
         brands: record.brand_owner.filter(|s| !s.trim().is_empty()),
-        barcode: None,
+        barcode,
         fdc_id: Some(record.fdc_id),
         data_type,
         categories_tags: vec![],
@@ -879,12 +996,27 @@ pub struct IngestService {
 /// Phase 2.1: per-run knobs that callers can flip without touching the
 /// existing `run_off` / `run_usda` 3-arg signatures. Default is "respect
 /// the etag short-circuit"; CLI `--force` flips `force = true`.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct RunOptions {
     /// When `true`, bypass the `find_completed_batch` short-circuit and
     /// always start a fresh import. Useful for redoing a botched import
     /// without re-downloading the source file.
     pub force: bool,
+    /// 4.4: drop OFF rows whose `last_modified_t` is older than this
+    /// many years. `0` disables the drop entirely (operators can run
+    /// `--stale-after-years 0` to keep everything). Default `5` matches
+    /// the audit recommendation: OFF never deletes, so 2012-vintage
+    /// rows with no edits since are noise.
+    pub stale_after_years: u32,
+}
+
+impl Default for RunOptions {
+    fn default() -> Self {
+        Self {
+            force: false,
+            stale_after_years: 5,
+        }
+    }
 }
 
 impl IngestService {
@@ -941,12 +1073,11 @@ impl IngestService {
                     "ingest short-circuit: matching completed batch exists for etag; skipping"
                 );
                 // Report the original batch's counts so dashboards stay
-                // meaningful. `inserted`/`updated` aren't distinguished by
-                // the writer layer — return everything as `inserted` to
-                // match the per-chunk accounting in `run_inner`.
+                // meaningful. Phase 4.3: `merged` rides on `UpsertStats.updated`
+                // so callers can still distinguish inserts vs. dedup hits.
                 return Ok(UpsertStats {
                     inserted: existing.records_upserted.max(0) as u64,
-                    updated: 0,
+                    updated: existing.records_merged.max(0) as u64,
                     skipped: existing.records_skipped.max(0) as u64,
                 });
             }
@@ -959,10 +1090,16 @@ impl IngestService {
             batch_id = %batch.id,
             source_url = %source_url,
             etag = source_etag.unwrap_or(""),
+            stale_after_years = options.stale_after_years,
             "ingest starting"
         );
         let started = Instant::now();
-        let result = self.run_inner(&mut source, batch.id, started, "off").await;
+        let norm_opts = OffNormalizeOpts {
+            stale_cutoff: compute_stale_cutoff(options.stale_after_years),
+        };
+        let result = self
+            .run_inner(&mut source, batch.id, started, "off", &norm_opts)
+            .await;
         match result {
             Ok(stats) => {
                 self.batches.finish(batch.id, stats.clone()).await?;
@@ -970,8 +1107,9 @@ impl IngestService {
                     target: "loseit_ingest::progress",
                     source = "off",
                     batch_id = %batch.id,
-                    processed = stats.inserted + stats.skipped,
+                    processed = stats.inserted + stats.updated + stats.skipped,
                     upserted = stats.inserted,
+                    merged = stats.updated,
                     skipped = stats.skipped,
                     duration_ms = %started.elapsed().as_millis(),
                     "ingest complete"
@@ -1023,7 +1161,7 @@ impl IngestService {
                 );
                 return Ok(UpsertStats {
                     inserted: existing.records_upserted.max(0) as u64,
-                    updated: 0,
+                    updated: existing.records_merged.max(0) as u64,
                     skipped: existing.records_skipped.max(0) as u64,
                 });
             }
@@ -1049,8 +1187,9 @@ impl IngestService {
                     target: "loseit_ingest::progress",
                     source = "usda",
                     batch_id = %batch.id,
-                    processed = stats.inserted + stats.skipped,
+                    processed = stats.inserted + stats.updated + stats.skipped,
                     upserted = stats.inserted,
+                    merged = stats.updated,
                     skipped = stats.skipped,
                     duration_ms = %started.elapsed().as_millis(),
                     "ingest complete"
@@ -1071,10 +1210,12 @@ impl IngestService {
         batch_id: Uuid,
         started: Instant,
         source_name: &'static str,
+        norm_opts: &OffNormalizeOpts,
     ) -> CoreResult<UpsertStats> {
         let mut total = UpsertStats::default();
         let mut processed: u64 = 0;
         let mut total_upserted: u64 = 0;
+        let mut total_merged: u64 = 0;
         let mut total_skipped: u64 = 0;
 
         loop {
@@ -1091,7 +1232,7 @@ impl IngestService {
             let mut accepted: Vec<FoodDraftWithServings> = Vec::with_capacity(chunk.len());
             let mut seen_barcodes: HashSet<String> = HashSet::new();
             for record in chunk {
-                if let Some(upsert) = accept_and_normalize_off(record) {
+                if let Some(upsert) = accept_and_normalize_off_with_opts(record, norm_opts) {
                     if let Some(bc) = upsert.draft.barcode.clone() {
                         if !seen_barcodes.insert(bc) {
                             if let Some(slot) = accepted
@@ -1115,18 +1256,21 @@ impl IngestService {
                 .await?;
 
             let upserted = outcome.upserted;
+            let merged = outcome.merged;
             let skipped = normalizer_skipped + outcome.skipped;
 
             total.inserted += upserted;
+            total.updated += merged;
             total.skipped += skipped;
             self.batches
-                .bump_counts(batch_id, seen, upserted, skipped)
+                .bump_counts(batch_id, seen, upserted, merged, skipped)
                 .await?;
 
             // 2.2: per-chunk progress log so multi-hour imports surface
             // throughput to operators tailing the logs.
             processed += seen;
             total_upserted += upserted;
+            total_merged += merged;
             total_skipped += skipped;
             let total_elapsed = started.elapsed();
             let throughput = if total_elapsed.as_secs_f64() > 0.0 {
@@ -1140,6 +1284,7 @@ impl IngestService {
                 batch_id = %batch_id,
                 processed,
                 upserted = total_upserted,
+                merged = total_merged,
                 skipped = total_skipped,
                 chunk_duration_ms = %chunk_start.elapsed().as_millis(),
                 throughput_per_sec = %format!("{throughput:.1}"),
@@ -1160,6 +1305,7 @@ impl IngestService {
         let mut total = UpsertStats::default();
         let mut processed: u64 = 0;
         let mut total_upserted: u64 = 0;
+        let mut total_merged: u64 = 0;
         let mut total_skipped: u64 = 0;
 
         loop {
@@ -1188,17 +1334,20 @@ impl IngestService {
                 .await?;
 
             let upserted = outcome.upserted;
+            let merged = outcome.merged;
             let skipped = normalizer_skipped + outcome.skipped;
 
             total.inserted += upserted;
+            total.updated += merged;
             total.skipped += skipped;
             self.batches
-                .bump_counts(batch_id, seen, upserted, skipped)
+                .bump_counts(batch_id, seen, upserted, merged, skipped)
                 .await?;
 
             // 2.2: per-chunk progress log (USDA twin).
             processed += seen;
             total_upserted += upserted;
+            total_merged += merged;
             total_skipped += skipped;
             let total_elapsed = started.elapsed();
             let throughput = if total_elapsed.as_secs_f64() > 0.0 {
@@ -1212,6 +1361,7 @@ impl IngestService {
                 batch_id = %batch_id,
                 processed,
                 upserted = total_upserted,
+                merged = total_merged,
                 skipped = total_skipped,
                 chunk_duration_ms = %chunk_start.elapsed().as_millis(),
                 throughput_per_sec = %format!("{throughput:.1}"),
@@ -1819,5 +1969,197 @@ mod tests {
             ..Default::default()
         };
         assert!(accept_and_normalize_off(r).is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 4 fixes (import_plan.md §4)
+    // -----------------------------------------------------------------------
+
+    /// 4.1: USDA Branded with a clean `gtin_upc` lands on `FoodDraft.barcode`
+    /// verbatim — leading zero preserved end-to-end (no int coercion path).
+    #[test]
+    fn usda_branded_stamps_barcode_from_gtin_upc() {
+        let r = UsdaFoodRecord {
+            fdc_id: 60001,
+            data_type: "Branded".into(), // PascalCase, real-world casing
+            description: "Coca-Cola".into(),
+            food_portions: vec![],
+            energy_kcal_100g: Some(dec!(39)),
+            gtin_upc: Some("0049000028911".into()),
+            ..Default::default()
+        };
+        let out = accept_and_normalize_usda(r).expect("should accept");
+        assert_eq!(
+            out.draft.barcode.as_deref(),
+            Some("0049000028911"),
+            "Branded GTIN must land on FoodDraft.barcode verbatim (leading 0 kept)"
+        );
+        assert_eq!(out.draft.fdc_id, Some(60001));
+    }
+
+    /// 4.1: Foundation rows never carry a GTIN even when `gtin_upc` is
+    /// erroneously present in the input — only Branded foods are stamped.
+    #[test]
+    fn usda_foundation_leaves_barcode_none() {
+        let r = UsdaFoodRecord {
+            fdc_id: 60002,
+            data_type: "foundation_food".into(),
+            description: "Butter".into(),
+            food_portions: vec![],
+            energy_kcal_100g: Some(dec!(717)),
+            gtin_upc: Some("not-applicable".into()),
+            ..Default::default()
+        };
+        let out = accept_and_normalize_usda(r).expect("should accept");
+        assert!(
+            out.draft.barcode.is_none(),
+            "Foundation rows must NOT stamp a barcode even if gtin_upc is set"
+        );
+    }
+
+    /// 4.1: whitespace-only `gtin_upc` on a Branded row is treated as
+    /// missing — the food is kept, barcode is `None`.
+    #[test]
+    fn usda_branded_whitespace_gtin_rejected() {
+        let r = UsdaFoodRecord {
+            fdc_id: 60003,
+            data_type: "branded_food".into(),
+            description: "Mystery Bar".into(),
+            food_portions: vec![],
+            energy_kcal_100g: Some(dec!(200)),
+            gtin_upc: Some("   ".into()),
+            ..Default::default()
+        };
+        let out = accept_and_normalize_usda(r).expect("should accept");
+        assert!(
+            out.draft.barcode.is_none(),
+            "whitespace-only gtin_upc must yield no barcode"
+        );
+    }
+
+    /// 4.1: Branded with a non-digit `gtin_upc` (CSV leading apostrophe,
+    /// stray punctuation) is rejected — barcode is `None` but the food
+    /// survives. A `tracing::warn!` fires (not asserted here; tested
+    /// via log capture in the integration suite).
+    #[test]
+    fn usda_branded_non_digit_gtin_rejected() {
+        let r = UsdaFoodRecord {
+            fdc_id: 60004,
+            data_type: "Branded".into(),
+            description: "Excel-Escaped".into(),
+            food_portions: vec![],
+            energy_kcal_100g: Some(dec!(150)),
+            gtin_upc: Some("'00490000289".into()),
+            ..Default::default()
+        };
+        let out = accept_and_normalize_usda(r).expect("food must NOT be dropped");
+        assert!(out.draft.barcode.is_none());
+    }
+
+    /// 4.2: leading-zero barcode round-trips through the OFF normaliser
+    /// byte-identical. The `code` field is `String` end-to-end; this is
+    /// the regression marker against any future int-coercion refactor.
+    #[test]
+    fn off_leading_zero_barcode_preserved() {
+        let r = OffFoodRecord {
+            code: "0049000028911".into(),
+            product_name: "Coca-Cola (OFF)".into(),
+            energy_kcal_100g: Some(dec!(39)),
+            ..Default::default()
+        };
+        let out = accept_and_normalize_off(r).expect("should accept");
+        assert_eq!(out.draft.barcode.as_deref(), Some("0049000028911"));
+    }
+
+    /// 4.4: a row with `last_modified_t` older than the cutoff is dropped.
+    #[test]
+    fn off_stale_row_dropped() {
+        // Cutoff = now - 5 years; row last modified 6 years ago.
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let cutoff = now - 5 * 31_557_600;
+        let r = OffFoodRecord {
+            code: "ST001".into(),
+            product_name: "Antique Snack".into(),
+            energy_kcal_100g: Some(dec!(200)),
+            last_modified_t: Some(now - 6 * 31_557_600),
+            ..Default::default()
+        };
+        let opts = OffNormalizeOpts {
+            stale_cutoff: Some(cutoff),
+        };
+        assert!(
+            accept_and_normalize_off_with_opts(r, &opts).is_none(),
+            "6-year-old row must be dropped under a 5-year cutoff"
+        );
+    }
+
+    /// 4.4: a row 4 years old is kept (well under a 5-year cutoff).
+    #[test]
+    fn off_fresh_row_kept() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let cutoff = now - 5 * 31_557_600;
+        let r = OffFoodRecord {
+            code: "ST002".into(),
+            product_name: "Fresh Snack".into(),
+            energy_kcal_100g: Some(dec!(200)),
+            last_modified_t: Some(now - 4 * 31_557_600),
+            ..Default::default()
+        };
+        let opts = OffNormalizeOpts {
+            stale_cutoff: Some(cutoff),
+        };
+        assert!(
+            accept_and_normalize_off_with_opts(r, &opts).is_some(),
+            "4-year-old row must pass a 5-year cutoff"
+        );
+    }
+
+    /// 4.4: a row with no `last_modified_t` is conservatively kept — the
+    /// source didn't tell us when the row was last touched, so we
+    /// preserve it rather than silently drop.
+    #[test]
+    fn off_missing_last_modified_kept() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let cutoff = now - 5 * 31_557_600;
+        let r = OffFoodRecord {
+            code: "ST003".into(),
+            product_name: "No Timestamp".into(),
+            energy_kcal_100g: Some(dec!(200)),
+            last_modified_t: None,
+            ..Default::default()
+        };
+        let opts = OffNormalizeOpts {
+            stale_cutoff: Some(cutoff),
+        };
+        assert!(accept_and_normalize_off_with_opts(r, &opts).is_some());
+    }
+
+    /// 4.4: `--stale-after-years 0` returns `None` from `compute_stale_cutoff`
+    /// → the normaliser keeps a 6-year-old row.
+    #[test]
+    fn off_stale_after_years_zero_keeps_everything() {
+        assert!(compute_stale_cutoff(0).is_none());
+        // And a stale row passes when opts.stale_cutoff == None.
+        let r = OffFoodRecord {
+            code: "ST004".into(),
+            product_name: "Vintage".into(),
+            energy_kcal_100g: Some(dec!(200)),
+            last_modified_t: Some(0), // 1970 — the oldest possible record
+            ..Default::default()
+        };
+        let opts = OffNormalizeOpts { stale_cutoff: None };
+        assert!(
+            accept_and_normalize_off_with_opts(r, &opts).is_some(),
+            "stale_cutoff = None must keep everything"
+        );
     }
 }

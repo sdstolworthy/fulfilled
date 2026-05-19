@@ -113,6 +113,13 @@ struct UsdaRaw {
     /// future per-serving label emission.
     serving_size: Option<f64>,
     serving_size_unit: Option<String>,
+    /// 4.1: USDA Branded ships a `gtinUpc` field — the product's GTIN
+    /// (UPC-A is 12 digits, EAN-13 is 13). Stamped onto `FoodDraft.barcode`
+    /// in the normaliser so OFF + USDA dedup naturally via the existing
+    /// `foods_barcode_unique` index. Kept as `String` end-to-end to
+    /// preserve leading zeros (a UPC-A like `"0049000028911"` becomes
+    /// `49000028911` if anything coerces through i64).
+    gtin_upc: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -354,6 +361,7 @@ impl UsdaRaw {
                 .serving_size_unit
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty()),
+            gtin_upc: self.gtin_upc,
         })
     }
 }
@@ -569,5 +577,36 @@ mod tests {
         assert_eq!(format_value_for_label(0.5), "0.5");
         assert_eq!(format_value_for_label(1.5), "1.5");
         assert_eq!(format_value_for_label(0.25), "0.25");
+    }
+
+    /// 4.1: USDA `gtinUpc` field deserialises as `String`, preserving a
+    /// leading zero on UPC-A codes. The `into_record` step threads it
+    /// through to `UsdaFoodRecord.gtin_upc`; the normaliser then stamps
+    /// `FoodDraft.barcode`.
+    #[test]
+    fn usda_gtin_upc_leading_zero_preserved_through_deserialize() {
+        let food = r#"{
+            "fdcId": 50001,
+            "dataType": "Branded",
+            "description": "Coca-Cola",
+            "gtinUpc": "0049000028911"
+        }"#;
+        let raw: UsdaRaw = serde_json::from_str(food).expect("food must parse");
+        let rec = raw.into_record().expect("record must materialise");
+        assert_eq!(rec.gtin_upc.as_deref(), Some("0049000028911"));
+    }
+
+    /// 4.1: missing `gtinUpc` (Foundation / SR Legacy / Survey rows)
+    /// surfaces as `None`.
+    #[test]
+    fn usda_no_gtin_upc_yields_none() {
+        let food = r#"{
+            "fdcId": 50002,
+            "dataType": "foundation_food",
+            "description": "Butter"
+        }"#;
+        let raw: UsdaRaw = serde_json::from_str(food).expect("food must parse");
+        let rec = raw.into_record().expect("record must materialise");
+        assert!(rec.gtin_upc.is_none());
     }
 }

@@ -328,33 +328,49 @@ impl FoodRepository for InMemoryFoodRepository {
 
             let now = Utc::now();
 
-            // Determine source and conflict key.
+            // Determine source. USDA Branded (4.1) now carries a barcode,
+            // so the source decision can't just look at `fdc_id` — we read
+            // `draft.data_type` too. Plain OFF rows have no fdc_id and no
+            // data_type; USDA rows always carry an fdc_id.
             let is_usda = draft.fdc_id.is_some();
 
-            let food_id: Uuid = {
+            // Conflict resolution mirrors the Pg writer (4.1 + 4.3):
+            //   1. If the draft carries a barcode, look up any existing row
+            //      with that barcode (across both OFF and USDA sources) —
+            //      that's the `foods_barcode_unique` conflict path.
+            //   2. Otherwise, USDA rows fall back to `fdc_id` conflict.
+            // The first match wins. `was_update` is the boolean the Pg
+            // writer derives from `xmax = 0` RETURNING; we use it to
+            // bump `merged` vs. `upserted`.
+            let (food_id, was_update): (Uuid, bool) = {
                 let mut store = self.by_id.lock().unwrap();
-                // Find existing: USDA conflicts on fdc_id, OFF conflicts on barcode.
-                let existing_id = if is_usda {
+                let existing_by_barcode = draft.barcode.as_ref().and_then(|bc| {
+                    store
+                        .values()
+                        .find(|f| f.barcode.as_deref() == Some(bc.as_str()))
+                        .map(|f| f.id)
+                });
+                let existing_by_fdc = if existing_by_barcode.is_none() && is_usda {
                     draft.fdc_id.and_then(|fid| {
-                        store
-                            .values()
-                            .find(|f| f.source == FoodSource::Usda && f.fdc_id == Some(fid))
-                            .map(|f| f.id)
+                        store.values().find(|f| f.fdc_id == Some(fid)).map(|f| f.id)
                     })
                 } else {
-                    draft.barcode.as_ref().and_then(|bc| {
-                        store
-                            .values()
-                            .find(|f| {
-                                f.source == FoodSource::Off
-                                    && f.barcode.as_deref() == Some(bc.as_str())
-                            })
-                            .map(|f| f.id)
-                    })
+                    None
                 };
+                let existing_id = existing_by_barcode.or(existing_by_fdc);
                 match existing_id {
                     Some(id) => {
                         let food = store.get_mut(&id).expect("existing id missing");
+                        // 4.1: USDA wins on conflict — flip the source +
+                        // stamp the fdc_id if the incoming draft is USDA.
+                        if is_usda {
+                            food.source = FoodSource::Usda;
+                            food.fdc_id = draft.fdc_id;
+                            food.data_type = draft.data_type.clone();
+                        }
+                        if let Some(bc) = &draft.barcode {
+                            food.barcode = Some(bc.clone());
+                        }
                         food.name = draft.name.clone();
                         food.brands = draft.brands.clone();
                         food.categories_tags = draft.categories_tags.clone();
@@ -362,7 +378,7 @@ impl FoodRepository for InMemoryFoodRepository {
                         food.quality_score = rec.quality_score;
                         food.last_import_batch_id = Some(batch_id);
                         food.updated_at = now;
-                        id
+                        (id, true)
                     }
                     None => {
                         let source = if is_usda {
@@ -390,7 +406,7 @@ impl FoodRepository for InMemoryFoodRepository {
                         };
                         let id = food.id;
                         store.insert(id, food);
-                        id
+                        (id, false)
                     }
                 }
             };
@@ -402,7 +418,11 @@ impl FoodRepository for InMemoryFoodRepository {
                     .replace_all_for_food(food_id, &rec.servings)
                     .await?;
             }
-            outcome.upserted += 1;
+            if was_update {
+                outcome.merged += 1;
+            } else {
+                outcome.upserted += 1;
+            }
         }
         Ok(outcome)
     }

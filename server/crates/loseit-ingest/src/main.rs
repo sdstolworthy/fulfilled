@@ -78,6 +78,14 @@ struct Args {
     /// canonical URL so the etag short-circuit matches future reruns.
     #[arg(long)]
     source_url: Option<String>,
+
+    /// 4.4: drop OFF rows whose `last_modified_t` is older than this
+    /// many years. `0` disables the drop (operators can use this to
+    /// keep everything). USDA rows are unaffected — FDC dumps don't
+    /// carry a per-row last-modified field and aren't a polluting
+    /// source the same way OFF is.
+    #[arg(long, default_value_t = 5)]
+    stale_after_years: u32,
 }
 
 #[tokio::main]
@@ -107,6 +115,7 @@ async fn main() -> Result<()> {
         etag = %source_etag,
         limit = ?args.limit,
         force = args.force,
+        stale_after_years = args.stale_after_years,
         "starting loseit-ingest"
     );
 
@@ -133,7 +142,10 @@ async fn main() -> Result<()> {
     let batches = Arc::new(PgBatchRepository::new(pool));
 
     let service = IngestService::new(foods, batches);
-    let run_options = RunOptions { force: args.force };
+    let run_options = RunOptions {
+        force: args.force,
+        stale_after_years: args.stale_after_years,
+    };
 
     let stats = match args.source.as_str() {
         "off" => {
@@ -189,7 +201,7 @@ async fn main() -> Result<()> {
 
     info!(
         inserted = stats.inserted,
-        updated = stats.updated,
+        merged = stats.updated,
         skipped = stats.skipped,
         "ingest complete"
     );

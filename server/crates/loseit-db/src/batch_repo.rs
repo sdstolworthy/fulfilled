@@ -27,6 +27,7 @@ struct BatchRow {
     source_etag: Option<String>,
     records_seen: i64,
     records_upserted: i64,
+    records_merged: i64,
     records_skipped: i64,
     status: String,
     error: Option<String>,
@@ -45,6 +46,7 @@ impl From<BatchRow> for FoodImportBatch {
             source_etag: row.source_etag,
             records_seen: row.records_seen,
             records_upserted: row.records_upserted,
+            records_merged: row.records_merged,
             records_skipped: row.records_skipped,
             status,
             error: row.error,
@@ -53,7 +55,7 @@ impl From<BatchRow> for FoodImportBatch {
 }
 
 const SELECT_COLS: &str = "id, started_at, completed_at, source_url, source_etag, \
-    records_seen, records_upserted, records_skipped, status, error";
+    records_seen, records_upserted, records_merged, records_skipped, status, error";
 
 #[async_trait]
 impl BatchRepository for PgBatchRepository {
@@ -62,6 +64,8 @@ impl BatchRepository for PgBatchRepository {
         source_url: &str,
         source_etag: Option<&str>,
     ) -> CoreResult<FoodImportBatch> {
+        // Phase 4.3: `records_merged` defaults to 0 at the column level
+        // (migration 0003) so we don't have to spell it in the INSERT.
         let sql = format!(
             "INSERT INTO food_import_batches \
                 (source_url, source_etag, records_seen, records_upserted, records_skipped, status) \
@@ -82,6 +86,7 @@ impl BatchRepository for PgBatchRepository {
         id: Uuid,
         seen: u64,
         upserted: u64,
+        merged: u64,
         skipped: u64,
     ) -> CoreResult<()> {
         // Postgres BIGINT is i64; the trait uses u64 because callers count
@@ -89,12 +94,14 @@ impl BatchRepository for PgBatchRepository {
         let sql = "UPDATE food_import_batches \
                    SET records_seen = records_seen + $2, \
                        records_upserted = records_upserted + $3, \
-                       records_skipped = records_skipped + $4 \
+                       records_merged = records_merged + $4, \
+                       records_skipped = records_skipped + $5 \
                    WHERE id = $1";
         sqlx::query(sql)
             .bind(id)
             .bind(seen as i64)
             .bind(upserted as i64)
+            .bind(merged as i64)
             .bind(skipped as i64)
             .execute(&self.pool)
             .await

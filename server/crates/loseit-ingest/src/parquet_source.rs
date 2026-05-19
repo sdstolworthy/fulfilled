@@ -17,9 +17,9 @@ use std::sync::Arc;
 
 use arrow::array::{
     Array, BooleanArray, Float32Array, Float64Array, Int32Array, Int64Array, LargeStringArray,
-    ListArray, StringArray,
+    ListArray, StringArray, TimestampMillisecondArray, TimestampSecondArray,
 };
-use arrow_schema::{DataType, SchemaRef};
+use arrow_schema::{DataType, SchemaRef, TimeUnit};
 use async_trait::async_trait;
 use futures::StreamExt;
 use loseit_core::service::{FoodRecordSource, OffFoodRecord};
@@ -57,6 +57,10 @@ const PROJECTED_COLUMNS: &[&str] = &[
     "obsolete",
     // 1.7: no-nutrition-data flag.
     "no_nutrition_data",
+    // 4.4: stale-row drop predicate. The HuggingFace OFF parquet stores
+    // this as either `int64` (seconds since epoch) or `timestamp[s]`;
+    // the decoder handles both.
+    "last_modified_t",
 ];
 
 pub struct ParquetSource {
@@ -187,10 +191,64 @@ fn decode_batch(batch: &arrow::record_batch::RecordBatch) -> Result<Vec<OffFoodR
             "no_nutrition_data" => decode_string_into(col, |i, v| {
                 out[i].no_nutrition_data = v.map(|s| s.to_string());
             }),
+            // 4.4: `last_modified_t` is `int64` (epoch seconds) in older
+            // OFF parquet builds and `timestamp[s]` / `timestamp[ms]` in
+            // newer ones; handle all three. The downstream normaliser
+            // treats the field as Unix seconds.
+            "last_modified_t" => decode_last_modified(col, &mut out),
             _ => {}
         }
     }
     Ok(out)
+}
+
+/// 4.4: decode `last_modified_t` as Unix-second `i64`. Falls through
+/// silently for unknown column types (the row stays `None`, which the
+/// normaliser treats as "no signal, keep the row").
+fn decode_last_modified(col: &Arc<dyn Array>, out: &mut [OffFoodRecord]) {
+    if let Some(arr) = col.as_any().downcast_ref::<Int64Array>() {
+        for (i, row) in out.iter_mut().enumerate().take(arr.len()) {
+            row.last_modified_t = if arr.is_null(i) {
+                None
+            } else {
+                Some(arr.value(i))
+            };
+        }
+    } else if let Some(arr) = col.as_any().downcast_ref::<Int32Array>() {
+        for (i, row) in out.iter_mut().enumerate().take(arr.len()) {
+            row.last_modified_t = if arr.is_null(i) {
+                None
+            } else {
+                Some(arr.value(i) as i64)
+            };
+        }
+    } else if matches!(col.data_type(), DataType::Timestamp(TimeUnit::Second, _)) {
+        if let Some(arr) = col.as_any().downcast_ref::<TimestampSecondArray>() {
+            for (i, row) in out.iter_mut().enumerate().take(arr.len()) {
+                row.last_modified_t = if arr.is_null(i) {
+                    None
+                } else {
+                    Some(arr.value(i))
+                };
+            }
+        }
+    } else if matches!(
+        col.data_type(),
+        DataType::Timestamp(TimeUnit::Millisecond, _)
+    ) {
+        if let Some(arr) = col.as_any().downcast_ref::<TimestampMillisecondArray>() {
+            for (i, row) in out.iter_mut().enumerate().take(arr.len()) {
+                row.last_modified_t = if arr.is_null(i) {
+                    None
+                } else {
+                    // Normalize to seconds; integer divide is fine for
+                    // this multi-year scale (sub-second precision is
+                    // irrelevant to the stale-after-years threshold).
+                    Some(arr.value(i) / 1000)
+                };
+            }
+        }
+    }
 }
 
 fn decode_string_into<F: FnMut(usize, Option<&str>)>(col: &Arc<dyn Array>, mut f: F) {
