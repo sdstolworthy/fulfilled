@@ -84,11 +84,7 @@ Format: `widget file → container that will own its reads → notes`.
 
 - [x] ~~`features/profile/widgets/server_url_row.dart`~~ — landed as `e5bebff`
 - [x] ~~`features/search/widgets/search_field.dart`~~ — landed as `5920fc6`
-- [ ] **`features/log_entry/widgets/quick_multiplier_chips.dart`** → `log_entry_sheet.dart`
-  - Reads `quantityProvider`, calls `quantityProvider.notifier.state =`
-    in tap handlers. Container passes `currentQuantity: int` and
-    `onSelected: ValueChanged<int>`.
-
+- [x] ~~`features/log_entry/widgets/quick_multiplier_chips.dart`~~ — landed as `94fcfbb`
 - [x] ~~`features/goals/widgets/goal_active_card.dart`~~ — landed as `699c024`
 
 ### Small (a few reads, action callbacks)
@@ -102,31 +98,14 @@ Format: `widget file → container that will own its reads → notes`.
     (`WeightUnitChooserBody`, etc.) so a future leaf test can mount
     them without the `show*` shell.
 
-- [ ] **`features/goals/widgets/goal_editor_body.dart`** → `new_goal_dialog.dart` / `edit_goal_sheet.dart`
-  - Reads `weightUnitProvider` and `currentWeightKgProvider`. The
-    two containers that mount this body should resolve both before
-    constructing it; pass `unit: WeightUnit` and
-    `currentKg: Decimal?`.
-  - **Note:** `GoalProfilePrereqs._prereqRow` in this same file was
-    partially touched by the profile-leaves PR (`e5bebff`) — it now
-    builds an `onSave` closure when invoking the sex / activity
-    pickers (since those pickers no longer take a `WidgetRef`). The
-    `GoalProfilePrereqs` widget itself is still a `ConsumerWidget`;
-    finishing the split means lifting its remaining reads
-    (`weightUnitProvider`, `currentWeightKgProvider`) into the
-    containing dialog/sheet alongside `GoalEditorBody`'s.
+- [x] ~~`features/goals/widgets/goal_editor_body.dart`~~ — landed as `c856e3d` (both `GoalEditorBody._RateSlider` and `GoalProfilePrereqs` split; both parents wired)
 
-- [ ] **`widgets/ring_summary_card.dart`** → wherever it's mounted (likely `today_screen.dart`)
-  - Reads `caloriesBurnedTodayProvider` (async) and
-    `weeklyLogDaysProvider` (async). Container resolves both; leaf
-    takes `burnedKcal: int` and `weeklyLogDays: int`. Add sibling
-    skeleton for the loading case.
-
-- [ ] **`widgets/keyboard_shortcuts.dart`** → `today_screen.dart` (or wherever it mounts)
-  - Only reads in shortcut handlers, not at render. Pass the
-    focusNode and a `onLogShortcut: VoidCallback` (or similar) down.
-    Audit the actual call sites — this widget may be mounted from
-    multiple places.
+- [x] ~~`widgets/ring_summary_card.dart`~~ + ~~`widgets/keyboard_shortcuts.dart`~~ — landed as `98dcfe6`
+  - One trade-off documented in the commit body: the burned-kcal row
+    lost its loading-vs-error UI distinction (both → `—`) because the
+    leaf can no longer see `AsyncValue`. If that matters, the
+    next-cleanest move is a parallel `isBurnedLoading: bool` param —
+    not re-importing Riverpod.
 
 ### Medium (form widgets with multiple reads + multiple callbacks)
 
