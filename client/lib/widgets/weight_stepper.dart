@@ -1,12 +1,10 @@
 import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../domain/_rounding.dart';
 import '../domain/enums.dart';
 import '../domain/units/weight.dart';
-import '../providers/profile_providers.dart';
 import '../theme/context_extensions.dart';
 
 /// `WeightUnit`-aware weight picker (LU-007).
@@ -60,11 +58,11 @@ import '../theme/context_extensions.dart';
 /// T-07 (numeric input always has a stepper), T-17 (Decimal in /
 /// formatted out), T-21 (units customer-expected), T-23 (lifted
 /// widget, package-imported).
-class WeightStepper extends ConsumerStatefulWidget {
+class WeightStepper extends StatefulWidget {
   const WeightStepper({
     required this.value,
     required this.onChanged,
-    this.unitOverride,
+    required this.unit,
     this.minKg,
     this.maxKg,
     this.hasError = false,
@@ -80,10 +78,12 @@ class WeightStepper extends ConsumerStatefulWidget {
   /// Called with the new canonical kg on every commit.
   final ValueChanged<Decimal> onChanged;
 
-  /// Optional unit override. When null, the widget reads
-  /// [weightUnitProvider]. Onboarding pre-User passes the
-  /// onboarding-local provider's value here.
-  final WeightUnit? unitOverride;
+  /// Display unit. The container (sheet, onboarding step, etc.) is
+  /// responsible for resolving the active unit from
+  /// `weightUnitProvider` or the onboarding-local equivalent and
+  /// passing it in — the stepper itself stays Riverpod-free per
+  /// `specs/testing_guide.md` §4.4.
+  final WeightUnit unit;
 
   /// Optional inclusive floor in canonical kg.
   final Decimal? minKg;
@@ -112,7 +112,7 @@ class WeightStepper extends ConsumerStatefulWidget {
   final bool autofocus;
 
   @override
-  ConsumerState<WeightStepper> createState() => _WeightStepperState();
+  State<WeightStepper> createState() => _WeightStepperState();
 }
 
 /// Cached 1-lb-in-kg constant. Derived from the public seam so we do
@@ -122,7 +122,7 @@ class WeightStepper extends ConsumerStatefulWidget {
 /// `1 * _kgPerLb` by construction.
 final Decimal _kgPerLb = parseWeightToKg('1', WeightUnit.lb);
 
-class _WeightStepperState extends ConsumerState<WeightStepper> {
+class _WeightStepperState extends State<WeightStepper> {
   /// Stone-mode sub-state. Always reflects the current decomposition of
   /// `widget.value` into integer stones + pounds. Recomputed in
   /// [didUpdateWidget] when the parent passes a new canonical kg
@@ -157,13 +157,10 @@ class _WeightStepperState extends ConsumerState<WeightStepper> {
   @override
   void didUpdateWidget(covariant WeightStepper old) {
     super.didUpdateWidget(old);
-    // Re-sync whenever the canonical value OR the unit override
-    // changes — toggling kg ↔ lb via the override should re-format
-    // the visible glyph even though the canonical kg is unchanged.
-    // The ref.watch-driven unit change for non-override callers is a
-    // pre-existing rebuild path and out of scope for the keyboard
-    // input fix.
-    final unitChanged = widget.unitOverride != old.unitOverride;
+    // Re-sync whenever the canonical value OR the unit changes —
+    // toggling kg ↔ lb should re-format the visible glyph even
+    // though the canonical kg is unchanged.
+    final unitChanged = widget.unit != old.unit;
     if (widget.value != old.value || unitChanged) {
       _syncStoneFromKg(widget.value);
       // Mirror the new canonical value into whichever controller is
@@ -241,9 +238,7 @@ class _WeightStepperState extends ConsumerState<WeightStepper> {
   /// Seed text for the single (kg / lb) `TextField`. Mirrors the
   /// `valueLabel` math `_buildSingle` used to inline.
   String _seedSingleText() {
-    final WeightUnit unit =
-        widget.unitOverride ?? ref.read(weightUnitProvider);
-    switch (unit) {
+    switch (widget.unit) {
       case WeightUnit.kg:
         return _formatOneDp(roundHalfToEvenScaled(widget.value, 1));
       case WeightUnit.lb:
@@ -272,8 +267,7 @@ class _WeightStepperState extends ConsumerState<WeightStepper> {
   /// On parse failure or empty input, revert the controller to the
   /// last canonical value.
   void _commitSingleText() {
-    final WeightUnit unit =
-        widget.unitOverride ?? ref.read(weightUnitProvider);
+    final unit = widget.unit;
     if (unit == WeightUnit.st) return; // wrong shape — guarded by callers.
     final raw = _singleCtrl.text.trim();
     void revert() {
@@ -366,8 +360,7 @@ class _WeightStepperState extends ConsumerState<WeightStepper> {
 
   @override
   Widget build(BuildContext context) {
-    final WeightUnit unit =
-        widget.unitOverride ?? ref.watch(weightUnitProvider);
+    final unit = widget.unit;
     switch (unit) {
       case WeightUnit.kg:
         return _buildSingle(

@@ -35,7 +35,7 @@ import 'package:fulfilled/widgets/weight_stepper.dart';
 
 Widget _harness({
   required Widget child,
-  WeightUnit? unitOverride,
+  WeightUnit? unit,
 }) {
   return ProviderScope(
     overrides: <Override>[
@@ -43,10 +43,10 @@ Widget _harness({
       // depend on the platform dispatcher's countryCode. The widget
       // reads `weightUnitProvider`, which falls back through
       // `localeDefaultWeightUnitProvider` while `meProvider` is
-      // loading. `unitOverride` on `WeightStepper` short-circuits this
+      // loading. `unit` on `WeightStepper` short-circuits this
       // for tests that need to lock in a specific unit.
-      if (unitOverride != null)
-        localeDefaultWeightUnitProvider.overrideWithValue(unitOverride),
+      if (unit != null)
+        localeDefaultWeightUnitProvider.overrideWithValue(unit),
     ],
     child: MaterialApp(
       theme: buildLightTheme(),
@@ -63,12 +63,12 @@ void main() {
       var current = Decimal.parse('79.4');
       await tester.pumpWidget(
         _harness(
-          unitOverride: WeightUnit.kg,
+          unit: WeightUnit.kg,
           child: StatefulBuilder(
             builder: (context, setState) {
               return WeightStepper(
                 value: current,
-                unitOverride: WeightUnit.kg,
+                unit: WeightUnit.kg,
                 onChanged: (kg) {
                   captured = kg;
                   setState(() => current = kg);
@@ -108,10 +108,10 @@ void main() {
       final seedKg = parseWeightToKg('175.0', WeightUnit.lb);
       await tester.pumpWidget(
         _harness(
-          unitOverride: WeightUnit.lb,
+          unit: WeightUnit.lb,
           child: WeightStepper(
             value: seedKg,
-            unitOverride: WeightUnit.lb,
+            unit: WeightUnit.lb,
             onChanged: (kg) => captured = kg,
           ),
         ),
@@ -148,12 +148,12 @@ void main() {
 
       await tester.pumpWidget(
         _harness(
-          unitOverride: WeightUnit.st,
+          unit: WeightUnit.st,
           child: StatefulBuilder(
             builder: (context, setState) {
               return WeightStepper(
                 value: current,
-                unitOverride: WeightUnit.st,
+                unit: WeightUnit.st,
                 onChanged: (kg) {
                   captured = kg;
                   setState(() => current = kg);
@@ -198,12 +198,12 @@ void main() {
 
       await tester.pumpWidget(
         _harness(
-          unitOverride: WeightUnit.st,
+          unit: WeightUnit.st,
           child: StatefulBuilder(
             builder: (context, setState) {
               return WeightStepper(
                 value: current,
-                unitOverride: WeightUnit.st,
+                unit: WeightUnit.st,
                 onChanged: (kg) {
                   captured = kg;
                   setState(() => current = kg);
@@ -233,14 +233,14 @@ void main() {
       var current = Decimal.parse('70.0');
       await tester.pumpWidget(
         _harness(
-          unitOverride: WeightUnit.kg,
+          unit: WeightUnit.kg,
           child: StatefulBuilder(
             builder: (context, setState) {
               return Column(
                 children: <Widget>[
                   WeightStepper(
                     value: current,
-                    unitOverride: WeightUnit.kg,
+                    unit: WeightUnit.kg,
                     onChanged: (kg) {
                       captured = kg;
                       setState(() => current = kg);
@@ -280,14 +280,14 @@ void main() {
       var current = Decimal.parse('70.0');
       await tester.pumpWidget(
         _harness(
-          unitOverride: WeightUnit.kg,
+          unit: WeightUnit.kg,
           child: StatefulBuilder(
             builder: (context, setState) {
               return Column(
                 children: <Widget>[
                   WeightStepper(
                     value: current,
-                    unitOverride: WeightUnit.kg,
+                    unit: WeightUnit.kg,
                     onChanged: (kg) {
                       captured = kg;
                       setState(() => current = kg);
@@ -331,14 +331,14 @@ void main() {
       var current = Decimal.parse('70.0');
       await tester.pumpWidget(
         _harness(
-          unitOverride: WeightUnit.kg,
+          unit: WeightUnit.kg,
           child: StatefulBuilder(
             builder: (context, setState) {
               return Column(
                 children: <Widget>[
                   WeightStepper(
                     value: current,
-                    unitOverride: WeightUnit.kg,
+                    unit: WeightUnit.kg,
                     minKg: Decimal.parse('40.0'),
                     maxKg: Decimal.parse('200.0'),
                     onChanged: (kg) {
@@ -372,14 +372,14 @@ void main() {
       var current = Decimal.parse('70.0');
       await tester.pumpWidget(
         _harness(
-          unitOverride: WeightUnit.kg,
+          unit: WeightUnit.kg,
           child: StatefulBuilder(
             builder: (context, setState) {
               return Column(
                 children: <Widget>[
                   WeightStepper(
                     value: current,
-                    unitOverride: WeightUnit.kg,
+                    unit: WeightUnit.kg,
                     onChanged: (kg) {
                       captured = kg;
                       setState(() => current = kg);
@@ -416,14 +416,14 @@ void main() {
       var current = parseStoneToKg(12, 7);
       await tester.pumpWidget(
         _harness(
-          unitOverride: WeightUnit.st,
+          unit: WeightUnit.st,
           child: StatefulBuilder(
             builder: (context, setState) {
               return Column(
                 children: <Widget>[
                   WeightStepper(
                     value: current,
-                    unitOverride: WeightUnit.st,
+                    unit: WeightUnit.st,
                     onChanged: (kg) {
                       captured = kg;
                       setState(() => current = kg);
@@ -463,14 +463,14 @@ void main() {
       var current = parseStoneToKg(12, 0);
       await tester.pumpWidget(
         _harness(
-          unitOverride: WeightUnit.st,
+          unit: WeightUnit.st,
           child: StatefulBuilder(
             builder: (context, setState) {
               return Column(
                 children: <Widget>[
                   WeightStepper(
                     value: current,
-                    unitOverride: WeightUnit.st,
+                    unit: WeightUnit.st,
                     onChanged: (kg) {
                       captured = kg;
                       setState(() => current = kg);
@@ -512,14 +512,14 @@ void main() {
       var current = parseStoneToKg(0, 0);
       await tester.pumpWidget(
         _harness(
-          unitOverride: WeightUnit.st,
+          unit: WeightUnit.st,
           child: StatefulBuilder(
             builder: (context, setState) {
               return Column(
                 children: <Widget>[
                   WeightStepper(
                     value: current,
-                    unitOverride: WeightUnit.st,
+                    unit: WeightUnit.st,
                     onChanged: (kg) {
                       captured = kg;
                       setState(() => current = kg);
@@ -554,14 +554,14 @@ void main() {
       var current = seedKg;
       await tester.pumpWidget(
         _harness(
-          unitOverride: WeightUnit.lb,
+          unit: WeightUnit.lb,
           child: StatefulBuilder(
             builder: (context, setState) {
               return Column(
                 children: <Widget>[
                   WeightStepper(
                     value: current,
-                    unitOverride: WeightUnit.lb,
+                    unit: WeightUnit.lb,
                     onChanged: (kg) {
                       captured = kg;
                       setState(() => current = kg);

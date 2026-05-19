@@ -31,7 +31,7 @@ import 'package:fulfilled/widgets/height_stepper.dart';
 
 Widget _harness({
   required Widget child,
-  HeightUnit? unitOverride,
+  HeightUnit? unit,
 }) {
   return ProviderScope(
     overrides: <Override>[
@@ -39,10 +39,10 @@ Widget _harness({
       // depend on the platform dispatcher's countryCode. The widget
       // reads `heightUnitProvider`, which falls back through
       // `localeDefaultHeightUnitProvider` while `meProvider` is
-      // loading. `unitOverride` on `HeightStepper` short-circuits
+      // loading. `unit` on `HeightStepper` short-circuits
       // this for tests that need to lock in a specific unit.
-      if (unitOverride != null)
-        localeDefaultHeightUnitProvider.overrideWithValue(unitOverride),
+      if (unit != null)
+        localeDefaultHeightUnitProvider.overrideWithValue(unit),
     ],
     child: MaterialApp(
       theme: buildLightTheme(),
@@ -59,12 +59,12 @@ void main() {
       var current = Decimal.fromInt(175);
       await tester.pumpWidget(
         _harness(
-          unitOverride: HeightUnit.cm,
+          unit: HeightUnit.cm,
           child: StatefulBuilder(
             builder: (context, setState) {
               return HeightStepper(
                 value: current,
-                unitOverride: HeightUnit.cm,
+                unit: HeightUnit.cm,
                 onChanged: (cm) {
                   captured = cm;
                   setState(() => current = cm);
@@ -100,10 +100,10 @@ void main() {
       Decimal? captured;
       await tester.pumpWidget(
         _harness(
-          unitOverride: HeightUnit.cm,
+          unit: HeightUnit.cm,
           child: HeightStepper(
             value: Decimal.fromInt(250),
-            unitOverride: HeightUnit.cm,
+            unit: HeightUnit.cm,
             maxCm: Decimal.fromInt(250),
             onChanged: (cm) => captured = cm,
           ),
@@ -134,12 +134,12 @@ void main() {
 
       await tester.pumpWidget(
         _harness(
-          unitOverride: HeightUnit.ftIn,
+          unit: HeightUnit.ftIn,
           child: StatefulBuilder(
             builder: (context, setState) {
               return HeightStepper(
                 value: current,
-                unitOverride: HeightUnit.ftIn,
+                unit: HeightUnit.ftIn,
                 onChanged: (cm) {
                   captured = cm;
                   setState(() => current = cm);
@@ -186,12 +186,12 @@ void main() {
 
       await tester.pumpWidget(
         _harness(
-          unitOverride: HeightUnit.ftIn,
+          unit: HeightUnit.ftIn,
           child: StatefulBuilder(
             builder: (context, setState) {
               return HeightStepper(
                 value: current,
-                unitOverride: HeightUnit.ftIn,
+                unit: HeightUnit.ftIn,
                 onChanged: (cm) {
                   captured = cm;
                   setState(() => current = cm);
@@ -220,16 +220,16 @@ void main() {
   );
 
   testWidgets(
-    'unitOverride: cm renders cm row even if heightUnitProvider says ftIn',
+    'unit: cm renders cm row even if heightUnitProvider says ftIn',
     (tester) async {
       await tester.pumpWidget(
         _harness(
           // Locale default + provider both say ftIn…
-          unitOverride: HeightUnit.ftIn,
+          unit: HeightUnit.ftIn,
           child: HeightStepper(
             value: Decimal.fromInt(175),
             // …but the widget-local override pins cm.
-            unitOverride: HeightUnit.cm,
+            unit: HeightUnit.cm,
             onChanged: (_) {},
           ),
         ),
@@ -252,14 +252,14 @@ void main() {
       var current = Decimal.fromInt(170);
       await tester.pumpWidget(
         _harness(
-          unitOverride: HeightUnit.cm,
+          unit: HeightUnit.cm,
           child: StatefulBuilder(
             builder: (context, setState) {
               return Column(
                 children: <Widget>[
                   HeightStepper(
                     value: current,
-                    unitOverride: HeightUnit.cm,
+                    unit: HeightUnit.cm,
                     onChanged: (cm) {
                       captured = cm;
                       setState(() => current = cm);
@@ -290,14 +290,14 @@ void main() {
       var current = Decimal.fromInt(170);
       await tester.pumpWidget(
         _harness(
-          unitOverride: HeightUnit.cm,
+          unit: HeightUnit.cm,
           child: StatefulBuilder(
             builder: (context, setState) {
               return Column(
                 children: <Widget>[
                   HeightStepper(
                     value: current,
-                    unitOverride: HeightUnit.cm,
+                    unit: HeightUnit.cm,
                     onChanged: (cm) {
                       captured = cm;
                       setState(() => current = cm);
@@ -338,14 +338,14 @@ void main() {
       var current = Decimal.fromInt(170);
       await tester.pumpWidget(
         _harness(
-          unitOverride: HeightUnit.cm,
+          unit: HeightUnit.cm,
           child: StatefulBuilder(
             builder: (context, setState) {
               return Column(
                 children: <Widget>[
                   HeightStepper(
                     value: current,
-                    unitOverride: HeightUnit.cm,
+                    unit: HeightUnit.cm,
                     minCm: Decimal.fromInt(80),
                     maxCm: Decimal.fromInt(250),
                     onChanged: (cm) {
@@ -379,14 +379,14 @@ void main() {
       var current = Decimal.fromInt(170);
       await tester.pumpWidget(
         _harness(
-          unitOverride: HeightUnit.cm,
+          unit: HeightUnit.cm,
           child: StatefulBuilder(
             builder: (context, setState) {
               return Column(
                 children: <Widget>[
                   HeightStepper(
                     value: current,
-                    unitOverride: HeightUnit.cm,
+                    unit: HeightUnit.cm,
                     onChanged: (cm) {
                       captured = cm;
                       setState(() => current = cm);
@@ -423,14 +423,14 @@ void main() {
       var current = parseFeetInchesToCm(5, 0);
       await tester.pumpWidget(
         _harness(
-          unitOverride: HeightUnit.ftIn,
+          unit: HeightUnit.ftIn,
           child: StatefulBuilder(
             builder: (context, setState) {
               return Column(
                 children: <Widget>[
                   HeightStepper(
                     value: current,
-                    unitOverride: HeightUnit.ftIn,
+                    unit: HeightUnit.ftIn,
                     onChanged: (cm) {
                       captured = cm;
                       setState(() => current = cm);
@@ -470,14 +470,14 @@ void main() {
       var current = parseFeetInchesToCm(5, 9);
       await tester.pumpWidget(
         _harness(
-          unitOverride: HeightUnit.ftIn,
+          unit: HeightUnit.ftIn,
           child: StatefulBuilder(
             builder: (context, setState) {
               return Column(
                 children: <Widget>[
                   HeightStepper(
                     value: current,
-                    unitOverride: HeightUnit.ftIn,
+                    unit: HeightUnit.ftIn,
                     onChanged: (cm) {
                       captured = cm;
                       setState(() => current = cm);

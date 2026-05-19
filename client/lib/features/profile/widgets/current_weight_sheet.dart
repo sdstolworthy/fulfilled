@@ -122,6 +122,7 @@ class _CurrentWeightSheetState extends ConsumerState<CurrentWeightSheet> {
           child: WeightStepper(
             key: const Key('weight-field'),
             value: _kg,
+            unit: unit,
             minKg: _min,
             maxKg: _max,
             hasError: _error != null,

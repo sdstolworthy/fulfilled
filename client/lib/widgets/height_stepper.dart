@@ -1,12 +1,10 @@
 import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../domain/_rounding.dart';
 import '../domain/enums.dart';
 import '../domain/units/length.dart';
-import '../providers/profile_providers.dart';
 import '../theme/context_extensions.dart';
 // Re-import only via the public seam: no `2.54` constant, no `* 12`
 // in this file. `decomposeCmToFeetInches` and `parseFeetInchesToCm`
@@ -67,11 +65,11 @@ import '../theme/context_extensions.dart';
 /// T-07 (numeric input always has a stepper), T-17 (Decimal in /
 /// formatted out), T-20 (Semantics labels include the rendered value
 /// with its long-form unit), T-23 (lifted widget, package-imported).
-class HeightStepper extends ConsumerStatefulWidget {
+class HeightStepper extends StatefulWidget {
   const HeightStepper({
     required this.value,
     required this.onChanged,
-    this.unitOverride,
+    required this.unit,
     this.minCm,
     this.maxCm,
     this.hasError = false,
@@ -86,10 +84,12 @@ class HeightStepper extends ConsumerStatefulWidget {
   /// Called with the new canonical cm on every commit.
   final ValueChanged<Decimal> onChanged;
 
-  /// Optional unit override. When null, the widget reads
-  /// [heightUnitProvider]. Onboarding pre-User passes the
-  /// onboarding-local provider's value here.
-  final HeightUnit? unitOverride;
+  /// Display unit. The container (typically a sheet or the onboarding
+  /// step) is responsible for resolving the active unit from
+  /// `heightUnitProvider` or the onboarding-local equivalent and
+  /// passing it in — the stepper itself stays Riverpod-free per
+  /// `specs/testing_guide.md` §4.4.
+  final HeightUnit unit;
 
   /// Optional inclusive floor in canonical cm. Defaults to `80 cm`
   /// for cm-mode (PM-ruled adult range). Unused in ftIn mode — that
@@ -116,7 +116,7 @@ class HeightStepper extends ConsumerStatefulWidget {
   final String? semanticsLabel;
 
   @override
-  ConsumerState<HeightStepper> createState() => _HeightStepperState();
+  State<HeightStepper> createState() => _HeightStepperState();
 }
 
 /// Default cm-mode bounds — PM §5 height range, mirrored from architect
@@ -131,7 +131,7 @@ const int _minFeet = 3;
 const int _maxFeet = 8;
 const int _maxInches = 11;
 
-class _HeightStepperState extends ConsumerState<HeightStepper> {
+class _HeightStepperState extends State<HeightStepper> {
   /// ftIn-mode sub-state. Always reflects the current decomposition of
   /// `widget.value` into integer feet + inches. Recomputed in
   /// [didUpdateWidget] when the parent passes a new canonical cm
@@ -167,10 +167,10 @@ class _HeightStepperState extends ConsumerState<HeightStepper> {
   @override
   void didUpdateWidget(covariant HeightStepper old) {
     super.didUpdateWidget(old);
-    // Re-sync whenever the canonical value OR the unit override
-    // changes — toggling cm ↔ ftIn via the override should re-format
-    // the visible glyph even though the canonical cm is unchanged.
-    final unitChanged = widget.unitOverride != old.unitOverride;
+    // Re-sync whenever the canonical value OR the unit changes —
+    // toggling cm ↔ ftIn should re-format the visible glyph even
+    // though the canonical cm is unchanged.
+    final unitChanged = widget.unit != old.unit;
     if (widget.value != old.value || unitChanged) {
       _syncFtInFromCm(widget.value);
       // Mirror the new canonical value into whichever controller is
@@ -335,9 +335,7 @@ class _HeightStepperState extends ConsumerState<HeightStepper> {
 
   @override
   Widget build(BuildContext context) {
-    final HeightUnit unit =
-        widget.unitOverride ?? ref.watch(heightUnitProvider);
-    switch (unit) {
+    switch (widget.unit) {
       case HeightUnit.cm:
         return _buildCm();
       case HeightUnit.ftIn:

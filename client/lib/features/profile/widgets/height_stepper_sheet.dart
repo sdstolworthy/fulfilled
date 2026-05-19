@@ -113,6 +113,7 @@ class _HeightStepperSheetState extends ConsumerState<HeightStepperSheet> {
             key: const Key('height-stepper'),
             value: _cm,
             onChanged: (next) => setState(() => _cm = next),
+            unit: ref.watch(heightUnitProvider),
             semanticsLabel: 'Height',
           ),
         ),

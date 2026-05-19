@@ -206,6 +206,7 @@ class _LogWeightSheetState extends ConsumerState<LogWeightSheet> {
   Widget build(BuildContext context) {
     final body = _Body(
       weightKg: _weightKg,
+      unit: ref.watch(weightUnitProvider),
       seeded: _tenths != null,
       onWeightChanged: (next) {
         // The lifted `QuantityStepper` is callback-shaped; mirror its
@@ -284,6 +285,7 @@ class _LogWeightSheetState extends ConsumerState<LogWeightSheet> {
 class _Body extends StatelessWidget {
   const _Body({
     required this.weightKg,
+    required this.unit,
     required this.seeded,
     required this.onWeightChanged,
     required this.onQuick,
@@ -297,6 +299,7 @@ class _Body extends StatelessWidget {
   });
 
   final Decimal weightKg;
+  final WeightUnit unit;
 
   /// UX-109 — `false` while the F5 fall-through chain is still
   /// resolving the initial seed. The stepper + quick-chips render as
@@ -358,6 +361,7 @@ class _Body extends StatelessWidget {
         ] else ...<Widget>[
           WeightStepper(
             value: weightKg,
+            unit: unit,
             onChanged: (next) => onWeightChanged(next),
             minKg: Decimal.parse('20'),
             maxKg: Decimal.parse('300'),

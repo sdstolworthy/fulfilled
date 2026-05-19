@@ -96,6 +96,7 @@ class GoalEditorBody extends StatelessWidget {
           WeightStepper(
             key: const ValueKey('goals.target_weight'),
             value: targetWeightKg!,
+            unit: unit,
             onChanged: onTargetWeightChange!,
             semanticsLabel: 'Target weight',
           ),

@@ -162,7 +162,7 @@ class Step2AboutYou extends StatelessWidget {
                   HeightStepper(
                     key: const Key('onboarding-height-stepper'),
                     value: heightSeedCm,
-                    unitOverride: heightUnit,
+                    unit: heightUnit,
                     onChanged: onHeightCmChanged,
                     semanticsLabel: 'Height',
                   ),
@@ -179,7 +179,7 @@ class Step2AboutYou extends StatelessWidget {
                   WeightStepper(
                     key: const Key('onboarding-weight-stepper'),
                     value: weightSeedKg,
-                    unitOverride: weightUnit,
+                    unit: weightUnit,
                     minKg: _d('30'),
                     onChanged: onCurrentWeightKgChanged,
                     semanticsLabel: 'Weight',
