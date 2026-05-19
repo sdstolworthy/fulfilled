@@ -83,15 +83,13 @@ impl ProfilePatchBody {
         let weight_unit = match self.weight_unit.as_deref() {
             None => None,
             Some(s) => Some(
-                WeightUnit::parse(s)
-                    .ok_or_else(|| ApiError::bad_request("invalid weight_unit"))?,
+                WeightUnit::parse(s).ok_or_else(|| ApiError::bad_request("invalid weight_unit"))?,
             ),
         };
         let height_unit = match self.height_unit.as_deref() {
             None => None,
             Some(s) => Some(
-                HeightUnit::parse(s)
-                    .ok_or_else(|| ApiError::bad_request("invalid height_unit"))?,
+                HeightUnit::parse(s).ok_or_else(|| ApiError::bad_request("invalid height_unit"))?,
             ),
         };
         Ok(ProfilePatch {

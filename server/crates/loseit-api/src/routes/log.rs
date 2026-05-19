@@ -315,7 +315,11 @@ async fn create(
         entered_unit,
         note: body.note,
     };
-    let entry = state.logs.create(user.id, draft).await.map_err(map_log_core_error)?;
+    let entry = state
+        .logs
+        .create(user.id, draft)
+        .await
+        .map_err(map_log_core_error)?;
     Ok((StatusCode::CREATED, Json(entry.into())))
 }
 
@@ -362,11 +366,7 @@ async fn patch(
         ));
     }
     let meal = body.meal.as_deref().map(parse_meal).transpose()?;
-    let entered_unit = body
-        .entered_unit
-        .as_deref()
-        .map(parse_unit)
-        .transpose()?;
+    let entered_unit = body.entered_unit.as_deref().map(parse_unit).transpose()?;
     let patch = LogPatch {
         serving_id: body.serving_id,
         consumed_on: body.consumed_on,
@@ -375,7 +375,11 @@ async fn patch(
         entered_unit,
         note: body.note,
     };
-    let entry = state.logs.update(user.id, id, patch).await.map_err(map_log_core_error)?;
+    let entry = state
+        .logs
+        .update(user.id, id, patch)
+        .await
+        .map_err(map_log_core_error)?;
     Ok(Json(entry.into()))
 }
 

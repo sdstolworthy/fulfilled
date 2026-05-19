@@ -15,18 +15,18 @@ pub enum ServingSource {
 impl ServingSource {
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::Off    => "off",
-            Self::Usda   => "usda",
-            Self::User   => "user",
+            Self::Off => "off",
+            Self::Usda => "usda",
+            Self::User => "user",
             Self::System => "system",
         }
     }
 
     pub fn parse(s: &str) -> Option<Self> {
         match s {
-            "off"    => Some(Self::Off),
-            "usda"   => Some(Self::Usda),
-            "user"   => Some(Self::User),
+            "off" => Some(Self::Off),
+            "usda" => Some(Self::Usda),
+            "user" => Some(Self::User),
             "system" => Some(Self::System),
             _ => None,
         }
@@ -37,16 +37,16 @@ impl ServingSource {
 pub struct Serving {
     pub id: Uuid,
     pub food_id: Uuid,
-    pub label: Option<String>,          // nullable; FE/user-supplied descriptor
+    pub label: Option<String>, // nullable; FE/user-supplied descriptor
     pub amount: Decimal,
     pub unit: Unit,
-    pub kcal: Decimal,                  // required
+    pub kcal: Decimal, // required
     pub protein_g: Option<Decimal>,
     pub carbs_g: Option<Decimal>,
     pub fat_g: Option<Decimal>,
     pub fiber_g: Option<Decimal>,
     pub sugar_g: Option<Decimal>,
-    pub sodium_mg: Option<Decimal>,     // mg-native; no g↔mg conversion
+    pub sodium_mg: Option<Decimal>, // mg-native; no g↔mg conversion
     pub saturated_fat_g: Option<Decimal>,
     pub is_default: bool,
     pub source: ServingSource,
@@ -78,7 +78,7 @@ pub struct ServingDraft {
 /// touch", inner `None` means "set to NULL".
 #[derive(Debug, Clone, Default)]
 pub struct ServingPatch {
-    pub label: Option<Option<String>>,          // double-Option = nullable patch
+    pub label: Option<Option<String>>, // double-Option = nullable patch
     pub amount: Option<Decimal>,
     pub unit: Option<Unit>,
     pub kcal: Option<Decimal>,

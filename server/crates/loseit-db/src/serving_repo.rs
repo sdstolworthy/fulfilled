@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use loseit_core::domain::{Serving, ServingDraft, ServingPatch, ServingSource};
 use loseit_core::domain::unit::Unit;
+use loseit_core::domain::{Serving, ServingDraft, ServingPatch, ServingSource};
 use loseit_core::repo::ServingRepository;
 use loseit_core::{CoreError, CoreResult};
 use rust_decimal::Decimal;
@@ -49,8 +49,7 @@ struct ServingRow {
 impl From<ServingRow> for Serving {
     fn from(row: ServingRow) -> Self {
         // DB CHECK constraint guarantees the string is a valid unit variant.
-        let unit = Unit::parse(&row.unit)
-            .expect("DB CHECK ensures unit invariant");
+        let unit = Unit::parse(&row.unit).expect("DB CHECK ensures unit invariant");
         // DB CHECK constraint guarantees the string is a valid source variant.
         let source = ServingSource::parse(&row.source).unwrap_or(ServingSource::System);
         Serving {
@@ -76,8 +75,7 @@ impl From<ServingRow> for Serving {
     }
 }
 
-const SELECT_COLS: &str =
-    "id, food_id, label, amount, unit, kcal, protein_g, carbs_g, fat_g, \
+const SELECT_COLS: &str = "id, food_id, label, amount, unit, kcal, protein_g, carbs_g, fat_g, \
      fiber_g, sugar_g, sodium_mg, saturated_fat_g, is_default, source, \
      sort_order, created_at, updated_at";
 

@@ -18,9 +18,8 @@ pub use auth::{AuthService, TOKEN_TTL};
 pub use food::FoodService;
 pub use goal::GoalService;
 pub use ingest::{
-    accept_and_normalize_off, accept_and_normalize_usda,
-    FoodRecordSource, IngestService, OffFoodRecord, OffSource,
-    UsdaFoodRecord, UsdaFoodPortion, UsdaSource,
+    accept_and_normalize_off, accept_and_normalize_usda, FoodRecordSource, IngestService,
+    OffFoodRecord, OffSource, UsdaFoodPortion, UsdaFoodRecord, UsdaSource,
 };
 pub use log::{LogService, FREQUENT_WINDOW_DAYS};
 pub use page::{resolve_page_params, PageParams, Paginated, DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT};

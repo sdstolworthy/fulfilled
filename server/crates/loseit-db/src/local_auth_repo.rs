@@ -32,8 +32,7 @@ impl From<CredRow> for LocalAuthCredential {
     fn from(row: CredRow) -> Self {
         Self {
             user_id: row.user_id,
-            username: Username::parse(&row.username)
-                .expect("DB CHECK ensures username invariants"),
+            username: Username::parse(&row.username).expect("DB CHECK ensures username invariants"),
             password_hash: row.password_hash,
             created_at: row.created_at,
             updated_at: row.updated_at,
@@ -41,8 +40,7 @@ impl From<CredRow> for LocalAuthCredential {
     }
 }
 
-const SELECT_CRED_COLUMNS: &str =
-    "user_id, username, password_hash, created_at, updated_at";
+const SELECT_CRED_COLUMNS: &str = "user_id, username, password_hash, created_at, updated_at";
 
 #[async_trait]
 impl LocalAuthRepository for PgLocalAuthRepository {
@@ -50,9 +48,7 @@ impl LocalAuthRepository for PgLocalAuthRepository {
         &self,
         username: &Username,
     ) -> CoreResult<Option<LocalAuthCredential>> {
-        let sql = format!(
-            "SELECT {SELECT_CRED_COLUMNS} FROM users_local_auth WHERE username = $1"
-        );
+        let sql = format!("SELECT {SELECT_CRED_COLUMNS} FROM users_local_auth WHERE username = $1");
         let row: Option<CredRow> = sqlx::query_as(&sql)
             .bind(username.as_str())
             .fetch_optional(&self.pool)

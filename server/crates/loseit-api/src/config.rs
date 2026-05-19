@@ -190,33 +190,24 @@ fn load_auth(env_name: &str) -> Result<(AuthConfig, Option<OidcCommonConfig>)> {
 
 fn load_oidc_provider(id: &str) -> Result<OidcProviderConfig> {
     let key = |suffix: &str| format!("OIDC_{}_{}", id.to_ascii_uppercase(), suffix);
-    let issuer = env::var(key("ISSUER"))
-        .with_context(|| format!("{} required", key("ISSUER")))?;
-    let client_id = env::var(key("CLIENT_ID"))
-        .with_context(|| format!("{} required", key("CLIENT_ID")))?;
+    let issuer = env::var(key("ISSUER")).with_context(|| format!("{} required", key("ISSUER")))?;
+    let client_id =
+        env::var(key("CLIENT_ID")).with_context(|| format!("{} required", key("CLIENT_ID")))?;
     let client_secret = env::var(key("CLIENT_SECRET"))
         .with_context(|| format!("{} required", key("CLIENT_SECRET")))?;
     let redirect_uri = env::var(key("REDIRECT_URI"))
         .with_context(|| format!("{} required", key("REDIRECT_URI")))?;
 
-    let jwks_url = env::var(key("JWKS_URL")).unwrap_or_else(|_| {
-        format!(
-            "{}jwks/",
-            issuer.trim_end_matches('/').to_owned() + "/"
-        )
-    });
+    let jwks_url = env::var(key("JWKS_URL"))
+        .unwrap_or_else(|_| format!("{}jwks/", issuer.trim_end_matches('/').to_owned() + "/"));
     let authorize_url = env::var(key("AUTHORIZE_URL")).unwrap_or_else(|_| {
         format!(
             "{}authorize/",
             issuer.trim_end_matches('/').to_owned() + "/"
         )
     });
-    let token_url = env::var(key("TOKEN_URL")).unwrap_or_else(|_| {
-        format!(
-            "{}token/",
-            issuer.trim_end_matches('/').to_owned() + "/"
-        )
-    });
+    let token_url = env::var(key("TOKEN_URL"))
+        .unwrap_or_else(|_| format!("{}token/", issuer.trim_end_matches('/').to_owned() + "/"));
     let display_name = env::var(key("DISPLAY_NAME")).unwrap_or_else(|_| capitalize(id));
     let icon_url = env::var(key("ICON_URL")).ok();
     let scopes = env::var(key("SCOPES"))

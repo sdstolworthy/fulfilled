@@ -54,10 +54,7 @@ pub async fn open_source(kind: &str, path: &Path) -> anyhow::Result<Box<dyn Food
 
 /// Convenience constructor that opens a USDA source from a path string and a
 /// format name (currently only `"jsonl"` is supported).
-pub async fn open_usda_source(
-    kind: &str,
-    path: &Path,
-) -> anyhow::Result<Box<dyn UsdaSource>> {
+pub async fn open_usda_source(kind: &str, path: &Path) -> anyhow::Result<Box<dyn UsdaSource>> {
     match kind {
         "jsonl" => Ok(Box::new(UsdaJsonlSource::open(path).await?)),
         other => Err(anyhow::anyhow!(

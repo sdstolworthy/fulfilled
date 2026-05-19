@@ -439,7 +439,9 @@ fn test_accept_and_normalize_drops_bad_inputs() {
     assert_eq!(u.draft.name, "Apple");
     // The system 100g serving should be in the servings list.
     assert!(
-        u.servings.iter().any(|s| s.source == ServingSource::System && s.amount == d(100)),
+        u.servings
+            .iter()
+            .any(|s| s.source == ServingSource::System && s.amount == d(100)),
         "must have a system 100g serving in servings list"
     );
 }

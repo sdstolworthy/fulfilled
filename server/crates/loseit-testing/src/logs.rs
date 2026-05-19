@@ -102,9 +102,9 @@ impl LogRepository for InMemoryLogRepository {
             id: Uuid::new_v4(),
             user_id,
             food_id: entry.food_id,
-            food_name: String::new(),        // placeholder; resolved below
+            food_name: String::new(), // placeholder; resolved below
             serving_id: entry.serving_id,
-            serving_name: None,              // placeholder; resolved below
+            serving_name: None, // placeholder; resolved below
             consumed_on: entry.consumed_on,
             meal: entry.meal,
             quantity: entry.quantity,

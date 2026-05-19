@@ -3,11 +3,11 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use chrono::Utc;
+use loseit_core::domain::unit::Unit;
 use loseit_core::domain::{
     Food, FoodDraft, FoodKind, FoodPatch, FoodSearchHit, FoodSource, Serving, ServingDraft,
     ServingPreview, ServingSource,
 };
-use loseit_core::domain::unit::Unit;
 use loseit_core::repo::food::{FoodDraftWithServings, QUICK_ADD_SENTINEL_NAME};
 use loseit_core::repo::{FoodRepository, LogRepository, ServingRepository};
 use loseit_core::CoreResult;
@@ -330,7 +330,11 @@ impl FoodRepository for InMemoryFoodRepository {
                         id
                     }
                     None => {
-                        let source = if is_usda { FoodSource::Usda } else { FoodSource::Off };
+                        let source = if is_usda {
+                            FoodSource::Usda
+                        } else {
+                            FoodSource::Off
+                        };
                         let food = Food {
                             id: Uuid::new_v4(),
                             source,
@@ -359,7 +363,9 @@ impl FoodRepository for InMemoryFoodRepository {
             // Full-list serving replace.
             let servings_guard = self.servings.lock().unwrap().clone();
             if let Some(srv_repo) = servings_guard {
-                srv_repo.replace_all_for_food(food_id, &rec.servings).await?;
+                srv_repo
+                    .replace_all_for_food(food_id, &rec.servings)
+                    .await?;
             }
         }
         Ok(())

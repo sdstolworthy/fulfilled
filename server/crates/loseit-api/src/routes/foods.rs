@@ -19,11 +19,11 @@ use axum::http::StatusCode;
 use axum::routing::{get, patch, post};
 use axum::{Json, Router};
 use chrono::NaiveDate;
+use loseit_core::domain::unit::Unit;
 use loseit_core::domain::{
     Food, FoodDraft, FoodKind, FoodPatch, FoodSearchHitWithSignals, FoodSource, NutriscoreGrade,
     Serving, ServingDraft, ServingPatch, ServingPreview, ServingSource,
 };
-use loseit_core::domain::unit::Unit;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -274,7 +274,7 @@ struct LimitOnlyQuery {
 struct ServingBody {
     label: Option<String>,
     amount: Decimal,
-    unit: String,  // parsed to Unit at handler entry via Unit::parse
+    unit: String, // parsed to Unit at handler entry via Unit::parse
     kcal: Decimal,
     protein_g: Option<Decimal>,
     carbs_g: Option<Decimal>,
@@ -456,11 +456,8 @@ async fn create_food(
         .as_deref()
         .map(parse_nutriscore)
         .transpose()?;
-    let servings: Result<Vec<ServingDraft>, ApiError> = body
-        .servings
-        .into_iter()
-        .map(|s| s.into_draft())
-        .collect();
+    let servings: Result<Vec<ServingDraft>, ApiError> =
+        body.servings.into_iter().map(|s| s.into_draft()).collect();
     let draft = FoodDraft {
         name: body.name,
         brands: body.brands,

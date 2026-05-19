@@ -34,13 +34,12 @@ fn alice_identity() -> UserIdentity {
     }
 }
 
-async fn seed_alice(
-    users: &Arc<InMemoryUserRepository>,
-    auth: &Arc<AuthService>,
-) -> Uuid {
+async fn seed_alice(users: &Arc<InMemoryUserRepository>, auth: &Arc<AuthService>) -> Uuid {
     use loseit_core::repo::UserRepository;
     let user = users.create(&alice_identity()).await.unwrap();
-    auth.seed_credential(user.id, "alice", "hunter2").await.unwrap();
+    auth.seed_credential(user.id, "alice", "hunter2")
+        .await
+        .unwrap();
     user.id
 }
 
@@ -56,7 +55,10 @@ async fn login_returns_token_on_correct_creds() {
     let (users, _local, auth) = fresh().await;
     seed_alice(&users, &auth).await;
 
-    let token = auth.login("alice", "hunter2").await.expect("should succeed");
+    let token = auth
+        .login("alice", "hunter2")
+        .await
+        .expect("should succeed");
 
     assert!(!token.raw.is_empty(), "raw token must not be empty");
     // URL-safe base64 of 32 random bytes encodes to 43 chars (no padding).
@@ -77,7 +79,10 @@ async fn login_returns_invalid_on_wrong_password() {
     let (users, _local, auth) = fresh().await;
     seed_alice(&users, &auth).await;
 
-    let err = auth.login("alice", "wrongpassword").await.expect_err("should fail");
+    let err = auth
+        .login("alice", "wrongpassword")
+        .await
+        .expect_err("should fail");
 
     assert!(matches!(err, AuthError::Invalid), "got {err:?}");
 }
@@ -86,7 +91,10 @@ async fn login_returns_invalid_on_wrong_password() {
 async fn login_returns_invalid_on_unknown_username() {
     let (_users, _local, auth) = fresh().await;
 
-    let err = auth.login("ghost", "anything").await.expect_err("should fail");
+    let err = auth
+        .login("ghost", "anything")
+        .await
+        .expect_err("should fail");
 
     assert!(matches!(err, AuthError::Invalid), "got {err:?}");
 }
@@ -157,7 +165,10 @@ async fn verify_token_returns_user_on_active_token() {
 async fn verify_token_returns_invalid_on_unknown_token() {
     let (_users, _local, auth) = fresh().await;
 
-    let err = auth.verify_token("not-a-real-token").await.expect_err("should fail");
+    let err = auth
+        .verify_token("not-a-real-token")
+        .await
+        .expect_err("should fail");
 
     assert!(matches!(err, AuthError::Invalid), "got {err:?}");
 }
@@ -171,7 +182,10 @@ async fn verify_token_returns_invalid_on_expired_token() {
     let token_hash = sha256_hex(&token.raw);
     local.force_expire(&token_hash);
 
-    let err = auth.verify_token(&token.raw).await.expect_err("should fail");
+    let err = auth
+        .verify_token(&token.raw)
+        .await
+        .expect_err("should fail");
     assert!(matches!(err, AuthError::Invalid), "got {err:?}");
 }
 
@@ -209,10 +223,15 @@ async fn seed_credential_is_idempotent() {
     let user_id = seed_alice(&users, &auth).await;
 
     // Second seed with same args must succeed.
-    auth.seed_credential(user_id, "alice", "hunter2").await.expect("second seed");
+    auth.seed_credential(user_id, "alice", "hunter2")
+        .await
+        .expect("second seed");
 
     // Login still works after the second upsert.
-    let token = auth.login("alice", "hunter2").await.expect("login after re-seed");
+    let token = auth
+        .login("alice", "hunter2")
+        .await
+        .expect("login after re-seed");
     assert!(!token.raw.is_empty());
 }
 
@@ -238,9 +257,11 @@ async fn mint_session_for_returns_opaque_token() {
     assert_eq!(tok.user_id, user_id);
     assert!(!tok.raw.is_empty());
     assert!(tok.raw.len() >= 32); // base64url-no-pad of 32 bytes is 43 chars
-    // expires_at ~30 days out (allow ±10s drift)
+                                  // expires_at ~30 days out (allow ±10s drift)
     let now = chrono::Utc::now();
-    let drift = (tok.expires_at - (now + chrono::Duration::days(30))).num_seconds().abs();
+    let drift = (tok.expires_at - (now + chrono::Duration::days(30)))
+        .num_seconds()
+        .abs();
     assert!(drift < 10, "expires_at drift: {drift}s");
 }
 

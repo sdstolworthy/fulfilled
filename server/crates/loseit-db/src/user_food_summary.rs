@@ -125,15 +125,14 @@ impl UserFoodSummaryReader for PgUserFoodSummaryReader {
                 last_serving_unit,
                 last_serving_kcal,
             ) {
-                (Some(sid), Some(amount), Some(unit_str), Some(kcal)) => {
-                    Unit::parse(&unit_str).map(|unit| ServingPreview {
+                (Some(sid), Some(amount), Some(unit_str), Some(kcal)) => Unit::parse(&unit_str)
+                    .map(|unit| ServingPreview {
                         id: sid,
                         label: last_serving_label,
                         amount,
                         unit,
                         kcal,
-                    })
-                }
+                    }),
                 _ => None,
             };
 

@@ -270,21 +270,19 @@ impl FoodRepository for PgFoodRepository {
             let serving_kcal: Option<Decimal> =
                 row.try_get("default_serving_kcal").map_err(map_sqlx)?;
 
-            let default_serving =
-                match (serving_id, serving_amount, serving_unit_str, serving_kcal) {
-                    (Some(sid), Some(amount), Some(unit_str), Some(kcal)) => {
-                        loseit_core::domain::unit::Unit::parse(&unit_str).map(|unit| {
-                            ServingPreview {
-                                id: sid,
-                                label: serving_label,
-                                amount,
-                                unit,
-                                kcal,
-                            }
-                        })
-                    }
-                    _ => None,
-                };
+            let default_serving = match (serving_id, serving_amount, serving_unit_str, serving_kcal)
+            {
+                (Some(sid), Some(amount), Some(unit_str), Some(kcal)) => {
+                    loseit_core::domain::unit::Unit::parse(&unit_str).map(|unit| ServingPreview {
+                        id: sid,
+                        label: serving_label,
+                        amount,
+                        unit,
+                        kcal,
+                    })
+                }
+                _ => None,
+            };
 
             hits.push(FoodSearchHit {
                 id,
@@ -611,21 +609,19 @@ impl FoodRepository for PgFoodRepository {
             let serving_kcal: Option<Decimal> =
                 row.try_get("default_serving_kcal").map_err(map_sqlx)?;
 
-            let default_serving =
-                match (serving_id, serving_amount, serving_unit_str, serving_kcal) {
-                    (Some(sid), Some(amount), Some(unit_str), Some(kcal)) => {
-                        loseit_core::domain::unit::Unit::parse(&unit_str).map(|unit| {
-                            ServingPreview {
-                                id: sid,
-                                label: serving_label,
-                                amount,
-                                unit,
-                                kcal,
-                            }
-                        })
-                    }
-                    _ => None,
-                };
+            let default_serving = match (serving_id, serving_amount, serving_unit_str, serving_kcal)
+            {
+                (Some(sid), Some(amount), Some(unit_str), Some(kcal)) => {
+                    loseit_core::domain::unit::Unit::parse(&unit_str).map(|unit| ServingPreview {
+                        id: sid,
+                        label: serving_label,
+                        amount,
+                        unit,
+                        kcal,
+                    })
+                }
+                _ => None,
+            };
 
             hits.push(FoodSearchHit {
                 id,

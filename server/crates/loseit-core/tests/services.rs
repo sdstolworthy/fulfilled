@@ -6,7 +6,9 @@
 use std::sync::Arc;
 
 use chrono::NaiveDate;
-use loseit_core::domain::{GoalDraft, HeightUnit, ProfilePatch, Sex, UserIdentity, WeightDraft, WeightUnit};
+use loseit_core::domain::{
+    GoalDraft, HeightUnit, ProfilePatch, Sex, UserIdentity, WeightDraft, WeightUnit,
+};
 use loseit_core::service::{GoalService, UserService, WeightService};
 use loseit_testing::{InMemoryGoalRepository, InMemoryUserRepository, InMemoryWeightRepository};
 use rust_decimal::Decimal;

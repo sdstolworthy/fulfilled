@@ -62,10 +62,7 @@ fn make_service() -> FoodService {
 async fn test_create_custom_empty_servings_rejected() {
     let svc = make_service();
     let draft = make_food_draft(vec![]);
-    let err = svc
-        .create_custom(Uuid::new_v4(), draft)
-        .await
-        .unwrap_err();
+    let err = svc.create_custom(Uuid::new_v4(), draft).await.unwrap_err();
     match err {
         CoreError::Validation(msg) => assert!(msg.contains("serving"), "msg={msg}"),
         other => panic!("expected Validation, got {other:?}"),
@@ -76,14 +73,8 @@ async fn test_create_custom_empty_servings_rejected() {
 #[tokio::test]
 async fn test_create_custom_multi_default_rejected() {
     let svc = make_service();
-    let draft = make_food_draft(vec![
-        base_serving_draft(true),
-        base_serving_draft(true),
-    ]);
-    let err = svc
-        .create_custom(Uuid::new_v4(), draft)
-        .await
-        .unwrap_err();
+    let draft = make_food_draft(vec![base_serving_draft(true), base_serving_draft(true)]);
+    let err = svc.create_custom(Uuid::new_v4(), draft).await.unwrap_err();
     match err {
         CoreError::Validation(msg) => assert!(msg.contains("default"), "msg={msg}"),
         other => panic!("expected Validation, got {other:?}"),
@@ -95,10 +86,7 @@ async fn test_create_custom_multi_default_rejected() {
 async fn test_create_custom_auto_marks_first_default() {
     let svc = make_service();
     // Two servings, neither is default.
-    let draft = make_food_draft(vec![
-        base_serving_draft(false),
-        base_serving_draft(false),
-    ]);
+    let draft = make_food_draft(vec![base_serving_draft(false), base_serving_draft(false)]);
     // Should succeed — the service marks the first one default internally.
     svc.create_custom(Uuid::new_v4(), draft)
         .await

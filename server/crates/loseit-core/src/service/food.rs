@@ -249,10 +249,14 @@ fn validate_servings_default_invariant(servings: &[ServingDraft]) -> CoreResult<
 fn validate_serving_draft(s: &ServingDraft) -> CoreResult<()> {
     use rust_decimal::Decimal;
     if s.amount <= Decimal::ZERO {
-        return Err(CoreError::Validation("serving amount must be positive".into()));
+        return Err(CoreError::Validation(
+            "serving amount must be positive".into(),
+        ));
     }
     if s.kcal < Decimal::ZERO {
-        return Err(CoreError::Validation("serving kcal must be non-negative".into()));
+        return Err(CoreError::Validation(
+            "serving kcal must be non-negative".into(),
+        ));
     }
     let optional_fields: [(Option<Decimal>, &str); 7] = [
         (s.protein_g, "protein_g"),

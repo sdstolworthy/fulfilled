@@ -10,12 +10,12 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use loseit_core::domain::{FoodSource, ServingSource};
 use loseit_core::domain::unit::Unit;
+use loseit_core::domain::{FoodSource, ServingSource};
 use loseit_core::repo::FoodRepository;
 use loseit_core::service::ingest::{
-    accept_and_normalize_off, accept_and_normalize_usda,
-    parse_serving_size, IngestService, OffFoodRecord, UsdaFoodPortion, UsdaFoodRecord,
+    accept_and_normalize_off, accept_and_normalize_usda, parse_serving_size, IngestService,
+    OffFoodRecord, UsdaFoodPortion, UsdaFoodRecord,
 };
 use loseit_core::service::{FoodRecordSource, UsdaSource};
 use loseit_core::CoreResult;
@@ -23,7 +23,6 @@ use loseit_testing::{InMemoryBatchRepository, InMemoryFoodRepository, InMemorySe
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
 use uuid::Uuid;
-
 
 // ---------------------------------------------------------------------------
 // Parse corner-case tests  (§8 — "2 tsp", "1 pouch (90 g)")
@@ -46,7 +45,10 @@ fn parse_1_pouch_90g() {
     let result = parse_serving_size("1 pouch (90 g)");
     // The first number+unit pair scanned is "1 pouch" — "pouch" is unknown, so it
     // yields no result for that token. The next scanned pair is "90 g".
-    assert!(result.is_some(), "should parse via the parenthetical gram value");
+    assert!(
+        result.is_some(),
+        "should parse via the parenthetical gram value"
+    );
     let (amt, unit) = result.unwrap();
     assert_eq!(amt, dec!(90));
     assert_eq!(unit, Unit::Gram);
@@ -89,7 +91,10 @@ fn off_drop_empty_barcode() {
         energy_kcal_100g: Some(dec!(100)),
         ..Default::default()
     };
-    assert!(accept_and_normalize_off(r).is_none(), "empty barcode must be dropped");
+    assert!(
+        accept_and_normalize_off(r).is_none(),
+        "empty barcode must be dropped"
+    );
 }
 
 /// §7.1 rule 1b: empty product_name → dropped.
@@ -101,7 +106,10 @@ fn off_drop_empty_product_name() {
         energy_kcal_100g: Some(dec!(100)),
         ..Default::default()
     };
-    assert!(accept_and_normalize_off(r).is_none(), "whitespace-only name must be dropped");
+    assert!(
+        accept_and_normalize_off(r).is_none(),
+        "whitespace-only name must be dropped"
+    );
 }
 
 /// §7.1 rule 7: no per-100g, no parseable serving → dropped.
@@ -117,7 +125,10 @@ fn off_drop_no_nutrition_no_serving() {
         serving_size: None,
         ..Default::default()
     };
-    assert!(accept_and_normalize_off(r).is_none(), "no nutrition + no serving must be dropped");
+    assert!(
+        accept_and_normalize_off(r).is_none(),
+        "no nutrition + no serving must be dropped"
+    );
 }
 
 /// §7.1 rule 7 variant: kcal absent even though serving_size is set → dropped
@@ -134,7 +145,10 @@ fn off_drop_no_kcal_with_serving() {
         serving_size: Some("30 g".into()),
         ..Default::default()
     };
-    assert!(accept_and_normalize_off(r).is_none(), "no kcal + no per-100g macros must be dropped");
+    assert!(
+        accept_and_normalize_off(r).is_none(),
+        "no kcal + no per-100g macros must be dropped"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -204,7 +218,10 @@ fn off_round_trip_fixture_4_rows() {
     assert_eq!(accepted.len(), 3, "3 of 4 rows must be accepted");
 
     // Row A: barcode FIX001, 2 servings (Off is_default + System companion).
-    let a = accepted.iter().find(|r| r.draft.barcode.as_deref() == Some("FIX001")).unwrap();
+    let a = accepted
+        .iter()
+        .find(|r| r.draft.barcode.as_deref() == Some("FIX001"))
+        .unwrap();
     assert_eq!(a.draft.name, "Granola Bar");
     assert_eq!(a.servings.len(), 2, "FIX001 must have 2 servings");
     let default_a = a.servings.iter().find(|s| s.is_default).unwrap();
@@ -215,7 +232,10 @@ fn off_round_trip_fixture_4_rows() {
     assert_eq!(default_a.kcal, dec!(180));
 
     // Row B: barcode FIX002, 1 serving (100g system, is_default=true).
-    let b = accepted.iter().find(|r| r.draft.barcode.as_deref() == Some("FIX002")).unwrap();
+    let b = accepted
+        .iter()
+        .find(|r| r.draft.barcode.as_deref() == Some("FIX002"))
+        .unwrap();
     assert_eq!(b.servings.len(), 1);
     let s_b = &b.servings[0];
     assert_eq!(s_b.source, ServingSource::System);
@@ -224,9 +244,18 @@ fn off_round_trip_fixture_4_rows() {
     assert_eq!(s_b.unit, Unit::Gram);
 
     // Row C: volumetric Cup dropped; only the 100g companion.
-    let c = accepted.iter().find(|r| r.draft.barcode.as_deref() == Some("FIX003")).unwrap();
-    assert!(!c.servings.iter().any(|s| s.unit == Unit::Cup), "Cup must be dropped");
-    assert!(c.servings.iter().any(|s| s.unit == Unit::Gram && s.amount == dec!(100)));
+    let c = accepted
+        .iter()
+        .find(|r| r.draft.barcode.as_deref() == Some("FIX003"))
+        .unwrap();
+    assert!(
+        !c.servings.iter().any(|s| s.unit == Unit::Cup),
+        "Cup must be dropped"
+    );
+    assert!(c
+        .servings
+        .iter()
+        .any(|s| s.unit == Unit::Gram && s.amount == dec!(100)));
 }
 
 // ---------------------------------------------------------------------------
@@ -299,7 +328,10 @@ fn usda_round_trip_fixture_3_records() {
     assert_eq!(accepted.len(), 2, "2 of 3 records must be accepted");
 
     // Record A: Olive Oil — 2 FDC portions + 1 system 100 g companion (F4-T1).
-    let a = accepted.iter().find(|r| r.draft.name == "Olive Oil").unwrap();
+    let a = accepted
+        .iter()
+        .find(|r| r.draft.name == "Olive Oil")
+        .unwrap();
     assert_eq!(a.servings.len(), 3);
     let tbsp = &a.servings[0];
     assert_eq!(tbsp.unit, Unit::Tablespoon);
@@ -328,7 +360,10 @@ fn usda_round_trip_fixture_3_records() {
 
     // Record B: Mystery Powder — unmapped "scoop" → {28, Gram}, no label.
     // FDC portion + 100 g companion = 2 servings.
-    let b = accepted.iter().find(|r| r.draft.name == "Mystery Powder").unwrap();
+    let b = accepted
+        .iter()
+        .find(|r| r.draft.name == "Mystery Powder")
+        .unwrap();
     assert_eq!(b.servings.len(), 2);
     let s_b = &b.servings[0];
     assert_eq!(s_b.unit, Unit::Gram);

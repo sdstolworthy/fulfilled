@@ -21,8 +21,8 @@ use axum::body::{to_bytes, Body};
 use axum::http::{Request, StatusCode};
 use loseit_api::{router, AppState};
 use loseit_core::auth::Authenticator;
-use loseit_core::domain::{FoodDraft, UserIdentity};
 use loseit_core::domain::unit::Unit;
+use loseit_core::domain::{FoodDraft, UserIdentity};
 use loseit_core::domain::{ServingDraft, ServingSource};
 use loseit_core::repo::{
     FoodDraftWithServings, FoodRepository, GoalRepository, LogRepository, ServingRepository,
@@ -529,10 +529,7 @@ async fn test_search_emits_calories_per_serving_as_null_when_no_default_serving(
     .await;
 
     let resp = app
-        .oneshot(authed_request(
-            "GET",
-            "/api/v1/foods/search?q=Servingless",
-        ))
+        .oneshot(authed_request("GET", "/api/v1/foods/search?q=Servingless"))
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
@@ -1270,7 +1267,10 @@ async fn food_detail_kind_normal_for_custom_food() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let body = read_json(resp.into_body()).await;
-    assert_eq!(body["kind"], "normal", "custom food must report kind=normal");
+    assert_eq!(
+        body["kind"], "normal",
+        "custom food must report kind=normal"
+    );
 }
 
 #[tokio::test]
@@ -1574,8 +1574,7 @@ async fn test_enrichment_handles_deleted_serving() {
         let foods = foods.clone();
         let logs = logs.clone();
         Box::pin(async move {
-            let id =
-                seed_off_food(&foods, "F5-DEL-1", "Orphaned Serving Bar", Some("Brand")).await;
+            let id = seed_off_food(&foods, "F5-DEL-1", "Orphaned Serving Bar", Some("Brand")).await;
             logs.create(
                 alice,
                 &make_log_entry(id, NaiveDate::from_ymd_opt(2026, 5, 9).unwrap(), None),

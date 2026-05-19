@@ -385,10 +385,7 @@ mod tests {
             }"#,
         );
         let unit_name = p.measure_unit.as_ref().and_then(|u| u.name.as_deref());
-        assert_eq!(
-            compose_label(&p, unit_name).as_deref(),
-            Some("1 drumstick"),
-        );
+        assert_eq!(compose_label(&p, unit_name).as_deref(), Some("1 drumstick"),);
     }
 
     /// `portionDescription == "Quantity not specified"` is treated as

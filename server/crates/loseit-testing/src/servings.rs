@@ -3,8 +3,8 @@ use std::sync::Mutex;
 
 use async_trait::async_trait;
 use chrono::Utc;
-use loseit_core::domain::{Serving, ServingDraft, ServingPatch, ServingSource};
 use loseit_core::domain::unit::Unit;
+use loseit_core::domain::{Serving, ServingDraft, ServingPatch, ServingSource};
 use loseit_core::repo::ServingRepository;
 use loseit_core::CoreResult;
 use rust_decimal::Decimal;

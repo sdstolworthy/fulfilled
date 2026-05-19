@@ -10,12 +10,15 @@ use std::sync::Arc;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use loseit_api::auth::local::LocalAuthenticator;
 use loseit_api::auth::dev::DevAuthenticator;
+use loseit_api::auth::local::LocalAuthenticator;
 use loseit_api::{router, AppState};
 use loseit_core::auth::Authenticator;
 use loseit_core::domain::UserIdentity;
-use loseit_core::repo::{FoodRepository, GoalRepository, LogRepository, ServingRepository, UserRepository, WeightRepository};
+use loseit_core::repo::{
+    FoodRepository, GoalRepository, LogRepository, ServingRepository, UserRepository,
+    WeightRepository,
+};
 use loseit_core::service::AuthService;
 use loseit_testing::{
     InMemoryFoodRepository, InMemoryGoalRepository, InMemoryLocalAuthRepository,
@@ -60,9 +63,11 @@ fn build_harness(
     let users_dyn: Arc<dyn UserRepository> = users_concrete.clone();
 
     if with_auth_service {
-        let auth_service = Arc::new(AuthService::new(users_concrete.clone(), local_concrete.clone()));
-        let authn: Arc<dyn Authenticator> =
-            Arc::new(LocalAuthenticator::new(auth_service.clone()));
+        let auth_service = Arc::new(AuthService::new(
+            users_concrete.clone(),
+            local_concrete.clone(),
+        ));
+        let authn: Arc<dyn Authenticator> = Arc::new(LocalAuthenticator::new(auth_service.clone()));
         let state = AppState::from_ports(
             users_dyn,
             weights,
@@ -113,10 +118,7 @@ fn build_harness(
 }
 
 /// Seed a user + credential into the harness, returning the created user's id.
-async fn seed_dev_user(
-    users: &Arc<InMemoryUserRepository>,
-    auth_service: &Arc<AuthService>,
-) {
+async fn seed_dev_user(users: &Arc<InMemoryUserRepository>, auth_service: &Arc<AuthService>) {
     let identity = UserIdentity {
         issuer: "dev".into(),
         external_id: "dev-user".into(),
@@ -183,9 +185,11 @@ async fn login_returns_200_with_token_on_correct_creds() {
     assert!(!token.is_empty(), "token must be non-empty");
 
     // expires_at must be present and parse as ISO-8601.
-    let expires_raw = body["expires_at"].as_str().expect("expires_at must be present");
-    let expires = chrono::DateTime::parse_from_rfc3339(expires_raw)
-        .expect("expires_at must be ISO-8601");
+    let expires_raw = body["expires_at"]
+        .as_str()
+        .expect("expires_at must be present");
+    let expires =
+        chrono::DateTime::parse_from_rfc3339(expires_raw).expect("expires_at must be ISO-8601");
 
     // Should be ~30 days in the future (allow ±1 minute for slow CI).
     let now = chrono::Utc::now();
@@ -201,10 +205,7 @@ async fn login_returns_401_on_wrong_password() {
     let (app, users, _local, auth_service) = build_harness(true);
     seed_dev_user(&users, auth_service.as_ref().unwrap()).await;
 
-    let resp = app
-        .oneshot(login_request("dev", "WRONG"))
-        .await
-        .unwrap();
+    let resp = app.oneshot(login_request("dev", "WRONG")).await.unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 
     let body = body_json(resp).await;
@@ -216,10 +217,7 @@ async fn login_returns_401_on_wrong_password() {
 async fn login_returns_401_on_unknown_username() {
     let (app, _users, _local, _auth_service) = build_harness(true);
     // No user seeded — "nobody" is unknown.
-    let resp = app
-        .oneshot(login_request("nobody", "x"))
-        .await
-        .unwrap();
+    let resp = app.oneshot(login_request("nobody", "x")).await.unwrap();
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 

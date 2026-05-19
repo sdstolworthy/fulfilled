@@ -167,10 +167,7 @@ impl LogRepository for PgLogRepository {
         // for the simpler SQL.
         let recompute_quantity = patch.recompute.as_ref().map(|r| r.quantity);
         let recompute_entered_amount = patch.recompute.as_ref().map(|r| r.entered_amount);
-        let recompute_entered_unit = patch
-            .recompute
-            .as_ref()
-            .map(|r| r.entered_unit.as_str());
+        let recompute_entered_unit = patch.recompute.as_ref().map(|r| r.entered_unit.as_str());
         let recompute_calories = patch.recompute.as_ref().map(|r| r.snapshot.calories_kcal);
         let recompute_protein = patch.recompute.as_ref().and_then(|r| r.snapshot.protein_g);
         let recompute_carbs = patch.recompute.as_ref().and_then(|r| r.snapshot.carbs_g);

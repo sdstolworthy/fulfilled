@@ -137,10 +137,7 @@ async fn main() -> Result<()> {
             run_usda(&service, BoxedUsdaSource(source), &source_url).await?
         }
         other => {
-            anyhow::bail!(
-                "unknown --source `{}`; expected `off` or `usda`",
-                other
-            );
+            anyhow::bail!("unknown --source `{}`; expected `off` or `usda`", other);
         }
     };
 

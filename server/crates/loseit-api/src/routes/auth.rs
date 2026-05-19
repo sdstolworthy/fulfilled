@@ -130,8 +130,8 @@ pub fn resolve_redirect_target(
 /// verbatim — the registered scheme handler on the mobile OS is the
 /// trust anchor here, not the URL structure.
 fn validate_mobile_callback(raw: &str) -> Result<String, ApiError> {
-    let url = url::Url::parse(raw)
-        .map_err(|_| ApiError::bad_request("invalid `mobile_callback`"))?;
+    let url =
+        url::Url::parse(raw).map_err(|_| ApiError::bad_request("invalid `mobile_callback`"))?;
     if !ALLOWED_MOBILE_SCHEMES.contains(&url.scheme()) {
         return Err(ApiError::bad_request(
             "`mobile_callback` scheme not allowed",
@@ -237,11 +237,11 @@ async fn oidc_start(
     Query(params): Query<StartParams>,
     cookies: CookieJar,
 ) -> Result<(CookieJar, Redirect), ApiError> {
-    let registry = state.oidc.as_ref().ok_or_else(|| ApiError::not_found())?;
+    let registry = state.oidc.as_ref().ok_or_else(ApiError::not_found)?;
     let provider = registry
         .providers
         .get(&provider_id)
-        .ok_or_else(|| ApiError::not_found())?;
+        .ok_or_else(ApiError::not_found)?;
 
     let mobile = params.mobile_callback.is_some();
     let next = resolve_redirect_target(
@@ -265,8 +265,7 @@ async fn oidc_start(
     };
     let signed = registry.state_signer.sign(&payload);
 
-    let authorize_url =
-        build_authorize_url(provider, &state_csrf, &code_challenge, &nonce, mobile);
+    let authorize_url = build_authorize_url(provider, &state_csrf, &code_challenge, &nonce, mobile);
     let cookie = build_state_cookie(signed, state.env_is_production);
     Ok((cookies.add(cookie), Redirect::to(&authorize_url)))
 }
@@ -295,11 +294,11 @@ async fn oidc_callback(
     Query(params): Query<CallbackParams>,
     cookies: CookieJar,
 ) -> Result<(CookieJar, Redirect), ApiError> {
-    let registry = state.oidc.as_ref().ok_or_else(|| ApiError::not_found())?;
+    let registry = state.oidc.as_ref().ok_or_else(ApiError::not_found)?;
     let provider = registry
         .providers
         .get(&provider_id)
-        .ok_or_else(|| ApiError::not_found())?;
+        .ok_or_else(ApiError::not_found)?;
 
     // 1. Read + verify state cookie.
     let signed = cookies
@@ -452,7 +451,7 @@ async fn oidc_exchange(
     State(state): State<AppState>,
     Json(body): Json<ExchangeBody>,
 ) -> Result<Json<ExchangeResponse>, ApiError> {
-    let registry = state.oidc.as_ref().ok_or_else(|| ApiError::not_found())?;
+    let registry = state.oidc.as_ref().ok_or_else(ApiError::not_found)?;
     let code_hash = sha256_hex(&body.code);
     let claim = registry
         .handoffs

@@ -56,15 +56,20 @@ impl StateSigner {
     /// Constant-time HMAC verify + JSON parse + `exp > now` check.
     pub fn verify(&self, signed: &str) -> Result<StatePayload, StateError> {
         let (payload_b64, tag_b64) = signed.split_once('.').ok_or(StateError::Malformed)?;
-        let supplied_tag = URL_SAFE_NO_PAD.decode(tag_b64).map_err(|_| StateError::Malformed)?;
+        let supplied_tag = URL_SAFE_NO_PAD
+            .decode(tag_b64)
+            .map_err(|_| StateError::Malformed)?;
         let mut mac = HmacSha256::new_from_slice(&self.key).expect("HMAC accepts any key length");
         mac.update(payload_b64.as_bytes());
         let expected = mac.finalize().into_bytes();
         if expected.ct_eq(&supplied_tag).unwrap_u8() == 0 {
             return Err(StateError::BadSignature);
         }
-        let json = URL_SAFE_NO_PAD.decode(payload_b64).map_err(|_| StateError::Malformed)?;
-        let payload: StatePayload = serde_json::from_slice(&json).map_err(|_| StateError::Malformed)?;
+        let json = URL_SAFE_NO_PAD
+            .decode(payload_b64)
+            .map_err(|_| StateError::Malformed)?;
+        let payload: StatePayload =
+            serde_json::from_slice(&json).map_err(|_| StateError::Malformed)?;
         if payload.exp <= Utc::now().timestamp() {
             return Err(StateError::Expired);
         }
@@ -116,8 +121,11 @@ mod tests {
         let s = signer();
         let signed = s.sign(&fresh_payload());
         // Drop last 4 chars of the HMAC tag
-        let bad = &signed[..signed.len()-4];
-        assert!(matches!(s.verify(bad), Err(StateError::BadSignature) | Err(StateError::Malformed)));
+        let bad = &signed[..signed.len() - 4];
+        assert!(matches!(
+            s.verify(bad),
+            Err(StateError::BadSignature) | Err(StateError::Malformed)
+        ));
     }
 
     #[test]
@@ -125,8 +133,11 @@ mod tests {
         let s = signer();
         let signed = s.sign(&fresh_payload());
         let dot = signed.find('.').unwrap();
-        let bad = format!("{}{}", &signed[..dot-2], &signed[dot..]);
-        assert!(matches!(s.verify(&bad), Err(StateError::Malformed) | Err(StateError::BadSignature)));
+        let bad = format!("{}{}", &signed[..dot - 2], &signed[dot..]);
+        assert!(matches!(
+            s.verify(&bad),
+            Err(StateError::Malformed) | Err(StateError::BadSignature)
+        ));
     }
 
     #[test]

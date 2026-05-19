@@ -169,7 +169,10 @@ async fn seed_off_food(foods: &Arc<InMemoryFoodRepository>, barcode: &str, name:
             },
         ],
     };
-    foods.upsert_external_food_batch(batch_id, vec![rec]).await.unwrap();
+    foods
+        .upsert_external_food_batch(batch_id, vec![rec])
+        .await
+        .unwrap();
     foods
         .find_by_barcode(Uuid::nil(), barcode)
         .await

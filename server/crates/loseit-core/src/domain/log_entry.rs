@@ -32,8 +32,8 @@ pub struct FoodLogEntry {
     pub consumed_on: NaiveDate,
     pub meal: Meal,
     pub quantity: Decimal,
-    pub entered_amount: Decimal,    // what the user typed at entry time
-    pub entered_unit: Unit,         // what the user typed at entry time
+    pub entered_amount: Decimal, // what the user typed at entry time
+    pub entered_unit: Unit,      // what the user typed at entry time
     pub snapshot: NutritionSnapshot,
     pub note: Option<String>,
     pub created_at: DateTime<Utc>,
@@ -48,8 +48,8 @@ pub struct LogDraft {
     pub serving_id: Uuid,
     pub consumed_on: NaiveDate,
     pub meal: Meal,
-    pub entered_amount: Decimal,    // required from the wire
-    pub entered_unit: Unit,         // required from the wire
+    pub entered_amount: Decimal, // required from the wire
+    pub entered_unit: Unit,      // required from the wire
     pub note: Option<String>,
 }
 

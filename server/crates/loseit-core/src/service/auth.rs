@@ -29,10 +29,18 @@ pub struct AuthService {
 impl AuthService {
     pub fn new(users: Arc<dyn UserRepository>, local: Arc<dyn LocalAuthRepository>) -> Self {
         let dummy_hash = hash_password("unused").expect("argon2 default must succeed");
-        Self { users, local, dummy_hash }
+        Self {
+            users,
+            local,
+            dummy_hash,
+        }
     }
 
-    pub async fn login(&self, username_raw: &str, password: &str) -> Result<LocalAuthToken, AuthError> {
+    pub async fn login(
+        &self,
+        username_raw: &str,
+        password: &str,
+    ) -> Result<LocalAuthToken, AuthError> {
         let username = match Username::parse(username_raw) {
             Some(u) => u,
             None => {
@@ -111,10 +119,12 @@ impl AuthService {
         let username = Username::parse(username_raw)
             .ok_or_else(|| CoreError::Validation("invalid username".into()))?;
 
-        let hash = hash_password(password)
-            .map_err(|e| CoreError::internal(format!("hash: {e}")))?;
+        let hash =
+            hash_password(password).map_err(|e| CoreError::internal(format!("hash: {e}")))?;
 
-        self.local.upsert_credential(user_id, &username, &hash).await?;
+        self.local
+            .upsert_credential(user_id, &username, &hash)
+            .await?;
 
         Ok(())
     }
@@ -132,7 +142,9 @@ fn verify_password(plain: &str, encoded: &str) -> bool {
         Ok(h) => h,
         Err(_) => return false,
     };
-    Argon2::default().verify_password(plain.as_bytes(), &hash).is_ok()
+    Argon2::default()
+        .verify_password(plain.as_bytes(), &hash)
+        .is_ok()
 }
 
 fn mint_raw_token() -> String {

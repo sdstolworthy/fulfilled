@@ -90,7 +90,10 @@ impl LocalAuthRepository for InMemoryLocalAuthRepository {
     ) -> CoreResult<()> {
         self.tokens.lock().unwrap().insert(
             token_hash.to_string(),
-            TokenRow { user_id, expires_at },
+            TokenRow {
+                user_id,
+                expires_at,
+            },
         );
         Ok(())
     }

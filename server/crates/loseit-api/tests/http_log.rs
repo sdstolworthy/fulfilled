@@ -16,11 +16,11 @@ use axum::http::{Request, StatusCode};
 use chrono::{NaiveDate, Utc};
 use loseit_api::{router, AppState};
 use loseit_core::auth::Authenticator;
-use loseit_core::domain::{
-    FoodDraft, GoalDraft, Meal, NutritionSnapshot, PersistedLogEntry,
-    ServingDraft, ServingSource, UserIdentity,
-};
 use loseit_core::domain::unit::Unit;
+use loseit_core::domain::{
+    FoodDraft, GoalDraft, Meal, NutritionSnapshot, PersistedLogEntry, ServingDraft, ServingSource,
+    UserIdentity,
+};
 use loseit_core::repo::{
     FoodRepository, GoalRepository, LogRepository, ServingRepository, UserRepository,
     WeightRepository,
@@ -873,7 +873,11 @@ async fn test_get_recent_foods_returns_lean_hits() {
             captured.set((food_a, food_b, food_c)).unwrap();
 
             // Log entries in order A, B, C.
-            for (fid, sid) in [(food_a, serving_a), (food_b, serving_b), (food_c, serving_c)] {
+            for (fid, sid) in [
+                (food_a, serving_a),
+                (food_b, serving_b),
+                (food_c, serving_c),
+            ] {
                 let entry = PersistedLogEntry {
                     food_id: fid,
                     serving_id: Some(sid),
@@ -980,10 +984,12 @@ async fn test_recent_foods_kcal_is_per_serving() {
     let kcal_str = hit["default_serving"]["kcal"]
         .as_str()
         .expect("default_serving.kcal is a string");
-    let kcal_val: rust_decimal::Decimal = kcal_str
-        .parse()
-        .expect("kcal parses as Decimal");
-    assert_eq!(kcal_val, Decimal::from(200), "kcal must equal the serving's 200");
+    let kcal_val: rust_decimal::Decimal = kcal_str.parse().expect("kcal parses as Decimal");
+    assert_eq!(
+        kcal_val,
+        Decimal::from(200),
+        "kcal must equal the serving's 200"
+    );
 }
 
 #[tokio::test]
@@ -1538,7 +1544,7 @@ async fn copy_day_recomputes_snapshot_from_current_serving_not_source_snapshot()
     let captured: Arc<OnceLock<(Uuid, Uuid, Arc<InMemoryServingRepository>)>> =
         Arc::new(OnceLock::new());
     let captured_for_seed = captured.clone();
-    let (app, alice) = build_test_app_with(move |foods, servings, _logs, _goals, alice| {
+    let (app, _alice) = build_test_app_with(move |foods, servings, _logs, _goals, alice| {
         let foods = foods.clone();
         let servings = servings.clone();
         let captured = captured_for_seed.clone();
@@ -2313,10 +2319,7 @@ async fn list_log_entries_quick_add_has_no_serving_name() {
     let results = body["results"].as_array().expect("results array");
     assert_eq!(results.len(), 1);
     assert!(
-        !results[0]["food_name"]
-            .as_str()
-            .unwrap_or("")
-            .is_empty(),
+        !results[0]["food_name"].as_str().unwrap_or("").is_empty(),
         "food_name must be non-empty for a quick_add entry"
     );
     // The sentinel serving has label = None (nullable per new schema), so
@@ -2734,7 +2737,10 @@ async fn log_list_response_has_entered_fields_no_grams_total() {
 
     // GET /log and inspect the shape.
     let resp = app
-        .oneshot(authed_request("GET", "/api/v1/log?from=2026-05-15&to=2026-05-15"))
+        .oneshot(authed_request(
+            "GET",
+            "/api/v1/log?from=2026-05-15&to=2026-05-15",
+        ))
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);

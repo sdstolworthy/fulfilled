@@ -173,7 +173,10 @@ async fn build_harness(with_oidc: bool) -> Harness {
     let users_dyn: Arc<dyn UserRepository> = users_concrete.clone();
 
     // 3. AuthService + LocalAuthenticator
-    let auth_service = Arc::new(AuthService::new(users_concrete.clone(), local_concrete.clone()));
+    let auth_service = Arc::new(AuthService::new(
+        users_concrete.clone(),
+        local_concrete.clone(),
+    ));
     let authn: Arc<dyn Authenticator> = Arc::new(LocalAuthenticator::new(auth_service.clone()));
 
     // 4. Optionally wire OIDC registry
@@ -275,10 +278,7 @@ async fn mount_token_mock(
 ) {
     // Build the token path from the issuer URL
     let token_url = format!("{}/token/", issuer.trim_end_matches('/'));
-    let token_path = url::Url::parse(&token_url)
-        .unwrap()
-        .path()
-        .to_string();
+    let token_path = url::Url::parse(&token_url).unwrap().path().to_string();
     let n = now_secs();
     let claims = IdTokenClaims {
         iss: issuer.to_string(),
@@ -317,7 +317,10 @@ fn make_state_cookie(signer: &StateSigner, state_csrf: &str, nonce: &str, next: 
 }
 
 async fn body_bytes(resp: axum::http::Response<Body>) -> Vec<u8> {
-    to_bytes(resp.into_body(), 64 * 1024).await.unwrap().to_vec()
+    to_bytes(resp.into_body(), 64 * 1024)
+        .await
+        .unwrap()
+        .to_vec()
 }
 
 async fn body_json(resp: axum::http::Response<Body>) -> Value {
@@ -461,10 +464,7 @@ async fn start_sets_state_cookie() {
         .find(|c| c.contains(STATE_COOKIE_NAME))
         .expect("loseit_oidc_state cookie must be set");
 
-    assert!(
-        state_cookie.contains("HttpOnly"),
-        "cookie must be HttpOnly"
-    );
+    assert!(state_cookie.contains("HttpOnly"), "cookie must be HttpOnly");
     assert!(
         state_cookie.to_ascii_lowercase().contains("samesite=lax"),
         "cookie must have SameSite=Lax"
@@ -694,12 +694,7 @@ async fn start_web_flow_omits_prompt_login() {
         .unwrap();
 
     assert_eq!(resp.status(), StatusCode::SEE_OTHER);
-    let location = resp
-        .headers()
-        .get("location")
-        .unwrap()
-        .to_str()
-        .unwrap();
+    let location = resp.headers().get("location").unwrap().to_str().unwrap();
     assert!(
         !location.contains("prompt=login"),
         "web authorize URL must not carry prompt=login, got: {}",
@@ -1010,12 +1005,10 @@ async fn callback_id_token_invalid_sig_rejected_400() {
 
     Mock::given(method("POST"))
         .and(path(harness.token_path.clone()))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({
-                "id_token": bad_token,
-                "access_token": "at",
-            })),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id_token": bad_token,
+            "access_token": "at",
+        })))
         .mount(&harness._mock_server)
         .await;
 
@@ -1066,12 +1059,10 @@ async fn callback_nonce_mismatch_rejected_400() {
 
     Mock::given(method("POST"))
         .and(path(harness.token_path.clone()))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({
-                "id_token": id_token,
-                "access_token": "at",
-            })),
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id_token": id_token,
+            "access_token": "at",
+        })))
         .mount(&harness._mock_server)
         .await;
 
@@ -1132,12 +1123,7 @@ async fn callback_propagates_idp_error_query() {
 
     // Must redirect (not 4xx)
     assert_eq!(resp.status(), StatusCode::SEE_OTHER);
-    let location = resp
-        .headers()
-        .get("location")
-        .unwrap()
-        .to_str()
-        .unwrap();
+    let location = resp.headers().get("location").unwrap().to_str().unwrap();
     assert!(
         location.contains("oidc_error=access_denied"),
         "redirect must carry oidc_error, got: {location}"
@@ -1178,9 +1164,7 @@ async fn exchange_returns_token_then_404_on_replay() {
                 .method("POST")
                 .uri("/api/v1/auth/oidc/exchange")
                 .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({ "code": raw_code }).to_string(),
-                ))
+                .body(Body::from(json!({ "code": raw_code }).to_string()))
                 .unwrap(),
         )
         .await
@@ -1198,9 +1182,7 @@ async fn exchange_returns_token_then_404_on_replay() {
                 .method("POST")
                 .uri("/api/v1/auth/oidc/exchange")
                 .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({ "code": raw_code }).to_string(),
-                ))
+                .body(Body::from(json!({ "code": raw_code }).to_string()))
                 .unwrap(),
         )
         .await
@@ -1268,9 +1250,7 @@ async fn exchange_404_on_expired_handoff() {
                 .method("POST")
                 .uri("/api/v1/auth/oidc/exchange")
                 .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({ "code": raw_code }).to_string(),
-                ))
+                .body(Body::from(json!({ "code": raw_code }).to_string()))
                 .unwrap(),
         )
         .await
@@ -1348,9 +1328,7 @@ async fn callback_then_exchange_then_get_me() {
                 .method("POST")
                 .uri("/api/v1/auth/oidc/exchange")
                 .header("content-type", "application/json")
-                .body(Body::from(
-                    json!({ "code": oidc_code }).to_string(),
-                ))
+                .body(Body::from(json!({ "code": oidc_code }).to_string()))
                 .unwrap(),
         )
         .await

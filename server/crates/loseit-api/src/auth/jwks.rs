@@ -111,7 +111,11 @@ impl JwksVerifier {
             http,
         };
         verifier.refresh_now().await.map_err(|e| {
-            anyhow::anyhow!("initial JWKS fetch from {} failed: {}", verifier.jwks_url, e)
+            anyhow::anyhow!(
+                "initial JWKS fetch from {} failed: {}",
+                verifier.jwks_url,
+                e
+            )
         })?;
         Ok(verifier)
     }
@@ -958,19 +962,21 @@ mod tests {
         let server = MockServer::start().await;
         mock_jwks(&server, jwks_doc(&[&key])).await;
 
-        let verifier = JwksVerifier::new(
-            format!("{}/", server.uri()),
-            Duration::from_secs(600),
-        )
-        .await
-        .expect("warm cache");
+        let verifier = JwksVerifier::new(format!("{}/", server.uri()), Duration::from_secs(600))
+            .await
+            .expect("warm cache");
 
         let mut claims = make_claims("https://issuer.example", json!("loseit-api"), "user-99");
         claims.nonce = Some("abc123".to_string());
         let token = sign(&key, &claims);
 
         verifier
-            .verify(&token, "https://issuer.example", "loseit-api", Some("abc123"))
+            .verify(
+                &token,
+                "https://issuer.example",
+                "loseit-api",
+                Some("abc123"),
+            )
             .await
             .expect("nonce matches");
     }
@@ -981,12 +987,9 @@ mod tests {
         let server = MockServer::start().await;
         mock_jwks(&server, jwks_doc(&[&key])).await;
 
-        let verifier = JwksVerifier::new(
-            format!("{}/", server.uri()),
-            Duration::from_secs(600),
-        )
-        .await
-        .expect("warm cache");
+        let verifier = JwksVerifier::new(format!("{}/", server.uri()), Duration::from_secs(600))
+            .await
+            .expect("warm cache");
 
         let mut claims = make_claims("https://issuer.example", json!("loseit-api"), "user-99");
         claims.nonce = Some("right-nonce".to_string());
@@ -1010,12 +1013,9 @@ mod tests {
         let server = MockServer::start().await;
         mock_jwks(&server, jwks_doc(&[&key])).await;
 
-        let verifier = JwksVerifier::new(
-            format!("{}/", server.uri()),
-            Duration::from_secs(600),
-        )
-        .await
-        .expect("warm cache");
+        let verifier = JwksVerifier::new(format!("{}/", server.uri()), Duration::from_secs(600))
+            .await
+            .expect("warm cache");
 
         // Token has no nonce claim but caller expects one.
         let claims = make_claims("https://issuer.example", json!("loseit-api"), "user-99");

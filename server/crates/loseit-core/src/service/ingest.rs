@@ -8,7 +8,9 @@ use rust_decimal_macros::dec;
 use uuid::Uuid;
 
 use crate::domain::{FoodDraft, NutriscoreGrade, ServingDraft, ServingSource, Unit};
-use crate::repo::{BatchRepository, FoodDraftWithServings, FoodRepository, ServingRepository, UpsertStats};
+use crate::repo::{
+    BatchRepository, FoodDraftWithServings, FoodRepository, ServingRepository, UpsertStats,
+};
 use crate::CoreResult;
 
 // ---------------------------------------------------------------------------
@@ -277,10 +279,7 @@ pub fn accept_and_normalize_off(mut record: OffFoodRecord) -> Option<FoodDraftWi
         || record.fat_100g.is_some();
 
     // Try to parse the serving_size string.
-    let parsed_serving = record
-        .serving_size
-        .as_deref()
-        .and_then(parse_serving_size);
+    let parsed_serving = record.serving_size.as_deref().and_then(parse_serving_size);
 
     // §7.1 rule 7: drop entirely if both per-100g and serving-level nutrition are absent.
     // We consider per-100g absent when energy_kcal_100g is None AND no macro is present.
@@ -475,9 +474,7 @@ pub fn accept_and_normalize_usda(record: UsdaFoodRecord) -> Option<FoodDraftWith
         let fiber_g = scale_per_100g(record.fiber_100g, gram_weight);
         let sugar_g = scale_per_100g(record.sugar_100g, gram_weight);
         // USDA sodium is already in mg/100g.
-        let sodium_mg = record
-            .sodium_mg_100g
-            .map(|s| s * gram_weight / dec!(100));
+        let sodium_mg = record.sodium_mg_100g.map(|s| s * gram_weight / dec!(100));
         let saturated_fat_g = scale_per_100g(record.saturated_fat_100g, gram_weight);
 
         // §7.2 rule 4: first (lowest sequenceNumber) is is_default = true.
@@ -534,9 +531,7 @@ pub fn accept_and_normalize_usda(record: UsdaFoodRecord) -> Option<FoodDraftWith
 
     // If portions was empty but kcal is present, emit a single 100g serving.
     if servings.is_empty() {
-        if record.energy_kcal_100g.is_none() {
-            return None;
-        }
+        record.energy_kcal_100g?;
         let sodium_mg = record.sodium_mg_100g;
         servings.push(ServingDraft {
             label: None,
@@ -901,7 +896,11 @@ mod tests {
         r.serving_size = Some("30 g".to_string());
 
         let out = accept_and_normalize_off(r).expect("should accept");
-        let default_serving = out.servings.iter().find(|s| s.is_default).expect("must have default");
+        let default_serving = out
+            .servings
+            .iter()
+            .find(|s| s.is_default)
+            .expect("must have default");
 
         assert_eq!(default_serving.amount, d(30));
         assert_eq!(default_serving.unit, Unit::Gram);
@@ -926,14 +925,24 @@ mod tests {
         // the volumetric serving. But rule 4 still emits the 100g companion.
         // Rule 6 fallback: companion becomes is_default = true.
         let has_cup = out.servings.iter().any(|s| s.unit == Unit::Cup);
-        let has_100g = out.servings.iter().any(|s| s.unit == Unit::Gram && s.amount == dec!(100));
+        let has_100g = out
+            .servings
+            .iter()
+            .any(|s| s.unit == Unit::Gram && s.amount == dec!(100));
 
         // The cup serving cannot carry nutrition (no density), so we get only 100g.
         // The companion is emitted; it becomes default because the cup serving was dropped.
-        assert!(!has_cup, "volumetric serving without density should be dropped");
+        assert!(
+            !has_cup,
+            "volumetric serving without density should be dropped"
+        );
         assert!(has_100g, "100g companion must still be emitted");
 
-        let default = out.servings.iter().find(|s| s.is_default).expect("must have default");
+        let default = out
+            .servings
+            .iter()
+            .find(|s| s.is_default)
+            .expect("must have default");
         assert_eq!(default.unit, Unit::Gram);
         assert_eq!(default.amount, dec!(100));
     }

@@ -40,14 +40,14 @@ pub enum FoodKind {
 impl FoodKind {
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::Normal   => "normal",
+            Self::Normal => "normal",
             Self::QuickAdd => "quick_add",
         }
     }
 
     pub fn parse(s: &str) -> Option<Self> {
         match s {
-            "normal"    => Some(Self::Normal),
+            "normal" => Some(Self::Normal),
             "quick_add" => Some(Self::QuickAdd),
             _ => None,
         }

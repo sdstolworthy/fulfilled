@@ -29,7 +29,10 @@ async fn insert_then_claim_returns_token() {
 
     let claim = repo.claim(code_hash).await.unwrap();
 
-    assert!(claim.is_some(), "claim must return Some for a non-expired row");
+    assert!(
+        claim.is_some(),
+        "claim must return Some for a non-expired row"
+    );
     let claim = claim.unwrap();
     assert_eq!(claim.user_id, user_id);
     assert_eq!(claim.raw_token, raw_token);
@@ -56,7 +59,10 @@ async fn claim_deletes_row() {
     assert!(first.is_some(), "first claim must succeed");
 
     let second = repo.claim(code_hash).await.unwrap();
-    assert!(second.is_none(), "second claim must return None — row was deleted");
+    assert!(
+        second.is_none(),
+        "second claim must return None — row was deleted"
+    );
 }
 
 #[tokio::test]

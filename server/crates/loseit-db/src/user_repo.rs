@@ -1,6 +1,8 @@
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDate, Utc};
-use loseit_core::domain::{ActivityLevel, HeightUnit, ProfilePatch, Sex, User, UserIdentity, WeightUnit};
+use loseit_core::domain::{
+    ActivityLevel, HeightUnit, ProfilePatch, Sex, User, UserIdentity, WeightUnit,
+};
 use loseit_core::repo::UserRepository;
 use loseit_core::CoreResult;
 use rust_decimal::Decimal;

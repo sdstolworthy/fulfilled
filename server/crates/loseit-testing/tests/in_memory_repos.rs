@@ -82,7 +82,11 @@ async fn test_in_memory_food_repo_hides_other_users_customs() {
     let alice = Uuid::new_v4();
     let bob = Uuid::new_v4();
     let food = repo
-        .create_custom_with_servings(alice, &sample_draft("Alice's smoothie"), vec![minimal_serving()])
+        .create_custom_with_servings(
+            alice,
+            &sample_draft("Alice's smoothie"),
+            vec![minimal_serving()],
+        )
         .await
         .expect("create");
 
@@ -100,9 +104,13 @@ async fn test_in_memory_food_repo_search_respects_visibility() {
     let repo = InMemoryFoodRepository::new();
     let alice = Uuid::new_v4();
     let bob = Uuid::new_v4();
-    repo.create_custom_with_servings(alice, &sample_draft("Secret kale shake"), vec![minimal_serving()])
-        .await
-        .expect("create");
+    repo.create_custom_with_servings(
+        alice,
+        &sample_draft("Secret kale shake"),
+        vec![minimal_serving()],
+    )
+    .await
+    .expect("create");
 
     let alice_hits = repo.search(alice, "kale", 50, 0).await.expect("search");
     assert_eq!(alice_hits.len(), 1, "owner sees their custom in search");
@@ -213,7 +221,11 @@ async fn test_in_memory_food_repo_delete_conflict_when_log_repo_has_entries() {
 
     let owner = Uuid::new_v4();
     let food = foods
-        .create_custom_with_servings(owner, &sample_draft("Custom protein bar"), vec![minimal_serving()])
+        .create_custom_with_servings(
+            owner,
+            &sample_draft("Custom protein bar"),
+            vec![minimal_serving()],
+        )
         .await
         .expect("create");
 
@@ -252,7 +264,7 @@ fn draft_with_brands(name: &str, brands: &str) -> FoodDraft {
 
 #[tokio::test]
 async fn list_mine_returns_only_user_owned_foods() {
-    use loseit_core::repo::food::{FoodDraftWithServings};
+    use loseit_core::repo::food::FoodDraftWithServings;
 
     let repo = InMemoryFoodRepository::new();
     let alice = Uuid::new_v4();
@@ -302,17 +314,29 @@ async fn list_mine_filters_by_q_case_insensitive() {
     let alice = Uuid::new_v4();
 
     // Name match.
-    repo.create_custom_with_servings(alice, &sample_draft("Chocolate Brownie"), vec![minimal_serving()])
-        .await
-        .expect("create");
+    repo.create_custom_with_servings(
+        alice,
+        &sample_draft("Chocolate Brownie"),
+        vec![minimal_serving()],
+    )
+    .await
+    .expect("create");
     // Brand match only.
-    repo.create_custom_with_servings(alice, &draft_with_brands("Protein Cookie", "MuscleCraft"), vec![minimal_serving()])
-        .await
-        .expect("create");
+    repo.create_custom_with_servings(
+        alice,
+        &draft_with_brands("Protein Cookie", "MuscleCraft"),
+        vec![minimal_serving()],
+    )
+    .await
+    .expect("create");
     // No match.
-    repo.create_custom_with_servings(alice, &sample_draft("Plain Oatmeal"), vec![minimal_serving()])
-        .await
-        .expect("create");
+    repo.create_custom_with_servings(
+        alice,
+        &sample_draft("Plain Oatmeal"),
+        vec![minimal_serving()],
+    )
+    .await
+    .expect("create");
 
     // Case-insensitive name match.
     let hits = repo
@@ -407,9 +431,13 @@ async fn count_mine_matches_list_mine_total_independent_of_pagination() {
     let alice = Uuid::new_v4();
 
     for i in 0..5i32 {
-        repo.create_custom_with_servings(alice, &sample_draft(&format!("food_{i}")), vec![minimal_serving()])
-            .await
-            .expect("create");
+        repo.create_custom_with_servings(
+            alice,
+            &sample_draft(&format!("food_{i}")),
+            vec![minimal_serving()],
+        )
+        .await
+        .expect("create");
     }
 
     // list_mine with limit=2 returns 2 rows...
@@ -426,12 +454,20 @@ async fn list_mine_trims_whitespace_in_q() {
     let repo = InMemoryFoodRepository::new();
     let alice = Uuid::new_v4();
 
-    repo.create_custom_with_servings(alice, &sample_draft("Chocolate Brownie"), vec![minimal_serving()])
-        .await
-        .expect("create");
-    repo.create_custom_with_servings(alice, &sample_draft("Plain Oatmeal"), vec![minimal_serving()])
-        .await
-        .expect("create");
+    repo.create_custom_with_servings(
+        alice,
+        &sample_draft("Chocolate Brownie"),
+        vec![minimal_serving()],
+    )
+    .await
+    .expect("create");
+    repo.create_custom_with_servings(
+        alice,
+        &sample_draft("Plain Oatmeal"),
+        vec![minimal_serving()],
+    )
+    .await
+    .expect("create");
 
     // q with surrounding whitespace should match exactly as the trimmed value.
     let hits = repo

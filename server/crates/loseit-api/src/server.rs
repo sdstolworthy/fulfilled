@@ -37,11 +37,11 @@ use loseit_db::{
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 
+use crate::auth::jwks::JwksVerifier;
+use crate::auth::oidc::state::StateSigner;
 use crate::auth::{
     dev::DevAuthenticator, local::LocalAuthenticator, require_auth, DynAuthenticator,
 };
-use crate::auth::jwks::JwksVerifier;
-use crate::auth::oidc::state::StateSigner;
 use crate::config::{AppConfig, AuthConfig};
 use crate::routes;
 
@@ -116,7 +116,13 @@ impl AppState {
             summary_reader.clone(),
         ));
         let serving_service = Arc::new(ServingService::new(servings.clone(), foods.clone()));
-        let log_service = Arc::new(LogService::new(logs, foods, servings, goals, summary_reader));
+        let log_service = Arc::new(LogService::new(
+            logs,
+            foods,
+            servings,
+            goals,
+            summary_reader,
+        ));
         Self {
             users: user_service,
             weights: weight_service,
@@ -177,9 +183,8 @@ pub async fn build_state(pool: PgPool, config: &AppConfig) -> Result<AppState> {
 
         let mut providers = HashMap::new();
         for p in &config.auth.oidc {
-            let jwks = Arc::new(
-                JwksVerifier::new(p.jwks_url.clone(), Duration::from_secs(600)).await?,
-            );
+            let jwks =
+                Arc::new(JwksVerifier::new(p.jwks_url.clone(), Duration::from_secs(600)).await?);
             let http = reqwest::Client::builder()
                 .timeout(Duration::from_secs(common.http_timeout_secs))
                 .build()?;
@@ -293,8 +298,7 @@ async fn pick_authenticator(
         let local: Arc<dyn LocalAuthRepository> =
             Arc::new(PgLocalAuthRepository::new(pool.clone()));
         let auth_service = Arc::new(AuthService::new(users, local));
-        let authn: Arc<dyn Authenticator> =
-            Arc::new(LocalAuthenticator::new(auth_service.clone()));
+        let authn: Arc<dyn Authenticator> = Arc::new(LocalAuthenticator::new(auth_service.clone()));
         return Ok((authn, Some(auth_service)));
     }
 
