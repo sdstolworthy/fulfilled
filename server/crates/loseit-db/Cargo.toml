@@ -25,3 +25,11 @@ uuid.workspace = true
 
 [dev-dependencies]
 tempfile = "3"
+
+# Pg integration tests under tests/. The `#[sqlx::test]` macro spins up a
+# fresh per-test database, runs migrations, and hands us a `PgPool`; that
+# needs sqlx's `macros` + `migrate` features (already on via the workspace
+# dep) plus a tokio runtime in scope.
+loseit-core.workspace = true
+chrono.workspace = true
+rust_decimal.workspace = true
