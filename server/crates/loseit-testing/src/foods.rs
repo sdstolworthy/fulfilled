@@ -8,7 +8,7 @@ use loseit_core::domain::{
     Food, FoodDraft, FoodKind, FoodPatch, FoodSearchHit, FoodSource, Serving, ServingDraft,
     ServingPreview, ServingSource,
 };
-use loseit_core::repo::food::{FoodDraftWithServings, QUICK_ADD_SENTINEL_NAME};
+use loseit_core::repo::food::{BatchWriteOutcome, FoodDraftWithServings, QUICK_ADD_SENTINEL_NAME};
 use loseit_core::repo::{FoodRepository, LogRepository, ServingRepository};
 use loseit_core::CoreResult;
 use rust_decimal::Decimal;
@@ -28,6 +28,11 @@ pub struct InMemoryFoodRepository {
     by_id: Mutex<HashMap<Uuid, Food>>,
     servings: Mutex<Option<Arc<InMemoryServingRepository>>>,
     log_repo: Mutex<Option<Arc<InMemoryLogRepository>>>,
+    /// Phase 1.5 test knob: barcodes / fdc_ids the repo should pretend to
+    /// fail when written via `upsert_external_food_batch`. Each entry
+    /// counts as a skip and is logged, mirroring the production
+    /// skip-and-log behaviour.
+    fail_external_ids: Mutex<Vec<String>>,
 }
 
 impl InMemoryFoodRepository {
@@ -47,6 +52,14 @@ impl InMemoryFoodRepository {
     /// the food is still referenced by log entries. Optional.
     pub fn set_log_repo_for_delete_check(&self, log: Arc<InMemoryLogRepository>) {
         *self.log_repo.lock().unwrap() = Some(log);
+    }
+
+    /// Phase 1.5 test knob: mark a barcode (OFF) or fdc_id (USDA) as
+    /// "write failure" so `upsert_external_food_batch` will skip-and-log
+    /// it instead of accepting it. The id matches against the draft's
+    /// `barcode` or `fdc_id.to_string()`.
+    pub fn fail_on_external_id(&self, id: impl Into<String>) {
+        self.fail_external_ids.lock().unwrap().push(id.into());
     }
 }
 
@@ -284,13 +297,35 @@ impl FoodRepository for InMemoryFoodRepository {
     /// Upsert a batch of external (OFF / USDA) food records. Per-food:
     /// upsert the food row (by fdc_id for USDA, by barcode for OFF),
     /// then full-list replace servings.
+    ///
+    /// Phase 1.5: mirrors the production skip-and-log semantics —
+    /// barcodes / fdc_ids marked via [`Self::fail_on_external_id`] are
+    /// counted in `BatchWriteOutcome.skipped` and logged at WARN.
     async fn upsert_external_food_batch(
         &self,
         batch_id: Uuid,
         batch: Vec<FoodDraftWithServings>,
-    ) -> CoreResult<()> {
+    ) -> CoreResult<BatchWriteOutcome> {
+        let fail_ids: Vec<String> = self.fail_external_ids.lock().unwrap().clone();
+        let mut outcome = BatchWriteOutcome::default();
         for rec in &batch {
             let draft = &rec.draft;
+
+            // Phase 1.5 simulated write failure: external_id matches the
+            // injected fail list → log + skip.
+            let external_id = draft
+                .barcode
+                .clone()
+                .or_else(|| draft.fdc_id.map(|i| i.to_string()));
+            if let Some(ref id) = external_id {
+                if fail_ids.iter().any(|f| f == id) {
+                    // No tracing dep here; the production repo logs via
+                    // `tracing::warn!`. Tests can rely on the outcome counts.
+                    outcome.skipped += 1;
+                    continue;
+                }
+            }
+
             let now = Utc::now();
 
             // Determine source and conflict key.
@@ -367,8 +402,9 @@ impl FoodRepository for InMemoryFoodRepository {
                     .replace_all_for_food(food_id, &rec.servings)
                     .await?;
             }
+            outcome.upserted += 1;
         }
-        Ok(())
+        Ok(outcome)
     }
 
     async fn list_mine(

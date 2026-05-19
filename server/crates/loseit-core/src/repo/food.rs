@@ -33,6 +33,24 @@ pub struct FoodDraftWithServings {
     pub servings: Vec<ServingDraft>,
 }
 
+/// Per-batch write outcome returned by `upsert_external_food_batch`. The
+/// repo skips rows that fail at the SQL layer (foreign key, check
+/// constraint, etc.) and surfaces a count of skips so the caller can
+/// bump `food_import_batches.records_skipped` for the batch.
+///
+/// Phase 1.5: per-row failures used to abort the entire chunk via `?`
+/// bubble; they now no-op the offending food and the batch carries on.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct BatchWriteOutcome {
+    /// Foods successfully upserted into the `foods` table together with
+    /// their serving rows.
+    pub upserted: u64,
+    /// Foods that failed mid-write and were skipped. Each gets a
+    /// `tracing::warn!` line; we don't surface them individually here
+    /// because the batch counts are usually all the caller cares about.
+    pub skipped: u64,
+}
+
 #[async_trait]
 pub trait FoodRepository: Send + Sync + 'static {
     /// Visibility rule: OFF foods are visible to everyone; user-custom
@@ -78,13 +96,16 @@ pub trait FoodRepository: Send + Sync + 'static {
 
     /// Upsert a chunk of external (OFF / USDA) records. Per-food: UPSERT the
     /// food row, then atomically replace the serving list (DELETE + INSERT).
-    /// Returns `()` — batch-level counts are tracked separately by
-    /// `BatchRepository`.
+    /// Returns a [`BatchWriteOutcome`] with per-batch `(upserted, skipped)`
+    /// counts so the caller can plumb them into `food_import_batches`.
+    ///
+    /// Phase 1.5: per-food failures are logged at WARN and counted as
+    /// `skipped`; they no longer abort the whole batch.
     async fn upsert_external_food_batch(
         &self,
         batch_id: Uuid,
         batch: Vec<FoodDraftWithServings>,
-    ) -> CoreResult<()>;
+    ) -> CoreResult<BatchWriteOutcome>;
 
     /// Bulk lookup of food ids by barcode for the given viewer. Returns a
     /// map keyed by the barcode; barcodes that don't resolve to a visible

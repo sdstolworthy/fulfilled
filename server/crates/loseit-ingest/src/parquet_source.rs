@@ -16,8 +16,8 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use arrow::array::{
-    Array, Float32Array, Float64Array, Int32Array, Int64Array, LargeStringArray, ListArray,
-    StringArray,
+    Array, BooleanArray, Float32Array, Float64Array, Int32Array, Int64Array, LargeStringArray,
+    ListArray, StringArray,
 };
 use arrow_schema::{DataType, SchemaRef};
 use async_trait::async_trait;
@@ -43,6 +43,8 @@ const PROJECTED_COLUMNS: &[&str] = &[
     "serving_size",
     "serving_quantity",
     "energy-kcal_100g",
+    // 1.1: kJ fallback for kcal derivation.
+    "energy-kj_100g",
     "proteins_100g",
     "carbohydrates_100g",
     "fat_100g",
@@ -50,6 +52,11 @@ const PROJECTED_COLUMNS: &[&str] = &[
     "sugars_100g",
     "sodium_100g",
     "saturated-fat_100g",
+    // 1.6: obsolete / states_tags drop predicate.
+    "states_tags",
+    "obsolete",
+    // 1.7: no-nutrition-data flag.
+    "no_nutrition_data",
 ];
 
 pub struct ParquetSource {
@@ -167,6 +174,7 @@ fn decode_batch(batch: &arrow::record_batch::RecordBatch) -> Result<Vec<OffFoodR
             }),
             "serving_quantity" => decode_quantity(col, &mut out),
             "energy-kcal_100g" => decode_decimal_into(col, |i, v| out[i].energy_kcal_100g = v),
+            "energy-kj_100g" => decode_decimal_into(col, |i, v| out[i].energy_kj_100g = v),
             "proteins_100g" => decode_decimal_into(col, |i, v| out[i].protein_100g = v),
             "carbohydrates_100g" => decode_decimal_into(col, |i, v| out[i].carbs_100g = v),
             "fat_100g" => decode_decimal_into(col, |i, v| out[i].fat_100g = v),
@@ -174,6 +182,11 @@ fn decode_batch(batch: &arrow::record_batch::RecordBatch) -> Result<Vec<OffFoodR
             "sugars_100g" => decode_decimal_into(col, |i, v| out[i].sugar_100g = v),
             "sodium_100g" => decode_decimal_into(col, |i, v| out[i].sodium_100g = v),
             "saturated-fat_100g" => decode_decimal_into(col, |i, v| out[i].saturated_fat_100g = v),
+            "states_tags" => decode_states_tags(col, &mut out),
+            "obsolete" => decode_bool_into(col, |i, v| out[i].obsolete = v),
+            "no_nutrition_data" => decode_string_into(col, |i, v| {
+                out[i].no_nutrition_data = v.map(|s| s.to_string());
+            }),
             _ => {}
         }
     }
@@ -284,6 +297,62 @@ fn decode_quantity(col: &Arc<dyn Array>, out: &mut [OffFoodRecord]) {
         _ => {
             decode_decimal_into(col, |i, v| out[i].serving_quantity = v);
         }
+    }
+}
+
+fn decode_bool_into<F: FnMut(usize, Option<bool>)>(col: &Arc<dyn Array>, mut f: F) {
+    if let Some(arr) = col.as_any().downcast_ref::<BooleanArray>() {
+        for i in 0..arr.len() {
+            f(
+                i,
+                if arr.is_null(i) {
+                    None
+                } else {
+                    Some(arr.value(i))
+                },
+            );
+        }
+    }
+}
+
+/// 1.6: states_tags is a `List<String>` in modern OFF parquet exports;
+/// fall back to comma-separated plain string for older builds (same shape
+/// as `decode_categories`).
+fn decode_states_tags(col: &Arc<dyn Array>, out: &mut [OffFoodRecord]) {
+    if let Some(list) = col.as_any().downcast_ref::<ListArray>() {
+        let n = list.len().min(out.len());
+        for (i, row) in out.iter_mut().enumerate().take(n) {
+            if list.is_null(i) {
+                continue;
+            }
+            let values = list.value(i);
+            let mut tags: Vec<String> = Vec::new();
+            if let Some(s) = values.as_any().downcast_ref::<StringArray>() {
+                for j in 0..s.len() {
+                    if !s.is_null(j) {
+                        tags.push(s.value(j).to_string());
+                    }
+                }
+            } else if let Some(s) = values.as_any().downcast_ref::<LargeStringArray>() {
+                for j in 0..s.len() {
+                    if !s.is_null(j) {
+                        tags.push(s.value(j).to_string());
+                    }
+                }
+            }
+            row.states_tags = tags;
+        }
+    } else if matches!(col.data_type(), DataType::Utf8 | DataType::LargeUtf8) {
+        decode_string_into(col, |i, v| {
+            if let Some(s) = v {
+                let tags: Vec<String> = s
+                    .split(['|', ','])
+                    .map(|t| t.trim().to_string())
+                    .filter(|t| !t.is_empty())
+                    .collect();
+                out[i].states_tags = tags;
+            }
+        });
     }
 }
 

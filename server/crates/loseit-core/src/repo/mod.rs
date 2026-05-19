@@ -13,7 +13,7 @@ pub mod user;
 pub mod weight;
 
 pub use batch::BatchRepository;
-pub use food::{FoodDraftWithServings, FoodRepository, UpsertStats};
+pub use food::{BatchWriteOutcome, FoodDraftWithServings, FoodRepository, UpsertStats};
 pub use goal::GoalRepository;
 pub use local_auth::LocalAuthRepository;
 pub use log::LogRepository;

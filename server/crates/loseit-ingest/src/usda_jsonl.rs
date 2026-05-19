@@ -107,6 +107,11 @@ struct UsdaRaw {
     brand_owner: Option<String>,
     food_portions: Vec<RawFoodPortion>,
     food_nutrients: Vec<RawNutrient>,
+    /// 1.2: Branded foods report `foodNutrients[]` per serving. We carry
+    /// `servingSize` + `servingSizeUnit` through to the normaliser so it
+    /// can rescale to per-100g. `None` on non-Branded rows.
+    serving_size: Option<f64>,
+    serving_size_unit: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -343,6 +348,11 @@ impl UsdaRaw {
             sugar_100g,
             sodium_mg_100g,
             saturated_fat_100g,
+            serving_size: self.serving_size.and_then(f64_to_decimal),
+            serving_size_unit: self
+                .serving_size_unit
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
         })
     }
 }

@@ -178,6 +178,7 @@ fn off_round_trip_fixture_4_rows() {
             sugar_100g: Some(dec!(25)),
             sodium_100g: Some(dec!(0.3)),
             saturated_fat_100g: Some(dec!(5)),
+            ..Default::default()
         },
         // Row B: no serving_size, per-100g only → 1 serving (100g system).
         OffFoodRecord {
@@ -293,6 +294,8 @@ fn usda_round_trip_fixture_3_records() {
             ..Default::default()
         },
         // Record B: unmapped unit → fallback {gramWeight, Gram}. No label.
+        // 1.2: Branded carries serving_size; test treats the input as
+        // already-per-100g so the rescale is a no-op (factor = 1).
         UsdaFoodRecord {
             fdc_id: 9002,
             data_type: "branded_food".into(),
@@ -306,6 +309,8 @@ fn usda_round_trip_fixture_3_records() {
             }],
             energy_kcal_100g: Some(dec!(370)),
             protein_100g: Some(dec!(80)),
+            serving_size: Some(dec!(100)),
+            serving_size_unit: Some("g".into()),
             ..Default::default()
         },
         // Record C: empty portions + no kcal → dropped.
@@ -550,6 +555,10 @@ async fn usda_ingest_service_round_trip_2_records() {
             protein_100g: Some(dec!(25)),
             fat_100g: Some(dec!(33)),
             carbs_100g: Some(dec!(1.3)),
+            // 1.2: Branded must carry a real serving_size; this test treats
+            // its input as already-per-100g so the rescale is a no-op.
+            serving_size: Some(dec!(100)),
+            serving_size_unit: Some("g".into()),
             ..Default::default()
         },
     ];
@@ -611,4 +620,88 @@ async fn usda_ingest_service_round_trip_2_records() {
 
     // Exactly one default per food (matches partial unique index).
     assert_eq!(milk_servings.iter().filter(|s| s.is_default).count(), 1);
+}
+
+// ---------------------------------------------------------------------------
+// 1.5: skip-and-log per-row write failures
+// ---------------------------------------------------------------------------
+
+/// 1.5: when a single OFF row fails at the write layer, the rest of the
+/// batch still lands and the batch finishes with `status='completed'`.
+/// `records_skipped` reflects the failed row.
+#[tokio::test]
+async fn off_ingest_skip_and_log_on_row_failure() {
+    let (foods, _servings, batches, svc) = build_ingest_service();
+    // Inject a write failure for barcode RT002.
+    foods.fail_on_external_id("RT002");
+
+    let records = vec![
+        OffFoodRecord {
+            code: "RT001".into(),
+            product_name: "Apple Juice".into(),
+            energy_kcal_100g: Some(dec!(46)),
+            protein_100g: Some(dec!(0.1)),
+            carbs_100g: Some(dec!(11)),
+            fat_100g: Some(dec!(0.1)),
+            serving_size: Some("250 g".into()),
+            ..Default::default()
+        },
+        OffFoodRecord {
+            code: "RT002".into(),
+            product_name: "Peanut Butter".into(),
+            energy_kcal_100g: Some(dec!(588)),
+            protein_100g: Some(dec!(25)),
+            carbs_100g: Some(dec!(20)),
+            fat_100g: Some(dec!(50)),
+            serving_size: Some("32 g".into()),
+            ..Default::default()
+        },
+        OffFoodRecord {
+            code: "RT003".into(),
+            product_name: "Rice Crackers".into(),
+            energy_kcal_100g: Some(dec!(380)),
+            protein_100g: Some(dec!(8)),
+            carbs_100g: Some(dec!(80)),
+            fat_100g: Some(dec!(2)),
+            serving_size: Some("14 g".into()),
+            ..Default::default()
+        },
+    ];
+
+    let stats = svc
+        .run_off(VecOffSource::new(records), "test://off-skip-log", None)
+        .await
+        .expect("pipeline must finish, not abort, on per-row failure");
+
+    // 2 of 3 land; the failed RT002 is counted as skipped.
+    assert_eq!(stats.inserted, 2);
+    assert_eq!(stats.skipped, 1);
+
+    // The good rows are queryable; the bad one is not.
+    assert!(foods
+        .find_by_barcode(Uuid::nil(), "RT001")
+        .await
+        .unwrap()
+        .is_some());
+    assert!(foods
+        .find_by_barcode(Uuid::nil(), "RT002")
+        .await
+        .unwrap()
+        .is_none());
+    assert!(foods
+        .find_by_barcode(Uuid::nil(), "RT003")
+        .await
+        .unwrap()
+        .is_some());
+
+    // Batch repo state: exactly one batch, completed, with the skip counted.
+    use loseit_core::domain::BatchStatus;
+    let batch_id = batches
+        .find_by_url("test://off-skip-log")
+        .expect("batch must exist");
+    let summary = batches.get(batch_id).expect("batch present");
+    assert_eq!(summary.status, BatchStatus::Completed);
+    assert_eq!(summary.records_seen, 3);
+    assert_eq!(summary.records_upserted, 2);
+    assert_eq!(summary.records_skipped, 1);
 }

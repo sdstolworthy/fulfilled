@@ -63,6 +63,7 @@ fn rec_complete(code: &str, name: &str) -> OffFoodRecord {
         sugar_100g: Some(d(8)),
         sodium_100g: Some(Decimal::new(5, 1)), // 0.5g
         saturated_fat_100g: Some(d(1)),
+        ..Default::default()
     }
 }
 
@@ -361,6 +362,7 @@ fn test_quality_score_capped_at_100() {
         sugar_100g: Some(d(1)),
         sodium_100g: Some(d(1)),
         saturated_fat_100g: Some(d(1)),
+        ..Default::default()
     };
     let s = score(&r);
     assert!(s <= 100, "score should be capped at 100, got {s}");
@@ -389,6 +391,7 @@ fn test_quality_score_awards_full_points_for_complete_record() {
         sugar_100g: Some(d(1)),
         sodium_100g: Some(d(1)),
         saturated_fat_100g: Some(d(1)),
+        ..Default::default()
     };
     // 40 (nutriscore) + 15 (brand) + 15 (off serving) + 10 (>=6 nutrients)
     // + 10 (completeness) + 10 (categories) = 100

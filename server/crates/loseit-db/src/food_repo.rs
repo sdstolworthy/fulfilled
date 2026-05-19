@@ -6,7 +6,7 @@ use loseit_core::domain::{
     Food, FoodDraft, FoodKind, FoodPatch, FoodSearchHit, FoodSource, NutriscoreGrade, Serving,
     ServingDraft, ServingPreview, ServingSource,
 };
-use loseit_core::repo::food::{FoodDraftWithServings, QUICK_ADD_SENTINEL_NAME};
+use loseit_core::repo::food::{BatchWriteOutcome, FoodDraftWithServings, QUICK_ADD_SENTINEL_NAME};
 use loseit_core::repo::FoodRepository;
 use loseit_core::{CoreError, CoreResult};
 use rust_decimal::Decimal;
@@ -22,6 +22,125 @@ pub struct PgFoodRepository {
 impl PgFoodRepository {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
+    }
+
+    /// Phase 1.5: write a single external food + servings. Returns
+    /// `Ok(true)` on success, `Ok(false)` when the food was skipped for
+    /// non-error reasons (e.g. USDA data_type couldn't be normalised),
+    /// and `Err(...)` on a true SQL error which the caller will log +
+    /// count as skipped.
+    async fn upsert_one_external(
+        &self,
+        batch_id: Uuid,
+        rec: &FoodDraftWithServings,
+    ) -> CoreResult<bool> {
+        let draft = &rec.draft;
+
+        // UPSERT the food row. The source identity invariant means OFF
+        // foods conflict on `barcode` (partial unique index) and USDA
+        // foods conflict on `fdc_id` (partial unique index). We fall back
+        // to barcode as the conflict target since the batch is expected to
+        // be homogeneous (OFF or USDA) and the caller normalizes this.
+        let food_id: Uuid = if draft.barcode.is_some() {
+            // OFF path: conflict on barcode partial unique index.
+            let sql = "INSERT INTO foods ( \
+                    source, barcode, name, brands, categories_tags, \
+                    nutriscore_grade, quality_score, last_import_batch_id \
+                 ) VALUES ( \
+                    'off', $1, $2, $3, $4, $5, $6, $7 \
+                 ) \
+                 ON CONFLICT (barcode) WHERE barcode IS NOT NULL DO UPDATE SET \
+                    name                 = EXCLUDED.name, \
+                    brands               = EXCLUDED.brands, \
+                    categories_tags      = EXCLUDED.categories_tags, \
+                    nutriscore_grade     = EXCLUDED.nutriscore_grade, \
+                    quality_score        = EXCLUDED.quality_score, \
+                    last_import_batch_id = EXCLUDED.last_import_batch_id \
+                 RETURNING id";
+            sqlx::query_scalar::<_, Uuid>(sql)
+                .bind(draft.barcode.as_deref())
+                .bind(&draft.name)
+                .bind(draft.brands.as_deref())
+                .bind(&draft.categories_tags)
+                .bind(draft.nutriscore_grade.map(|g| g.as_str()))
+                .bind(rec.quality_score)
+                .bind(batch_id)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(map_sqlx)?
+        } else {
+            // USDA path: conflict on fdc_id partial unique index.
+            let fdc_id = match draft.fdc_id {
+                Some(id) => id,
+                None => {
+                    return Err(CoreError::Validation(
+                        "USDA upsert requires fdc_id but draft.fdc_id is None".into(),
+                    ));
+                }
+            };
+            let sql = "INSERT INTO foods ( \
+                    source, fdc_id, data_type, name, brands, categories_tags, \
+                    nutriscore_grade, quality_score, last_import_batch_id \
+                 ) VALUES ( \
+                    'usda', $1, $2, $3, $4, $5, $6, $7, $8 \
+                 ) \
+                 ON CONFLICT (fdc_id) WHERE fdc_id IS NOT NULL DO UPDATE SET \
+                    name                 = EXCLUDED.name, \
+                    brands               = EXCLUDED.brands, \
+                    categories_tags      = EXCLUDED.categories_tags, \
+                    data_type            = EXCLUDED.data_type, \
+                    nutriscore_grade     = EXCLUDED.nutriscore_grade, \
+                    quality_score        = EXCLUDED.quality_score, \
+                    last_import_batch_id = EXCLUDED.last_import_batch_id \
+                 RETURNING id";
+            let db_data_type = match draft.data_type.as_deref().and_then(normalise_data_type) {
+                Some(dt) => dt,
+                None => {
+                    tracing::warn!(
+                        fdc_id = fdc_id,
+                        raw_data_type = ?draft.data_type,
+                        "skipping USDA food: data_type missing or unrecognised"
+                    );
+                    return Ok(false);
+                }
+            };
+            sqlx::query_scalar::<_, Uuid>(sql)
+                .bind(fdc_id)
+                .bind(db_data_type)
+                .bind(&draft.name)
+                .bind(draft.brands.as_deref())
+                .bind(&draft.categories_tags)
+                .bind(draft.nutriscore_grade.map(|g| g.as_str()))
+                .bind(rec.quality_score)
+                .bind(batch_id)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(map_sqlx)?
+        };
+
+        // Atomic serving replace: delete all existing, insert new list.
+        let mut tx = self.pool.begin().await.map_err(map_sqlx)?;
+        sqlx::query("DELETE FROM servings WHERE food_id = $1")
+            .bind(food_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_sqlx)?;
+        for s in &rec.servings {
+            insert_serving_in_tx(&mut tx, food_id, s).await?;
+        }
+        tx.commit().await.map_err(map_sqlx)?;
+        Ok(true)
+    }
+}
+
+/// Format the best-available external identifier for log messages.
+fn external_id_of(draft: &FoodDraft) -> String {
+    if let Some(bc) = draft.barcode.as_deref() {
+        format!("barcode={bc}")
+    } else if let Some(fid) = draft.fdc_id {
+        format!("fdc_id={fid}")
+    } else {
+        "unknown".to_string()
     }
 }
 
@@ -449,113 +568,32 @@ impl FoodRepository for PgFoodRepository {
     /// the food row on `(barcode)` conflict, then atomically replace the serving
     /// list (DELETE + INSERT). The `batch_id` is stamped on every upserted food
     /// row for import tracing via `food_import_batches`.
+    ///
+    /// Phase 1.5: per-food failures (FK violation, CHECK constraint, etc.)
+    /// are logged at WARN with the external id (barcode / fdc_id) and
+    /// counted as `skipped`; they no longer `?`-bubble and abort the
+    /// remainder of the batch.
     async fn upsert_external_food_batch(
         &self,
         batch_id: Uuid,
         batch: Vec<FoodDraftWithServings>,
-    ) -> CoreResult<()> {
+    ) -> CoreResult<BatchWriteOutcome> {
+        let mut outcome = BatchWriteOutcome::default();
         for rec in &batch {
-            let draft = &rec.draft;
-
-            // UPSERT the food row. The source identity invariant means OFF
-            // foods conflict on `barcode` (partial unique index) and USDA
-            // foods conflict on `fdc_id` (partial unique index). We fall back
-            // to barcode as the conflict target since the batch is expected to
-            // be homogeneous (OFF or USDA) and the caller normalizes this.
-            //
-            // ON CONFLICT covers both partial unique indexes by using the
-            // inference form. Since OFF always has a barcode, use the barcode
-            // partial index for OFF; detect USDA by fdc_id presence.
-            let food_id: Uuid = if draft.barcode.is_some() {
-                // OFF path: conflict on barcode partial unique index.
-                let sql = "INSERT INTO foods ( \
-                        source, barcode, name, brands, categories_tags, \
-                        nutriscore_grade, quality_score, last_import_batch_id \
-                     ) VALUES ( \
-                        'off', $1, $2, $3, $4, $5, $6, $7 \
-                     ) \
-                     ON CONFLICT (barcode) WHERE barcode IS NOT NULL DO UPDATE SET \
-                        name                 = EXCLUDED.name, \
-                        brands               = EXCLUDED.brands, \
-                        categories_tags      = EXCLUDED.categories_tags, \
-                        nutriscore_grade     = EXCLUDED.nutriscore_grade, \
-                        quality_score        = EXCLUDED.quality_score, \
-                        last_import_batch_id = EXCLUDED.last_import_batch_id \
-                     RETURNING id";
-                sqlx::query_scalar::<_, Uuid>(sql)
-                    .bind(draft.barcode.as_deref())
-                    .bind(&draft.name)
-                    .bind(draft.brands.as_deref())
-                    .bind(&draft.categories_tags)
-                    .bind(draft.nutriscore_grade.map(|g| g.as_str()))
-                    .bind(rec.quality_score)
-                    .bind(batch_id)
-                    .fetch_one(&self.pool)
-                    .await
-                    .map_err(map_sqlx)?
-            } else {
-                // USDA path: conflict on fdc_id partial unique index.
-                let fdc_id = match draft.fdc_id {
-                    Some(id) => id,
-                    None => {
-                        return Err(CoreError::Validation(
-                            "USDA upsert requires fdc_id but draft.fdc_id is None".into(),
-                        ));
-                    }
-                };
-                let sql = "INSERT INTO foods ( \
-                        source, fdc_id, data_type, name, brands, categories_tags, \
-                        nutriscore_grade, quality_score, last_import_batch_id \
-                     ) VALUES ( \
-                        'usda', $1, $2, $3, $4, $5, $6, $7, $8 \
-                     ) \
-                     ON CONFLICT (fdc_id) WHERE fdc_id IS NOT NULL DO UPDATE SET \
-                        name                 = EXCLUDED.name, \
-                        brands               = EXCLUDED.brands, \
-                        categories_tags      = EXCLUDED.categories_tags, \
-                        data_type            = EXCLUDED.data_type, \
-                        nutriscore_grade     = EXCLUDED.nutriscore_grade, \
-                        quality_score        = EXCLUDED.quality_score, \
-                        last_import_batch_id = EXCLUDED.last_import_batch_id \
-                     RETURNING id";
-                let db_data_type = match draft.data_type.as_deref().and_then(normalise_data_type) {
-                    Some(dt) => dt,
-                    None => {
-                        tracing::warn!(
-                            fdc_id = fdc_id,
-                            raw_data_type = ?draft.data_type,
-                            "skipping USDA food: data_type missing or unrecognised"
-                        );
-                        continue;
-                    }
-                };
-                sqlx::query_scalar::<_, Uuid>(sql)
-                    .bind(fdc_id)
-                    .bind(db_data_type)
-                    .bind(&draft.name)
-                    .bind(draft.brands.as_deref())
-                    .bind(&draft.categories_tags)
-                    .bind(draft.nutriscore_grade.map(|g| g.as_str()))
-                    .bind(rec.quality_score)
-                    .bind(batch_id)
-                    .fetch_one(&self.pool)
-                    .await
-                    .map_err(map_sqlx)?
-            };
-
-            // Atomic serving replace: delete all existing, insert new list.
-            let mut tx = self.pool.begin().await.map_err(map_sqlx)?;
-            sqlx::query("DELETE FROM servings WHERE food_id = $1")
-                .bind(food_id)
-                .execute(&mut *tx)
-                .await
-                .map_err(map_sqlx)?;
-            for s in &rec.servings {
-                insert_serving_in_tx(&mut tx, food_id, s).await?;
+            match self.upsert_one_external(batch_id, rec).await {
+                Ok(true) => outcome.upserted += 1,
+                Ok(false) => outcome.skipped += 1,
+                Err(err) => {
+                    outcome.skipped += 1;
+                    tracing::warn!(
+                        external_id = %external_id_of(&rec.draft),
+                        error = %err,
+                        "skipping external food: per-row write failed"
+                    );
+                }
             }
-            tx.commit().await.map_err(map_sqlx)?;
         }
-        Ok(())
+        Ok(outcome)
     }
 
     async fn list_mine(

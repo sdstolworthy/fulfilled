@@ -29,6 +29,10 @@ pub struct OffFoodRecord {
     pub serving_size: Option<String>,
     pub serving_quantity: Option<Decimal>,
     pub energy_kcal_100g: Option<Decimal>,
+    /// Energy in kJ per 100 g (OFF's `energy-kj_100g` column). Used as a
+    /// fallback when `energy_kcal_100g` is `None` — many OFF rows carry
+    /// only kJ. See 1.1 in `import_plan.md`.
+    pub energy_kj_100g: Option<Decimal>,
     pub protein_100g: Option<Decimal>,
     pub carbs_100g: Option<Decimal>,
     pub fat_100g: Option<Decimal>,
@@ -37,6 +41,17 @@ pub struct OffFoodRecord {
     /// Sodium in g/100g (OFF convention). Normalizer converts to mg.
     pub sodium_100g: Option<Decimal>,
     pub saturated_fat_100g: Option<Decimal>,
+    /// OFF `states_tags`, e.g. `["en:to-be-deleted", "en:complete"]`.
+    /// Used by the normaliser to drop rows the OFF moderation flow has
+    /// marked obsolete. See 1.6 in `import_plan.md`.
+    pub states_tags: Vec<String>,
+    /// OFF `obsolete` flag — `Some(true)` for product entries the
+    /// contributors have retired. See 1.6 in `import_plan.md`.
+    pub obsolete: Option<bool>,
+    /// OFF `no_nutrition_data` — the literal string `"on"` means the
+    /// contributor told OFF the product has no nutrition info available.
+    /// See 1.7 in `import_plan.md`.
+    pub no_nutrition_data: Option<String>,
 }
 
 /// A single USDA food portion. `gram_weight` is the canonical mass;
@@ -65,7 +80,13 @@ pub struct UsdaFoodRecord {
     pub description: String,
     pub brand_owner: Option<String>,
     pub food_portions: Vec<UsdaFoodPortion>,
-    // Per-100g nutrition (from foodNutrients[])
+    // Per-100g nutrition (from foodNutrients[]).
+    //
+    // For `dataType == "branded_food"`, USDA actually reports
+    // `foodNutrients[]` per serving (not per-100g). The `loseit-ingest`
+    // adapter populates these fields with the raw amounts and sets
+    // `serving_size` + `serving_size_unit` so the normalizer can rescale.
+    // See 1.2 in `import_plan.md`.
     pub energy_kcal_100g: Option<Decimal>,
     pub protein_100g: Option<Decimal>,
     pub carbs_100g: Option<Decimal>,
@@ -75,6 +96,14 @@ pub struct UsdaFoodRecord {
     /// Sodium in mg/100g (USDA convention — already in mg).
     pub sodium_mg_100g: Option<Decimal>,
     pub saturated_fat_100g: Option<Decimal>,
+    /// Serving size for Branded foods. Only meaningful when
+    /// `data_type == "branded_food"`. The normaliser uses this together
+    /// with `serving_size_unit` to rescale per-serving nutrients to
+    /// per-100g. See 1.2 in `import_plan.md`.
+    pub serving_size: Option<Decimal>,
+    /// Unit for `serving_size`. Recognised: `g`, `GRM`, `ml`, `MLT`
+    /// (case-insensitive). See 1.2 in `import_plan.md`.
+    pub serving_size_unit: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -243,6 +272,24 @@ fn scale_per_100g(per_100g: Option<Decimal>, grams: Decimal) -> Option<Decimal> 
     per_100g.map(|v| (v * grams / dec!(100)).max(Decimal::ZERO))
 }
 
+/// 1.4: clamp a per-100g macro field to `[0, 100] g/100g`. Out-of-range
+/// values are nulled (the row is kept). Logs the nulled value at WARN so
+/// operators see the bad data in import logs.
+fn clamp_macro_field(slot: &mut Option<Decimal>, ext_id: &str, field: &str) {
+    if let Some(v) = *slot {
+        let f = v.to_f64().unwrap_or(0.0);
+        if !(0.0..=100.0).contains(&f) {
+            tracing::warn!(
+                external_id = %ext_id,
+                field = %field,
+                value = %v,
+                "implausible macro value (must be in [0, 100] g/100g); nulling field"
+            );
+            *slot = None;
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // OFF normalizer  (§7.1)
 // ---------------------------------------------------------------------------
@@ -258,6 +305,38 @@ pub fn accept_and_normalize_off(mut record: OffFoodRecord) -> Option<FoodDraftWi
         return None;
     }
 
+    // 1.6: drop rows the OFF moderation flow has retired or marked for
+    // deletion. `obsolete == true` is the explicit boolean column; the
+    // `states_tags` array carries the same signal in a few flavours.
+    if record.obsolete == Some(true) {
+        return None;
+    }
+    if record
+        .states_tags
+        .iter()
+        .any(|t| t == "en:to-be-deleted" || t == "en:obsolete")
+    {
+        return None;
+    }
+
+    // 1.7: drop rows the contributor explicitly flagged as no-nutrition.
+    if let Some(flag) = record.no_nutrition_data.as_deref() {
+        if flag.trim().eq_ignore_ascii_case("on") {
+            return None;
+        }
+    }
+
+    // 1.1: derive kcal from energy-kj_100g when the kcal column is
+    // missing (very common in real OFF rows). 1 kcal = 4.184 kJ.
+    if record.energy_kcal_100g.is_none() {
+        if let Some(kj) = record.energy_kj_100g {
+            // 4.184 kJ / kcal (NIST thermochemical calorie). Decimal
+            // division gives full precision up to the 28-digit
+            // significand — adequate for the typical 0–4000 kJ range.
+            record.energy_kcal_100g = Some(kj / dec!(4.184));
+        }
+    }
+
     // Sodium sanity check (§7.1 sodium rules) — run in g/100g space before conversion.
     if let Some(sod) = record.sodium_100g {
         let as_f = sod.to_f64().unwrap_or(0.0);
@@ -269,6 +348,56 @@ pub fn accept_and_normalize_off(mut record: OffFoodRecord) -> Option<FoodDraftWi
             );
             record.sodium_100g = None;
         }
+    }
+
+    // 1.4: per-field sanity clamps. kcal_100g must be in `(0, 900]` —
+    // outside → null + drop row (no kcal = no servings possible).
+    // Each macro must be in `[0, 100]` g/100g — outside → null the field
+    // but keep the row.
+    if let Some(k) = record.energy_kcal_100g {
+        let k_f = k.to_f64().unwrap_or(0.0);
+        if k_f <= 0.0 || k_f > 900.0 {
+            tracing::warn!(
+                barcode = %record.code,
+                kcal = %k,
+                "implausible kcal/100g (must be in (0, 900]); dropping row"
+            );
+            record.energy_kcal_100g = None;
+        }
+    }
+    clamp_macro_field(&mut record.protein_100g, &record.code, "protein_g_per_100g");
+    clamp_macro_field(&mut record.carbs_100g, &record.code, "carbs_g_per_100g");
+    clamp_macro_field(&mut record.fat_100g, &record.code, "fat_g_per_100g");
+    clamp_macro_field(&mut record.fiber_100g, &record.code, "fiber_g_per_100g");
+    clamp_macro_field(&mut record.sugar_100g, &record.code, "sugars_g_per_100g");
+    clamp_macro_field(
+        &mut record.saturated_fat_100g,
+        &record.code,
+        "saturated_fat_g_per_100g",
+    );
+
+    // 1.7 (continued): drop all-zero rows where kcal == 0 AND every
+    // macro is None or 0. These are placeholder shells with no
+    // useful nutrition. Note the kcal clamp above already nulls
+    // values <= 0 — so this primarily catches the original
+    // `Some(0.0)` payload before the clamp.
+    let macros_all_zero_or_none = |v: &Option<Decimal>| match v {
+        None => true,
+        Some(d) => *d == Decimal::ZERO,
+    };
+    let kcal_zero_or_missing = record
+        .energy_kcal_100g
+        .map(|k| k == Decimal::ZERO)
+        .unwrap_or(true);
+    let all_macros_zero = macros_all_zero_or_none(&record.protein_100g)
+        && macros_all_zero_or_none(&record.carbs_100g)
+        && macros_all_zero_or_none(&record.fat_100g)
+        && macros_all_zero_or_none(&record.fiber_100g)
+        && macros_all_zero_or_none(&record.sugar_100g)
+        && macros_all_zero_or_none(&record.saturated_fat_100g);
+    if kcal_zero_or_missing && all_macros_zero {
+        // No nutrition signal at all — drop the row outright.
+        return None;
     }
 
     let has_per_100g = record.energy_kcal_100g.is_some()
@@ -440,11 +569,84 @@ pub fn accept_and_normalize(record: OffFoodRecord) -> Option<FoodDraftWithServin
 
 /// Convert a raw [`UsdaFoodRecord`] into a [`FoodDraftWithServings`], or
 /// `None` if the record fails minimum-viable validation (§7.2 rule 5).
-pub fn accept_and_normalize_usda(record: UsdaFoodRecord) -> Option<FoodDraftWithServings> {
+pub fn accept_and_normalize_usda(mut record: UsdaFoodRecord) -> Option<FoodDraftWithServings> {
+    // 1.2: USDA Branded foods report `foodNutrients[]` per serving, not
+    // per-100g. Rescale: `amount_per_100g = amount / serving_size * 100`.
+    // Reject the row (skip-and-log) when we can't rescale safely:
+    // - serving_size <= 0
+    // - serving_size_unit is missing or not one of {g, GRM, ml, MLT}.
+    //
+    // The ml branch is technically only correct for water-density-equivalent
+    // foods, but Branded sodas/juices are the dominant ml case and the
+    // density-1 assumption is the industry default for nutrition labels.
+    if record.data_type.eq_ignore_ascii_case("branded_food") {
+        let ss = record.serving_size;
+        let unit = record.serving_size_unit.as_deref().map(|s| {
+            // Accept both UCUM and free-text spellings used by FDC.
+            let trimmed = s.trim().to_ascii_lowercase();
+            trimmed
+        });
+        let unit_ok = matches!(unit.as_deref(), Some("g" | "grm" | "ml" | "mlt"));
+        match (ss, unit_ok) {
+            (Some(sz), true) if sz > Decimal::ZERO => {
+                // Rescale every per-serving field to per-100g.
+                let factor = dec!(100) / sz;
+                fn rescale(v: &mut Option<Decimal>, factor: Decimal) {
+                    if let Some(x) = *v {
+                        *v = Some(x * factor);
+                    }
+                }
+                rescale(&mut record.energy_kcal_100g, factor);
+                rescale(&mut record.protein_100g, factor);
+                rescale(&mut record.carbs_100g, factor);
+                rescale(&mut record.fat_100g, factor);
+                rescale(&mut record.fiber_100g, factor);
+                rescale(&mut record.sugar_100g, factor);
+                rescale(&mut record.sodium_mg_100g, factor);
+                rescale(&mut record.saturated_fat_100g, factor);
+            }
+            _ => {
+                tracing::warn!(
+                    fdc_id = record.fdc_id,
+                    serving_size = ?record.serving_size,
+                    serving_size_unit = ?record.serving_size_unit,
+                    "dropping Branded USDA row: serving_size/serving_size_unit invalid or missing"
+                );
+                return None;
+            }
+        }
+    }
+
     // §7.2 rule 5: drop if foodPortions empty AND no energy-kcal.
     if record.food_portions.is_empty() && record.energy_kcal_100g.is_none() {
         return None;
     }
+
+    // 1.4: per-field sanity clamps (mirror of the OFF block).
+    let fdc_id_str = record.fdc_id.to_string();
+    if let Some(k) = record.energy_kcal_100g {
+        let k_f = k.to_f64().unwrap_or(0.0);
+        if k_f <= 0.0 || k_f > 900.0 {
+            tracing::warn!(
+                fdc_id = record.fdc_id,
+                kcal = %k,
+                "implausible USDA kcal/100g (must be in (0, 900]); dropping row"
+            );
+            // kcal out of range → no servings can be emitted with sane
+            // numbers, so drop the row outright (matches the OFF policy).
+            return None;
+        }
+    }
+    clamp_macro_field(&mut record.protein_100g, &fdc_id_str, "protein_g_per_100g");
+    clamp_macro_field(&mut record.carbs_100g, &fdc_id_str, "carbs_g_per_100g");
+    clamp_macro_field(&mut record.fat_100g, &fdc_id_str, "fat_g_per_100g");
+    clamp_macro_field(&mut record.fiber_100g, &fdc_id_str, "fiber_g_per_100g");
+    clamp_macro_field(&mut record.sugar_100g, &fdc_id_str, "sugars_g_per_100g");
+    clamp_macro_field(
+        &mut record.saturated_fat_100g,
+        &fdc_id_str,
+        "saturated_fat_g_per_100g",
+    );
 
     let kcal_100g = record.energy_kcal_100g.unwrap_or(Decimal::ZERO);
 
@@ -777,12 +979,16 @@ impl IngestService {
                     accepted.push(upsert);
                 }
             }
-            let skipped = seen.saturating_sub(accepted.len() as u64);
-            let upserted = accepted.len() as u64;
+            // 1.5: writer-level skip count is rolled in alongside normalizer-level drops.
+            let normalizer_skipped = seen.saturating_sub(accepted.len() as u64);
 
-            self.foods
+            let outcome = self
+                .foods
                 .upsert_external_food_batch(batch_id, accepted)
                 .await?;
+
+            let upserted = outcome.upserted;
+            let skipped = normalizer_skipped + outcome.skipped;
 
             total.inserted += upserted;
             total.skipped += skipped;
@@ -817,12 +1023,16 @@ impl IngestService {
                     accepted.push(upsert);
                 }
             }
-            let skipped = seen.saturating_sub(accepted.len() as u64);
-            let upserted = accepted.len() as u64;
+            // 1.5: writer-level skip count is rolled in alongside normalizer-level drops.
+            let normalizer_skipped = seen.saturating_sub(accepted.len() as u64);
 
-            self.foods
+            let outcome = self
+                .foods
                 .upsert_external_food_batch(batch_id, accepted)
                 .await?;
+
+            let upserted = outcome.upserted;
+            let skipped = normalizer_skipped + outcome.skipped;
 
             total.inserted += upserted;
             total.skipped += skipped;
@@ -1183,5 +1393,305 @@ mod tests {
         let (amt, unit) = parse_serving_size("4 fl oz").expect("should parse");
         assert_eq!(amt, dec!(4));
         assert_eq!(unit, Unit::FluidOunce);
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 1 fixes (import_plan.md §4)
+    // -----------------------------------------------------------------------
+
+    /// 1.1: kJ-only OFF row derives kcal as `kj / 4.184` (NIST thermochemical
+    /// calorie). The serving emitted by the normaliser must reflect that.
+    #[test]
+    fn off_derives_kcal_from_kj_when_kcal_missing() {
+        // 1500 kJ/100g → 1500 / 4.184 = 358.508... kcal/100g.
+        let r = OffFoodRecord {
+            code: "KJ001".into(),
+            product_name: "KJ-only snack".into(),
+            energy_kcal_100g: None,
+            energy_kj_100g: Some(dec!(1500)),
+            protein_100g: Some(dec!(5)),
+            ..Default::default()
+        };
+        let out = accept_and_normalize_off(r).expect("should accept");
+        assert!(!out.servings.is_empty(), "must emit at least 1 serving");
+        let s100 = out
+            .servings
+            .iter()
+            .find(|s| s.unit == Unit::Gram && s.amount == dec!(100))
+            .expect("100 g companion present");
+        let expected = dec!(1500) / dec!(4.184);
+        // Compare within ±0.01 kcal.
+        let diff = (s100.kcal - expected).abs();
+        assert!(
+            diff < dec!(0.01),
+            "kcal {} not within 0.01 of expected {}",
+            s100.kcal,
+            expected
+        );
+    }
+
+    /// 1.1: when both kcal and kJ are present the explicit kcal wins.
+    #[test]
+    fn off_prefers_explicit_kcal_over_kj() {
+        let r = OffFoodRecord {
+            code: "KJ002".into(),
+            product_name: "Both energies".into(),
+            energy_kcal_100g: Some(dec!(200)),
+            energy_kj_100g: Some(dec!(9999)),
+            ..Default::default()
+        };
+        let out = accept_and_normalize_off(r).expect("should accept");
+        let s100 = out
+            .servings
+            .iter()
+            .find(|s| s.unit == Unit::Gram && s.amount == dec!(100))
+            .unwrap();
+        assert_eq!(s100.kcal, dec!(200));
+    }
+
+    /// 1.2: USDA Branded food reporting 140 kcal per 30 g serving rescales
+    /// to ~466.67 kcal/100g.
+    #[test]
+    fn usda_branded_rescales_per_serving_to_per_100g() {
+        let r = UsdaFoodRecord {
+            fdc_id: 50001,
+            data_type: "branded_food".into(),
+            description: "30g cookie".into(),
+            brand_owner: Some("CookieCo".into()),
+            food_portions: vec![],
+            energy_kcal_100g: Some(dec!(140)), // per serving in Branded input
+            protein_100g: Some(dec!(2)),
+            carbs_100g: Some(dec!(20)),
+            fat_100g: Some(dec!(7)),
+            serving_size: Some(dec!(30)),
+            serving_size_unit: Some("g".into()),
+            ..Default::default()
+        };
+        let out = accept_and_normalize_usda(r).expect("should accept");
+        assert_eq!(out.servings.len(), 1);
+        let s = &out.servings[0];
+        assert_eq!(s.unit, Unit::Gram);
+        assert_eq!(s.amount, dec!(100));
+        // 140 / 30 * 100 = 466.666...
+        let expected = dec!(140) / dec!(30) * dec!(100);
+        let diff = (s.kcal - expected).abs();
+        assert!(
+            diff < dec!(0.01),
+            "rescaled kcal {} not within 0.01 of expected {}",
+            s.kcal,
+            expected
+        );
+        // Macros also rescale.
+        let p = s.protein_g.unwrap();
+        let p_expected = dec!(2) / dec!(30) * dec!(100);
+        assert!((p - p_expected).abs() < dec!(0.01));
+    }
+
+    /// 1.2: ml branch — same factor.
+    #[test]
+    fn usda_branded_rescales_ml_units() {
+        let r = UsdaFoodRecord {
+            fdc_id: 50002,
+            data_type: "branded_food".into(),
+            description: "240ml drink".into(),
+            brand_owner: Some("BeverageCo".into()),
+            food_portions: vec![],
+            energy_kcal_100g: Some(dec!(120)), // per serving
+            serving_size: Some(dec!(240)),
+            serving_size_unit: Some("ml".into()),
+            ..Default::default()
+        };
+        let out = accept_and_normalize_usda(r).expect("should accept");
+        let s = out
+            .servings
+            .iter()
+            .find(|s| s.unit == Unit::Gram && s.amount == dec!(100))
+            .unwrap();
+        // 120 / 240 * 100 = 50
+        let expected = dec!(120) / dec!(240) * dec!(100);
+        let diff = (s.kcal - expected).abs();
+        assert!(diff < dec!(0.01));
+    }
+
+    /// 1.2: Branded row with missing / invalid serving_size is dropped.
+    #[test]
+    fn usda_branded_missing_serving_size_dropped() {
+        let r = UsdaFoodRecord {
+            fdc_id: 50003,
+            data_type: "branded_food".into(),
+            description: "Bad row".into(),
+            brand_owner: Some("X".into()),
+            food_portions: vec![],
+            energy_kcal_100g: Some(dec!(100)),
+            serving_size: None,
+            serving_size_unit: Some("g".into()),
+            ..Default::default()
+        };
+        assert!(accept_and_normalize_usda(r).is_none());
+
+        // Unrecognised unit → drop.
+        let r2 = UsdaFoodRecord {
+            fdc_id: 50004,
+            data_type: "branded_food".into(),
+            description: "Bad unit".into(),
+            food_portions: vec![],
+            energy_kcal_100g: Some(dec!(100)),
+            serving_size: Some(dec!(1)),
+            serving_size_unit: Some("piece".into()),
+            ..Default::default()
+        };
+        assert!(accept_and_normalize_usda(r2).is_none());
+
+        // Zero serving_size → drop.
+        let r3 = UsdaFoodRecord {
+            fdc_id: 50005,
+            data_type: "branded_food".into(),
+            description: "Zero size".into(),
+            food_portions: vec![],
+            energy_kcal_100g: Some(dec!(100)),
+            serving_size: Some(Decimal::ZERO),
+            serving_size_unit: Some("g".into()),
+            ..Default::default()
+        };
+        assert!(accept_and_normalize_usda(r3).is_none());
+    }
+
+    /// 1.2: non-Branded (Foundation) rows are NOT rescaled — they're already
+    /// per-100g per USDA spec.
+    #[test]
+    fn usda_foundation_not_rescaled() {
+        let r = UsdaFoodRecord {
+            fdc_id: 50006,
+            data_type: "foundation_food".into(),
+            description: "Foundation".into(),
+            food_portions: vec![],
+            energy_kcal_100g: Some(dec!(100)),
+            serving_size: Some(dec!(30)),
+            serving_size_unit: Some("g".into()),
+            ..Default::default()
+        };
+        let out = accept_and_normalize_usda(r).expect("should accept");
+        let s = &out.servings[0];
+        // Untouched — 100 kcal/100g.
+        assert_eq!(s.kcal, dec!(100));
+    }
+
+    /// 1.4: OFF row with 5000 kcal/100g is dropped (out of (0, 900]).
+    #[test]
+    fn off_implausible_kcal_dropped() {
+        let r = OffFoodRecord {
+            code: "CL001".into(),
+            product_name: "Glow stick".into(),
+            energy_kcal_100g: Some(dec!(5000)),
+            protein_100g: Some(dec!(5)),
+            ..Default::default()
+        };
+        assert!(accept_and_normalize_off(r).is_none());
+    }
+
+    /// 1.4: OFF row with -2g protein keeps the row but nulls the protein field.
+    #[test]
+    fn off_negative_macro_nulls_field_keeps_row() {
+        let r = OffFoodRecord {
+            code: "CL002".into(),
+            product_name: "Bizarre".into(),
+            energy_kcal_100g: Some(dec!(150)),
+            protein_100g: Some(dec!(-2)),
+            carbs_100g: Some(dec!(20)),
+            ..Default::default()
+        };
+        let out = accept_and_normalize_off(r).expect("row must be kept");
+        // The protein field on every emitted serving is None.
+        for s in &out.servings {
+            assert!(s.protein_g.is_none(), "protein must be nulled");
+        }
+        // Other fields untouched.
+        let s100 = out.servings.iter().find(|s| s.amount == dec!(100)).unwrap();
+        assert_eq!(s100.carbs_g, Some(dec!(20)));
+    }
+
+    /// 1.4: OFF macro >100 g/100g is nulled.
+    #[test]
+    fn off_macro_over_100_nulls_field() {
+        let r = OffFoodRecord {
+            code: "CL003".into(),
+            product_name: "Overshoot".into(),
+            energy_kcal_100g: Some(dec!(200)),
+            fat_100g: Some(dec!(150)),
+            carbs_100g: Some(dec!(10)),
+            ..Default::default()
+        };
+        let out = accept_and_normalize_off(r).expect("row must be kept");
+        for s in &out.servings {
+            assert!(s.fat_g.is_none());
+        }
+    }
+
+    /// 1.6: OFF row tagged `en:to-be-deleted` is dropped.
+    #[test]
+    fn off_to_be_deleted_dropped() {
+        let r = OffFoodRecord {
+            code: "OB001".into(),
+            product_name: "Retired snack".into(),
+            energy_kcal_100g: Some(dec!(200)),
+            states_tags: vec!["en:to-be-deleted".into(), "en:complete".into()],
+            ..Default::default()
+        };
+        assert!(accept_and_normalize_off(r).is_none());
+    }
+
+    /// 1.6: OFF row with `obsolete = true` is dropped.
+    #[test]
+    fn off_obsolete_dropped() {
+        let r = OffFoodRecord {
+            code: "OB002".into(),
+            product_name: "Obsolete".into(),
+            energy_kcal_100g: Some(dec!(200)),
+            obsolete: Some(true),
+            ..Default::default()
+        };
+        assert!(accept_and_normalize_off(r).is_none());
+    }
+
+    /// 1.6: a row without obsolete signals passes through.
+    #[test]
+    fn off_clean_row_passes_states_tags_filter() {
+        let r = OffFoodRecord {
+            code: "OB003".into(),
+            product_name: "Clean".into(),
+            energy_kcal_100g: Some(dec!(200)),
+            states_tags: vec!["en:complete".into()],
+            obsolete: Some(false),
+            ..Default::default()
+        };
+        assert!(accept_and_normalize_off(r).is_some());
+    }
+
+    /// 1.7: `no_nutrition_data == "on"` drops the row.
+    #[test]
+    fn off_no_nutrition_data_flag_dropped() {
+        let r = OffFoodRecord {
+            code: "NN001".into(),
+            product_name: "Flagged".into(),
+            energy_kcal_100g: Some(dec!(200)),
+            no_nutrition_data: Some("on".into()),
+            ..Default::default()
+        };
+        assert!(accept_and_normalize_off(r).is_none());
+    }
+
+    /// 1.7: all-zero OFF row (kcal == 0 AND every macro None or 0) is dropped.
+    #[test]
+    fn off_all_zero_row_dropped() {
+        let r = OffFoodRecord {
+            code: "ZZ001".into(),
+            product_name: "Hollow".into(),
+            energy_kcal_100g: Some(Decimal::ZERO),
+            protein_100g: Some(Decimal::ZERO),
+            carbs_100g: Some(Decimal::ZERO),
+            fat_100g: None,
+            ..Default::default()
+        };
+        assert!(accept_and_normalize_off(r).is_none());
     }
 }
