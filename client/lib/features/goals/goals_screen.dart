@@ -171,9 +171,17 @@ class _HeroArea extends ConsumerWidget {
         onRetry: () => ref.invalidate(activeGoalProvider),
       );
     }
+    // Container owns the read — the leaf [GoalActiveCard] is pure
+    // presentation and receives the resolved [CalorieEstimate?] via
+    // its constructor (passive-view rule, testing_guide.md §4.4).
+    // The provider is synchronous (`Provider<CalorieEstimate?>`), so
+    // `null` is a legal value the leaf already handles — no skeleton
+    // arm needed for this read.
+    final effective = ref.watch(effectiveActiveGoalTargetsProvider);
     return active.when(
       data: (g) => GoalActiveCard(
         goal: g,
+        effective: effective,
         onEditCurrent: () => openEditGoal(context, active: g),
         onNewGoal: () => openNewGoal(context, template: g),
       ),

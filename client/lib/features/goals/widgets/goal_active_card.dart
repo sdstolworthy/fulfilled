@@ -1,12 +1,11 @@
 import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../domain/calories/estimate.dart';
 import '../../../domain/enums.dart';
 import '../../../domain/goal.dart';
 import '../../../domain/units/energy.dart';
 import '../../../domain/units/macros.dart';
-import '../../../providers/goal_providers.dart';
 import '../../../theme/context_extensions.dart';
 import '../../../widgets/primary_button.dart';
 
@@ -33,31 +32,50 @@ import '../../../widgets/primary_button.dart';
 /// "deliberate restart" affordance that should read as quieter than
 /// the edit path. Previously both buttons read as primary-styled and
 /// the user paused to disambiguate.
-class GoalActiveCard extends ConsumerWidget {
+///
+/// **Pure presentation widget** — all inputs arrive via constructor
+/// parameters (see `specs/testing_guide.md` §4.4). The container
+/// (`GoalsScreen`) reads `effectiveActiveGoalTargetsProvider` and
+/// passes the resolved [CalorieEstimate] (or `null` when the profile
+/// is incomplete / upstream is still hydrating) down. The provider
+/// is a plain `Provider<CalorieEstimate?>` (not async), so `null` is
+/// the "no override" branch and the card falls back to the stored
+/// snapshot on [Goal] — no sibling skeleton widget is needed.
+class GoalActiveCard extends StatelessWidget {
   const GoalActiveCard({
     required this.goal,
+    required this.effective,
     required this.onEditCurrent,
     required this.onNewGoal,
     super.key,
   });
 
   final Goal goal;
+
+  /// Derived live calorie + macro target. `null` when the profile is
+  /// incomplete or upstream providers haven't resolved yet — the card
+  /// falls back to the stored snapshot on [Goal] in that case.
+  final CalorieEstimate? effective;
+
   final VoidCallback onEditCurrent;
   final VoidCallback onNewGoal;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final colors = context.colors;
     final tokens = context.tokens;
     final mutedTeal = colors.mutedTealOnDark;
+
+    // Local copy so Dart's flow analysis can promote the nullable
+    // through the `eff == null` checks below — instance fields can't
+    // be promoted directly.
+    final eff = effective;
 
     // Prefer the derived live target so changing activity / weight /
     // etc. on the profile page reflects here on next paint. Fall
     // back to the stored snapshot when the derived value isn't
     // available (profile incomplete, or upstream still hydrating).
-    final effective = ref.watch(effectiveActiveGoalTargetsProvider);
-    final kcalTarget =
-        effective?.dailyTargetKcal ?? goal.dailyCalorieTarget;
+    final kcalTarget = eff?.dailyTargetKcal ?? goal.dailyCalorieTarget;
     final kcalLabel = kcalTarget == null
         ? '—'
         : formatKcal(Decimal.fromInt(kcalTarget));
@@ -66,15 +84,15 @@ class GoalActiveCard extends ConsumerWidget {
     // headline above already uses the live value, so the split bar
     // and gram grid below have to track or the card disagrees with
     // itself after a profile edit.
-    final proteinG = effective == null
+    final proteinG = eff == null
         ? goal.proteinTargetG
-        : Decimal.fromInt(effective.proteinG);
-    final carbsG = effective == null
+        : Decimal.fromInt(eff.proteinG);
+    final carbsG = eff == null
         ? goal.carbsTargetG
-        : Decimal.fromInt(effective.carbsG);
-    final fatG = effective == null
+        : Decimal.fromInt(eff.carbsG);
+    final fatG = eff == null
         ? goal.fatTargetG
-        : Decimal.fromInt(effective.fatG);
+        : Decimal.fromInt(eff.fatG);
     final percents = _macroPercents(proteinG, carbsG, fatG);
 
     return DecoratedBox(

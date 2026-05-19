@@ -44,6 +44,7 @@ Widget _harness() {
       body: SingleChildScrollView(
         child: GoalActiveCard(
           goal: _activeGoal(),
+          effective: null,
           onEditCurrent: () {},
           onNewGoal: () {},
         ),
