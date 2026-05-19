@@ -80,11 +80,17 @@ struct Args {
     source_url: Option<String>,
 
     /// 4.4: drop OFF rows whose `last_modified_t` is older than this
-    /// many years. `0` disables the drop (operators can use this to
-    /// keep everything). USDA rows are unaffected — FDC dumps don't
-    /// carry a per-row last-modified field and aren't a polluting
-    /// source the same way OFF is.
-    #[arg(long, default_value_t = 5)]
+    /// many years. `0` (the default) disables the drop — we ingest
+    /// everything and let the OFF moderation flags
+    /// (`states_tags = en:to-be-deleted`, `obsolete = true`,
+    /// `data_quality_errors_tags`) do the real quality filtering.
+    /// `last_modified_t` is "when did anyone last edit anything",
+    /// which can be a trivial photo or translation fix — not a
+    /// reliable proxy for nutrition staleness. Operators can opt
+    /// into a cutoff (e.g. `--stale-after-years 15`) for stricter
+    /// imports. USDA rows are unaffected — FDC dumps don't carry a
+    /// per-row last-modified field.
+    #[arg(long, default_value_t = 0)]
     stale_after_years: u32,
 }
 

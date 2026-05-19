@@ -1089,27 +1089,21 @@ pub struct IngestService {
 /// Phase 2.1: per-run knobs that callers can flip without touching the
 /// existing `run_off` / `run_usda` 3-arg signatures. Default is "respect
 /// the etag short-circuit"; CLI `--force` flips `force = true`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct RunOptions {
     /// When `true`, bypass the `find_completed_batch` short-circuit and
     /// always start a fresh import. Useful for redoing a botched import
     /// without re-downloading the source file.
     pub force: bool,
     /// 4.4: drop OFF rows whose `last_modified_t` is older than this
-    /// many years. `0` disables the drop entirely (operators can run
-    /// `--stale-after-years 0` to keep everything). Default `5` matches
-    /// the audit recommendation: OFF never deletes, so 2012-vintage
-    /// rows with no edits since are noise.
+    /// many years. `0` (the default) disables the drop; we ingest
+    /// everything and rely on the OFF moderation columns
+    /// (`states_tags`, `obsolete`, `data_quality_errors_tags`) for
+    /// real quality filtering. `last_modified_t` is "any edit
+    /// touched this row" — trivial photo/translation fixes reset it
+    /// — so it isn't a reliable proxy for nutrition staleness.
+    /// Operators can opt into a cutoff for stricter imports.
     pub stale_after_years: u32,
-}
-
-impl Default for RunOptions {
-    fn default() -> Self {
-        Self {
-            force: false,
-            stale_after_years: 5,
-        }
-    }
 }
 
 impl IngestService {
