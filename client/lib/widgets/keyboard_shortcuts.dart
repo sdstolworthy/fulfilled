@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
@@ -81,22 +82,52 @@ class _KeyboardShortcutsState extends State<KeyboardShortcuts> {
   /// character-keyed shortcut (`/`, `n`, `g _`) is editable-gated by
   /// this check.
   ///
-  /// The naive check (`primaryFocus.context.widget is EditableText`)
-  /// breaks for `TextField`s constructed with an external `FocusNode`
-  /// (e.g. `searchFieldFocusNodeProvider` → search field). When that
-  /// `FocusNode` becomes primary, `.context` resolves to a `Focus`
-  /// widget that lives **inside** `EditableText.build`, not to the
-  /// `EditableText` itself. The previous implementation walked the
-  /// focus context's *descendants* looking for `EditableText` — but
-  /// `EditableText` is the *ancestor* of its own internal `Focus`, so
-  /// the descendant walk never found it, and every character-keyed
-  /// shortcut hijacked the keystroke. Walking ancestors fixes it.
+  /// Why the gauntlet of checks: `TextField` wires its external
+  /// `FocusNode` (e.g. `searchFieldFocusNodeProvider`) to a `Focus`
+  /// widget that lives **inside** `EditableText.build` (Flutter
+  /// `editable_text.dart` ~line 5766). When that `FocusNode` is the
+  /// primary focus, `.context.widget` is the inner `Focus`, not the
+  /// `EditableText` itself — so a plain `ctx.widget is EditableText`
+  /// check misses it, and an earlier implementation that walked
+  /// *descendants* missed it too (EditableText is the *ancestor* of
+  /// its own inner Focus, not a descendant). We try the ancestor
+  /// chain first (the cheap, common case), then fall back to the
+  /// public input-widget types and finally to a descendant walk for
+  /// any unusual setup. Belt and suspenders — a missed positive here
+  /// hijacks the user's keystroke.
   bool get _editableFocused {
     final focused = FocusManager.instance.primaryFocus;
     final ctx = focused?.context;
     if (ctx == null) return false;
+
+    // 1. Direct hit.
     if (ctx.widget is EditableText) return true;
-    return ctx.findAncestorWidgetOfExactType<EditableText>() != null;
+
+    // 2. Standard path: EditableText is an ancestor of the inner Focus.
+    if (ctx.findAncestorWidgetOfExactType<EditableText>() != null) {
+      return true;
+    }
+
+    // 3. Defensive fallbacks for cases where the framework wraps
+    //    EditableText behind a custom input widget.
+    if (ctx.findAncestorWidgetOfExactType<TextField>() != null) return true;
+    if (ctx.findAncestorWidgetOfExactType<CupertinoTextField>() != null) {
+      return true;
+    }
+
+    // 4. Last resort — walk descendants too, in case some unusual
+    //    setup actually does put EditableText below the focused node.
+    bool found = false;
+    void visit(Element el) {
+      if (found) return;
+      if (el.widget is EditableText) {
+        found = true;
+        return;
+      }
+      el.visitChildren(visit);
+    }
+    ctx.visitChildElements(visit);
+    return found;
   }
 
   void _focusSearchOrPush(BuildContext context) {
