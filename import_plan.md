@@ -1,6 +1,19 @@
 # Fulfilled food-database import plan
 
-**Status:** draft, awaiting review · **Owner:** backend · **Created:** 2026-05-19
+**Status:** Phases 1–3 landed; Phase 4 pending · **Owner:** backend · **Created:** 2026-05-19
+
+| Phase | Status | Commits |
+|-------|--------|---------|
+| 1 — correctness blockers | landed | `27b5da7` |
+| 2 — operational robustness | landed | `75261fa` |
+| 3 — throughput | landed | `8b5bddf` |
+| 4 — quality polish + cross-source dedup | pending | — |
+| 5 — license/app wire-up | gated on FE audit | — |
+
+**Known test gaps** (live Postgres required, no fixture in repo yet):
+- Phase 3 savepoint rollback path — food N fails, foods 1..N-1 and N+1..M still persist. In-memory `FoodRepository` doesn't model transactions, so the service-layer skip-and-log contract is covered (`off_ingest_skip_and_log_on_row_failure`) but the savepoint mechanics are not.
+- Phase 3 `COPY` round-trip with edge characters in `label` (comma, newline, quote, emoji). CSV encoder is unit-tested; wire-level round-trip is not.
+Building a Pg test fixture in `loseit-db` is the natural next step before the first prod import.
 
 This plan lays out the strategy to import the Open Food Facts (OFF) and USDA
 FoodData Central (FDC) databases into Postgres so that `/foods/search` returns
