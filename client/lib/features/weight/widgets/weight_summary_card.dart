@@ -503,13 +503,20 @@ _ProjectionCopy _projectionCopy(GoalProjection p, WeightUnit unit) {
       final dateLabel = DateFormat.yMMMd().format(p.eta!);
       final weeks = p.weeksAway ?? 0;
       final weekSuffix = weeks == 1 ? 'wk' : 'wks';
+      // Low-confidence headline: prepend a "~" hint that the
+      // projection isn't calibrated to this user's intake history.
+      // See research §5.5 — k defaults to 0.95 with no calibration.
+      final lcPrefix = p.lowConfidence ? '~' : '';
+      final lcSemantics = p.lowConfidence
+          ? ' Estimate is approximate — log meals for a tighter projection.'
+          : '';
       final headline = weeks <= 0
-          ? '$target by $dateLabel'
-          : '$target by $dateLabel · ≈$weeks $weekSuffix';
+          ? '$lcPrefix$target by $dateLabel'
+          : '$lcPrefix$target by $dateLabel · ≈$weeks $weekSuffix';
       return _ProjectionCopy(
         headline: headline,
         semantics: 'Projected to reach $target by $dateLabel, '
-            'about $weeks ${weeks == 1 ? 'week' : 'weeks'} away.',
+            'about $weeks ${weeks == 1 ? 'week' : 'weeks'} away.$lcSemantics',
       );
     case ProjectionKind.reached:
       return _ProjectionCopy(

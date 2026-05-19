@@ -5,6 +5,7 @@ import '../domain/calories/estimate.dart';
 import '../domain/day_summary.dart';
 import '../domain/goal.dart';
 import '../domain/weight_projection.dart';
+import 'log_providers.dart';
 import 'profile_providers.dart';
 import 'repository_providers.dart';
 import 'weight_providers.dart';
@@ -81,15 +82,20 @@ final effectiveActiveGoalTargetsProvider =
 });
 
 /// **Derived** ETA at which the user will reach the active goal's
-/// target weight at their currently observed trajectory.
+/// target weight under their observed intake.
 ///
-/// Cross-tier seam: composes [activeGoalProvider] (target weight) and
-/// [weightHistoryProvider] (current weight + 28-day trajectory). The
-/// math itself lives in `lib/domain/weight_projection.dart` so it's
-/// testable without a `ProviderContainer`.
+/// Cross-tier seam: composes [activeGoalProvider] (target weight),
+/// [weightHistoryProvider] (current weight + 28-day trajectory),
+/// [meProvider] (sex / birthDate / heightCm / activityLevel — required
+/// inputs for the Mifflin BMR + Deurenberg body-fat seed) and the
+/// trailing 14-day [daySummaryProvider] window (intake calibration).
+/// The math itself lives in `lib/domain/weight_projection.dart` so
+/// it's testable without a `ProviderContainer` — see
+/// `specs/weight_projection_research.md` §5 for the canonical
+/// derivation.
 ///
 /// Returns `null` when no projection makes sense at all — no active
-/// goal, no `targetWeightKg`, or history loading/errored. Otherwise
+/// goal, no `targetWeightKg`, or history loading / errored. Otherwise
 /// always returns a [GoalProjection]; the [GoalProjection.kind] field
 /// encodes whether the ETA is meaningful (onTrack), already met
 /// (reached), trending the wrong direction (offTrack), too flat to
@@ -101,10 +107,32 @@ final goalProjectionProvider = Provider<GoalProjection?>((ref) {
   if (history == null || goal == null) return null;
   final target = goal.targetWeightKg;
   if (target == null) return null;
+  final user = ref.watch(meProvider).valueOrNull;
+  // Pull 14 days of trailing intake. We rely on the family
+  // `daySummaryProvider` which caches per-date — only the dates
+  // currently rendered elsewhere round-trip the network; the rest
+  // resolve from the same fixture / API surface the rest of the app
+  // already uses. If any day is missing or errored we skip it (the
+  // projection routine treats sparse intake as the low-confidence
+  // path).
+  final now = DateTime.now();
+  final today = DateTime(now.year, now.month, now.day);
+  final intake = <IntakeDay>[];
+  for (var i = 0; i < 14; i += 1) {
+    final date = today.subtract(Duration(days: i));
+    final summary = ref.watch(daySummaryProvider(date)).valueOrNull;
+    if (summary == null) continue;
+    intake.add(IntakeDay(date: date, kcal: summary.kcal));
+  }
   return projectGoal(
     history: history,
     targetKg: target,
-    now: DateTime.now(),
+    now: now,
+    sex: user?.sex,
+    birthDate: user?.birthDate,
+    heightCm: user?.heightCm,
+    activityLevel: user?.activityLevel,
+    intake: intake,
   );
 });
 
