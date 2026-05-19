@@ -12,10 +12,11 @@
 #     is fatal.
 #   - `cargo fmt --all -- --check` — formatting drift is fatal.
 #
-# Path-scoped skip: `flutter analyze` runs only when the staged diff
-# touches `client/`. Server-only commits don't get blocked on FE
-# backlog (and vice-versa would be a natural extension if needed).
-# Detection is `git diff --cached --name-only`.
+# Every commit runs the full suite — flutter analyze + cargo clippy +
+# cargo fmt — regardless of which side of the repo it touches. The
+# earlier path-scoped skip turned out to be a false economy: a
+# server-only commit can still break client code via shared specs,
+# and the analyzer is fast (~3 s) compared to clippy.
 #
 # Escape hatch: `git commit --no-verify` skips this hook. Use sparingly
 # — the strict mode exists to keep tree green, not to harass.
@@ -36,29 +37,23 @@ green()  { printf '\033[32m%s\033[0m\n' "$*"; }
 yellow() { printf '\033[33m%s\033[0m\n' "$*"; }
 
 # ─── Flutter ────────────────────────────────────────────────────────────
-# Only run flutter analyze when the staged diff touches client/. Server-
-# only commits would otherwise be blocked on FE backlog they don't own.
-if git diff --cached --name-only | grep -q '^client/'; then
-  FLUTTER_BIN="${FLUTTER_BIN:-}"
-  if [ -z "$FLUTTER_BIN" ]; then
-    if command -v flutter >/dev/null 2>&1; then
-      FLUTTER_BIN="flutter"
-    elif [ -x "$HOME/flutter/bin/flutter" ]; then
-      FLUTTER_BIN="$HOME/flutter/bin/flutter"
-    else
-      red "pre-commit: flutter not found (set FLUTTER_BIN or add to PATH)"
-      exit 1
-    fi
+FLUTTER_BIN="${FLUTTER_BIN:-}"
+if [ -z "$FLUTTER_BIN" ]; then
+  if command -v flutter >/dev/null 2>&1; then
+    FLUTTER_BIN="flutter"
+  elif [ -x "$HOME/flutter/bin/flutter" ]; then
+    FLUTTER_BIN="$HOME/flutter/bin/flutter"
+  else
+    red "pre-commit: flutter not found (set FLUTTER_BIN or add to PATH)"
+    exit 1
   fi
-
-  yellow "pre-commit › flutter analyze (client/, --fatal-infos --fatal-warnings)"
-  (
-    cd client
-    "$FLUTTER_BIN" analyze --fatal-infos --fatal-warnings
-  )
-else
-  yellow "pre-commit › flutter analyze skipped (no client/ files staged)"
 fi
+
+yellow "pre-commit › flutter analyze (client/, --fatal-infos --fatal-warnings)"
+(
+  cd client
+  "$FLUTTER_BIN" analyze --fatal-infos --fatal-warnings
+)
 
 # ─── Cargo (server) ─────────────────────────────────────────────────────
 # Mirror flutter's discovery: explicit override, then PATH, then the
