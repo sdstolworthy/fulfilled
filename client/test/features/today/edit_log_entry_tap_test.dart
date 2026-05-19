@@ -120,7 +120,6 @@ class _FakeLogRepository extends LogRepository {
   _FakeLogRepository({
     required super.api,
     required super.foodRepository,
-    required super.goalRepository,
     required bool pending,
   }) : _pending = pending;
 
@@ -201,7 +200,6 @@ void main() {
     return _FakeLogRepository(
       api: api,
       foodRepository: FoodRepository(api),
-      goalRepository: GoalRepository(api),
       pending: pending,
     );
   }

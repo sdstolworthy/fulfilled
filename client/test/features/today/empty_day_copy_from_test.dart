@@ -67,7 +67,6 @@ class _FakeLogRepository extends LogRepository {
   _FakeLogRepository({
     required super.api,
     required super.foodRepository,
-    required super.goalRepository,
     required this.entriesForSource,
   });
 
@@ -257,7 +256,6 @@ _FakeLogRepository _buildRepo({List<LogEntry> entriesForSource = const []}) {
   return _FakeLogRepository(
     api: api,
     foodRepository: FoodRepository(api),
-    goalRepository: GoalRepository(api),
     entriesForSource: entriesForSource,
   );
 }

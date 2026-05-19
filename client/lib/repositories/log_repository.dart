@@ -10,7 +10,6 @@ import '../domain/quick_add.dart';
 import '../domain/serving.dart';
 import '_fixtures.dart' as fx;
 import 'food_repository.dart';
-import 'goal_repository.dart';
 
 /// Read + write surface for the food log. Mirrors `/log` and
 /// `/days/{date}/summary` from the OpenAPI doc.
@@ -26,12 +25,10 @@ class LogRepository {
   LogRepository({
     required ApiClient api,
     required FoodRepository foodRepository,
-    required GoalRepository goalRepository,
     LogOutboxNotifier? outbox,
     bool useFixtures = kUseFixtures,
   })  : _api = api,
         _foodRepo = foodRepository,
-        _goalRepo = goalRepository,
         _outbox = outbox,
         _useFixtures = useFixtures {
     if (_useFixtures) _seedFixtureStore();
@@ -43,8 +40,6 @@ class LogRepository {
 
   final ApiClient _api;
   final FoodRepository _foodRepo;
-  // ignore: unused_field — kept for parity with the eventual real client.
-  final GoalRepository _goalRepo;
 
   final LogOutboxNotifier? _outbox;
 

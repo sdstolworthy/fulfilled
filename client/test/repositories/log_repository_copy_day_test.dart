@@ -21,7 +21,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fulfilled/data/api_client.dart';
 import 'package:fulfilled/domain/meal.dart';
 import 'package:fulfilled/repositories/food_repository.dart';
-import 'package:fulfilled/repositories/goal_repository.dart';
 import 'package:fulfilled/repositories/log_repository.dart';
 
 import '../data/fake_dio_adapter.dart';
@@ -74,7 +73,6 @@ void main() {
     final repo = LogRepository(
       api: api,
       foodRepository: FoodRepository(api, useFixtures: false),
-      goalRepository: GoalRepository(api),
       useFixtures: false,
     );
 
@@ -102,7 +100,6 @@ void main() {
     final repo = LogRepository(
       api: api,
       foodRepository: FoodRepository(api, useFixtures: false),
-      goalRepository: GoalRepository(api),
       useFixtures: false,
     );
 

@@ -20,7 +20,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:fulfilled/data/api_client.dart';
 import 'package:fulfilled/data/outbox/log_outbox_notifier.dart';
 import 'package:fulfilled/repositories/food_repository.dart';
-import 'package:fulfilled/repositories/goal_repository.dart';
 import 'package:fulfilled/repositories/log_repository.dart';
 import 'package:hive/hive.dart';
 
@@ -125,7 +124,6 @@ void main() {
       final repo = LogRepository(
         api: api,
         foodRepository: FoodRepository(api),
-        goalRepository: GoalRepository(api),
         outbox: notifier,
       );
 
@@ -139,7 +137,6 @@ void main() {
       final repo = LogRepository(
         api: api,
         foodRepository: FoodRepository(api),
-        goalRepository: GoalRepository(api),
         // outbox: null — the medium/expanded wiring.
       );
 
@@ -175,7 +172,6 @@ void main() {
       final repo = LogRepository(
         api: api,
         foodRepository: FoodRepository(api),
-        goalRepository: GoalRepository(api),
         outbox: notifier,
       );
       expect(repo.isPendingSync(optimisticId), isTrue);

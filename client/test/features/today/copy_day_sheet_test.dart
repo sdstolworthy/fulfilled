@@ -49,7 +49,6 @@ class _FakeLogRepository extends LogRepository {
   _FakeLogRepository({
     required super.api,
     required super.foodRepository,
-    required super.goalRepository,
     required this.entriesForSource,
     this.copyResult,
     this.throwOnCopy = false,
@@ -231,7 +230,6 @@ void main() {
     return _FakeLogRepository(
       api: api,
       foodRepository: FoodRepository(api),
-      goalRepository: GoalRepository(api),
       entriesForSource: entriesForSource,
       copyResult: copyResult,
       throwOnCopy: throwOnCopy,

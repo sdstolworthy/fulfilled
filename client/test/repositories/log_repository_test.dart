@@ -31,7 +31,6 @@ import 'package:fulfilled/domain/meal.dart';
 import 'package:fulfilled/domain/quick_add.dart';
 import 'package:fulfilled/domain/unit.dart';
 import 'package:fulfilled/repositories/food_repository.dart';
-import 'package:fulfilled/repositories/goal_repository.dart';
 import 'package:fulfilled/repositories/log_repository.dart';
 
 import '../data/fake_dio_adapter.dart';
@@ -47,7 +46,6 @@ import '_harness.dart';
   final repo = LogRepository(
     api: api,
     foodRepository: FoodRepository(api, useFixtures: false),
-    goalRepository: GoalRepository(api),
     useFixtures: false,
   );
   return (repo: repo, adapter: adapter);

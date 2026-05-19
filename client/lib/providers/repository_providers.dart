@@ -66,7 +66,6 @@ final formFactorOverrideProvider = Provider<FormFactor>((ref) {
 final logRepositoryProvider = Provider<LogRepository>((ref) {
   final api = ref.watch(apiClientProvider);
   final foods = ref.watch(foodRepositoryProvider);
-  final goals = ref.watch(goalRepositoryProvider);
   final ff = ref.watch(formFactorOverrideProvider);
   // T-22: compact wires the outbox so `isPendingSync` can project
   // pending/failed rows back to the day-view. Medium/expanded surface
@@ -76,7 +75,6 @@ final logRepositoryProvider = Provider<LogRepository>((ref) {
   return LogRepository(
     api: api,
     foodRepository: foods,
-    goalRepository: goals,
     outbox: outbox,
   );
 });

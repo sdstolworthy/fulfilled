@@ -8,7 +8,6 @@ import 'package:fulfilled/domain/meal.dart';
 import 'package:fulfilled/features/log_entry/log_entry_sheet.dart';
 import 'package:fulfilled/providers/repository_providers.dart';
 import 'package:fulfilled/repositories/food_repository.dart';
-import 'package:fulfilled/repositories/goal_repository.dart';
 import 'package:fulfilled/repositories/log_repository.dart';
 import 'package:fulfilled/routing/routes.dart';
 import 'package:fulfilled/theme/theme_data.dart';
@@ -70,7 +69,6 @@ class _RecordingLogRepository extends LogRepository {
   _RecordingLogRepository({
     required super.api,
     required super.foodRepository,
-    required super.goalRepository,
   });
 
   String? lastUpdateId;
@@ -146,7 +144,6 @@ void main() {
     repo = _RecordingLogRepository(
       api: buildTestApiClient(),
       foodRepository: FoodRepositoryProxy.boot(),
-      goalRepository: GoalRepositoryProxy.boot(),
     );
     // Happy-path return for `update` — tests only inspect the patch,
     // but the sheet still pops with whatever the repo returns, so we
@@ -392,7 +389,6 @@ void main() {
       routerRepo = _RecordingLogRepository(
         api: buildTestApiClient(),
         foodRepository: FoodRepositoryProxy.boot(),
-        goalRepository: GoalRepositoryProxy.boot(),
       );
     });
 
@@ -622,8 +618,4 @@ Widget _editRouterHarness({
 /// scenarios; their seed catalog is enough.
 class FoodRepositoryProxy {
   static FoodRepository boot() => FoodRepository(buildTestApiClient());
-}
-
-class GoalRepositoryProxy {
-  static GoalRepository boot() => GoalRepository(buildTestApiClient());
 }

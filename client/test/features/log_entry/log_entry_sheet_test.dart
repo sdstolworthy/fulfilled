@@ -22,7 +22,6 @@ import 'package:fulfilled/features/log_entry/log_entry_sheet.dart';
 import 'package:fulfilled/features/log_entry/widgets/log_preview_block.dart';
 import 'package:fulfilled/providers/repository_providers.dart';
 import 'package:fulfilled/repositories/food_repository.dart';
-import 'package:fulfilled/repositories/goal_repository.dart';
 import 'package:fulfilled/repositories/log_repository.dart';
 import 'package:flutter/semantics.dart';
 import 'package:fulfilled/routing/routes.dart';
@@ -282,7 +281,6 @@ void main() {
       repo = _RouterCapturingRepository(
         api: buildTestApiClient(),
         foodRepository: FoodRepository(buildTestApiClient()),
-        goalRepository: GoalRepository(buildTestApiClient()),
       );
     });
 
@@ -652,7 +650,6 @@ class _RouterCapturingRepository extends LogRepository {
   _RouterCapturingRepository({
     required super.api,
     required super.foodRepository,
-    required super.goalRepository,
   });
 
   LogEntry? stubCreateReturn;

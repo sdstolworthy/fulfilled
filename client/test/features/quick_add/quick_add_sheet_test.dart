@@ -14,7 +14,6 @@ import 'package:fulfilled/domain/unit.dart';
 import 'package:fulfilled/features/quick_add/quick_add_sheet.dart';
 import 'package:fulfilled/providers/repository_providers.dart';
 import 'package:fulfilled/repositories/food_repository.dart';
-import 'package:fulfilled/repositories/goal_repository.dart';
 import 'package:fulfilled/repositories/log_repository.dart';
 import 'package:fulfilled/theme/theme_data.dart';
 import 'package:dio/dio.dart';
@@ -29,7 +28,6 @@ class _CapturingLogRepository extends LogRepository {
   _CapturingLogRepository({
     required super.api,
     required super.foodRepository,
-    required super.goalRepository,
   });
 
   LogCreate? lastPayload;
@@ -79,7 +77,6 @@ _CapturingLogRepository _buildRepo() {
   return _CapturingLogRepository(
     api: api,
     foodRepository: FoodRepository(api),
-    goalRepository: GoalRepository(api),
   );
 }
 

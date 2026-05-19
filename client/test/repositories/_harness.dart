@@ -38,7 +38,6 @@ FoodRepository buildLiveFoodRepository(ApiClient api) =>
 LogRepository buildLiveLogRepository(ApiClient api) => LogRepository(
       api: api,
       foodRepository: FoodRepository(api, useFixtures: false),
-      goalRepository: GoalRepository(api),
       useFixtures: false,
     );
 
