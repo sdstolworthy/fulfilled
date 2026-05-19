@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt::Write as _;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -24,113 +25,10 @@ impl PgFoodRepository {
         Self { pool }
     }
 
-    /// Phase 1.5: write a single external food + servings. Returns
-    /// `Ok(true)` on success, `Ok(false)` when the food was skipped for
-    /// non-error reasons (e.g. USDA data_type couldn't be normalised),
-    /// and `Err(...)` on a true SQL error which the caller will log +
-    /// count as skipped.
-    async fn upsert_one_external(
-        &self,
-        batch_id: Uuid,
-        rec: &FoodDraftWithServings,
-    ) -> CoreResult<bool> {
-        let draft = &rec.draft;
-
-        // UPSERT the food row. The source identity invariant means OFF
-        // foods conflict on `barcode` (partial unique index) and USDA
-        // foods conflict on `fdc_id` (partial unique index). We fall back
-        // to barcode as the conflict target since the batch is expected to
-        // be homogeneous (OFF or USDA) and the caller normalizes this.
-        let food_id: Uuid = if draft.barcode.is_some() {
-            // OFF path: conflict on barcode partial unique index.
-            let sql = "INSERT INTO foods ( \
-                    source, barcode, name, brands, categories_tags, \
-                    nutriscore_grade, quality_score, last_import_batch_id \
-                 ) VALUES ( \
-                    'off', $1, $2, $3, $4, $5, $6, $7 \
-                 ) \
-                 ON CONFLICT (barcode) WHERE barcode IS NOT NULL DO UPDATE SET \
-                    name                 = EXCLUDED.name, \
-                    brands               = EXCLUDED.brands, \
-                    categories_tags      = EXCLUDED.categories_tags, \
-                    nutriscore_grade     = EXCLUDED.nutriscore_grade, \
-                    quality_score        = EXCLUDED.quality_score, \
-                    last_import_batch_id = EXCLUDED.last_import_batch_id \
-                 RETURNING id";
-            sqlx::query_scalar::<_, Uuid>(sql)
-                .bind(draft.barcode.as_deref())
-                .bind(&draft.name)
-                .bind(draft.brands.as_deref())
-                .bind(&draft.categories_tags)
-                .bind(draft.nutriscore_grade.map(|g| g.as_str()))
-                .bind(rec.quality_score)
-                .bind(batch_id)
-                .fetch_one(&self.pool)
-                .await
-                .map_err(map_sqlx)?
-        } else {
-            // USDA path: conflict on fdc_id partial unique index.
-            let fdc_id = match draft.fdc_id {
-                Some(id) => id,
-                None => {
-                    return Err(CoreError::Validation(
-                        "USDA upsert requires fdc_id but draft.fdc_id is None".into(),
-                    ));
-                }
-            };
-            let sql = "INSERT INTO foods ( \
-                    source, fdc_id, data_type, name, brands, categories_tags, \
-                    nutriscore_grade, quality_score, last_import_batch_id \
-                 ) VALUES ( \
-                    'usda', $1, $2, $3, $4, $5, $6, $7, $8 \
-                 ) \
-                 ON CONFLICT (fdc_id) WHERE fdc_id IS NOT NULL DO UPDATE SET \
-                    name                 = EXCLUDED.name, \
-                    brands               = EXCLUDED.brands, \
-                    categories_tags      = EXCLUDED.categories_tags, \
-                    data_type            = EXCLUDED.data_type, \
-                    nutriscore_grade     = EXCLUDED.nutriscore_grade, \
-                    quality_score        = EXCLUDED.quality_score, \
-                    last_import_batch_id = EXCLUDED.last_import_batch_id \
-                 RETURNING id";
-            let db_data_type = match draft.data_type.as_deref().and_then(normalise_data_type) {
-                Some(dt) => dt,
-                None => {
-                    tracing::warn!(
-                        fdc_id = fdc_id,
-                        raw_data_type = ?draft.data_type,
-                        "skipping USDA food: data_type missing or unrecognised"
-                    );
-                    return Ok(false);
-                }
-            };
-            sqlx::query_scalar::<_, Uuid>(sql)
-                .bind(fdc_id)
-                .bind(db_data_type)
-                .bind(&draft.name)
-                .bind(draft.brands.as_deref())
-                .bind(&draft.categories_tags)
-                .bind(draft.nutriscore_grade.map(|g| g.as_str()))
-                .bind(rec.quality_score)
-                .bind(batch_id)
-                .fetch_one(&self.pool)
-                .await
-                .map_err(map_sqlx)?
-        };
-
-        // Atomic serving replace: delete all existing, insert new list.
-        let mut tx = self.pool.begin().await.map_err(map_sqlx)?;
-        sqlx::query("DELETE FROM servings WHERE food_id = $1")
-            .bind(food_id)
-            .execute(&mut *tx)
-            .await
-            .map_err(map_sqlx)?;
-        for s in &rec.servings {
-            insert_serving_in_tx(&mut tx, food_id, s).await?;
-        }
-        tx.commit().await.map_err(map_sqlx)?;
-        Ok(true)
-    }
+    // Phase 3 (3.1 + 3.2 + 3.3): The whole-batch write path lives directly in
+    // `upsert_external_food_batch` below; the previous `upsert_one_external`
+    // helper was inlined so that one outer Postgres transaction can wrap N
+    // foods, each guarded by a `SAVEPOINT` for per-row rollback isolation.
 }
 
 /// Format the best-available external identifier for log messages.
@@ -262,6 +160,227 @@ async fn insert_serving_in_tx(
         .await
         .map_err(map_sqlx)?;
     row_to_serving(&row)
+}
+
+/// Phase 3 single-food writer used by `upsert_external_food_batch`.
+///
+/// Runs the food UPSERT, the per-food `DELETE FROM servings`, and the bulk
+/// serving load (`COPY ... FROM STDIN`) inside the caller's transaction
+/// (typically nested under a `SAVEPOINT food_<n>`). Returns:
+/// - `Ok(true)` on a clean upsert,
+/// - `Ok(false)` for non-error skips (USDA `data_type` unrecognised — this
+///   matches the previous behaviour where the row was logged + dropped),
+/// - `Err(...)` on any SQL error; the caller is expected to ROLLBACK to the
+///   savepoint and continue with the next food (skip-and-log per Phase 1.5).
+async fn write_one_external_food_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    batch_id: Uuid,
+    rec: &FoodDraftWithServings,
+) -> CoreResult<bool> {
+    let draft = &rec.draft;
+
+    // The source identity invariant means OFF foods conflict on `barcode`
+    // (partial unique index) and USDA foods conflict on `fdc_id` (partial
+    // unique index); ingest enforces this split.
+    let food_id: Uuid = if draft.barcode.is_some() {
+        let sql = "INSERT INTO foods ( \
+                source, barcode, name, brands, categories_tags, \
+                nutriscore_grade, quality_score, last_import_batch_id \
+             ) VALUES ( \
+                'off', $1, $2, $3, $4, $5, $6, $7 \
+             ) \
+             ON CONFLICT (barcode) WHERE barcode IS NOT NULL DO UPDATE SET \
+                name                 = EXCLUDED.name, \
+                brands               = EXCLUDED.brands, \
+                categories_tags      = EXCLUDED.categories_tags, \
+                nutriscore_grade     = EXCLUDED.nutriscore_grade, \
+                quality_score        = EXCLUDED.quality_score, \
+                last_import_batch_id = EXCLUDED.last_import_batch_id \
+             RETURNING id";
+        sqlx::query_scalar::<_, Uuid>(sql)
+            .bind(draft.barcode.as_deref())
+            .bind(&draft.name)
+            .bind(draft.brands.as_deref())
+            .bind(&draft.categories_tags)
+            .bind(draft.nutriscore_grade.map(|g| g.as_str()))
+            .bind(rec.quality_score)
+            .bind(batch_id)
+            .fetch_one(&mut **tx)
+            .await
+            .map_err(map_sqlx)?
+    } else {
+        let fdc_id = match draft.fdc_id {
+            Some(id) => id,
+            None => {
+                return Err(CoreError::Validation(
+                    "USDA upsert requires fdc_id but draft.fdc_id is None".into(),
+                ));
+            }
+        };
+        let db_data_type = match draft.data_type.as_deref().and_then(normalise_data_type) {
+            Some(dt) => dt,
+            None => {
+                tracing::warn!(
+                    fdc_id = fdc_id,
+                    raw_data_type = ?draft.data_type,
+                    "skipping USDA food: data_type missing or unrecognised"
+                );
+                return Ok(false);
+            }
+        };
+        let sql = "INSERT INTO foods ( \
+                source, fdc_id, data_type, name, brands, categories_tags, \
+                nutriscore_grade, quality_score, last_import_batch_id \
+             ) VALUES ( \
+                'usda', $1, $2, $3, $4, $5, $6, $7, $8 \
+             ) \
+             ON CONFLICT (fdc_id) WHERE fdc_id IS NOT NULL DO UPDATE SET \
+                name                 = EXCLUDED.name, \
+                brands               = EXCLUDED.brands, \
+                categories_tags      = EXCLUDED.categories_tags, \
+                data_type            = EXCLUDED.data_type, \
+                nutriscore_grade     = EXCLUDED.nutriscore_grade, \
+                quality_score        = EXCLUDED.quality_score, \
+                last_import_batch_id = EXCLUDED.last_import_batch_id \
+             RETURNING id";
+        sqlx::query_scalar::<_, Uuid>(sql)
+            .bind(fdc_id)
+            .bind(db_data_type)
+            .bind(&draft.name)
+            .bind(draft.brands.as_deref())
+            .bind(&draft.categories_tags)
+            .bind(draft.nutriscore_grade.map(|g| g.as_str()))
+            .bind(rec.quality_score)
+            .bind(batch_id)
+            .fetch_one(&mut **tx)
+            .await
+            .map_err(map_sqlx)?
+    };
+
+    // Atomic serving replace inside the same savepoint.
+    sqlx::query("DELETE FROM servings WHERE food_id = $1")
+        .bind(food_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(map_sqlx)?;
+
+    if !rec.servings.is_empty() {
+        copy_servings_in_tx(tx, food_id, &rec.servings).await?;
+    }
+
+    Ok(true)
+}
+
+/// Stream serving rows into Postgres via `COPY ... FROM STDIN` instead of
+/// running N round-trip `INSERT`s. CSV format with `\N` for SQL `NULL` so
+/// the optional macro columns serialise faithfully.
+///
+/// On any error mid-stream we MUST tell sqlx to `.abort()` the copy — a
+/// `PgCopyIn` dropped without `finish`/`abort` leaves the connection in an
+/// unusable state ("PgCopyIn dropped without calling finish() or fail()"
+/// per sqlx 0.8).
+async fn copy_servings_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    food_id: Uuid,
+    servings: &[ServingDraft],
+) -> CoreResult<()> {
+    // 15 columns, same order as the historical INSERT. `default` defaults
+    // (created_at/updated_at) still fire under COPY because they come from
+    // column DEFAULT clauses, not from the row data.
+    let copy_sql = "COPY servings ( \
+            food_id, label, amount, unit, kcal, protein_g, carbs_g, fat_g, \
+            fiber_g, sugar_g, sodium_mg, saturated_fat_g, \
+            is_default, source, sort_order \
+         ) FROM STDIN WITH (FORMAT csv, NULL '\\N')";
+
+    // Build the whole payload up-front. Each food carries O(1-3) servings
+    // in practice — total bytes stays well under 1 MiB even at the upper
+    // bound, so a single `.send` works fine.
+    let mut buf = String::with_capacity(servings.len() * 96);
+    for s in servings {
+        // Column order MUST match the COPY header above.
+        push_csv_field(&mut buf, food_id.as_simple().to_string().as_str());
+        buf.push(',');
+        push_csv_field_opt(&mut buf, s.label.as_deref());
+        buf.push(',');
+        push_csv_field(&mut buf, &s.amount.to_string());
+        buf.push(',');
+        push_csv_field(&mut buf, s.unit.as_str());
+        buf.push(',');
+        push_csv_field(&mut buf, &s.kcal.to_string());
+        buf.push(',');
+        push_csv_field_opt(&mut buf, s.protein_g.map(|d| d.to_string()).as_deref());
+        buf.push(',');
+        push_csv_field_opt(&mut buf, s.carbs_g.map(|d| d.to_string()).as_deref());
+        buf.push(',');
+        push_csv_field_opt(&mut buf, s.fat_g.map(|d| d.to_string()).as_deref());
+        buf.push(',');
+        push_csv_field_opt(&mut buf, s.fiber_g.map(|d| d.to_string()).as_deref());
+        buf.push(',');
+        push_csv_field_opt(&mut buf, s.sugar_g.map(|d| d.to_string()).as_deref());
+        buf.push(',');
+        push_csv_field_opt(&mut buf, s.sodium_mg.map(|d| d.to_string()).as_deref());
+        buf.push(',');
+        push_csv_field_opt(
+            &mut buf,
+            s.saturated_fat_g.map(|d| d.to_string()).as_deref(),
+        );
+        buf.push(',');
+        // bools and ints don't need quoting.
+        buf.push_str(if s.is_default { "t" } else { "f" });
+        buf.push(',');
+        push_csv_field(&mut buf, s.source.as_str());
+        buf.push(',');
+        // `write!` on a String is infallible.
+        let _ = write!(&mut buf, "{}", s.sort_order);
+        buf.push('\n');
+    }
+
+    // `Transaction<Postgres>` DerefMuts to `PgConnection`, exposing the
+    // inherent `copy_in_raw`. Auto-deref the `&mut **tx` walk for us.
+    let mut copy = tx.copy_in_raw(copy_sql).await.map_err(map_sqlx)?;
+
+    if let Err(err) = copy.send(buf.as_bytes()).await {
+        // Tell PG to discard the streamed bytes so the connection is
+        // queryable again before the savepoint rollback runs.
+        let _ = copy.abort("send failed").await;
+        return Err(map_sqlx(err));
+    }
+
+    copy.finish().await.map_err(map_sqlx)?;
+    Ok(())
+}
+
+/// Write a non-NULL CSV field to `buf`, quoting + doubling `"` when the
+/// value contains any of `, " \n \r`. Keeps the hot path (numerics, enums,
+/// uuids) unquoted.
+fn push_csv_field(buf: &mut String, value: &str) {
+    if value
+        .bytes()
+        .any(|b| matches!(b, b',' | b'"' | b'\n' | b'\r'))
+    {
+        buf.push('"');
+        for ch in value.chars() {
+            if ch == '"' {
+                buf.push('"');
+                buf.push('"');
+            } else {
+                buf.push(ch);
+            }
+        }
+        buf.push('"');
+    } else {
+        buf.push_str(value);
+    }
+}
+
+/// Write a CSV field that may be NULL. `None` → `\N` (Postgres NULL token);
+/// `Some(v)` → quoted-if-needed text.
+fn push_csv_field_opt(buf: &mut String, value: Option<&str>) {
+    match value {
+        Some(v) => push_csv_field(buf, v),
+        None => buf.push_str("\\N"),
+    }
 }
 
 /// Map a raw sqlx `Row` into a `Serving`. Column aliases expected:
@@ -564,26 +683,85 @@ impl FoodRepository for PgFoodRepository {
         Ok(())
     }
 
-    /// Upsert a batch of external (OFF / USDA) food records. Per-food: UPSERT
-    /// the food row on `(barcode)` conflict, then atomically replace the serving
-    /// list (DELETE + INSERT). The `batch_id` is stamped on every upserted food
-    /// row for import tracing via `food_import_batches`.
+    /// Upsert a batch of external (OFF / USDA) food records.
     ///
-    /// Phase 1.5: per-food failures (FK violation, CHECK constraint, etc.)
-    /// are logged at WARN with the external id (barcode / fdc_id) and
-    /// counted as `skipped`; they no longer `?`-bubble and abort the
-    /// remainder of the batch.
+    /// Phase 3 write path (1 outer transaction per chunk, 1 `SAVEPOINT` per food):
+    ///
+    /// - 3.1 / 3.2: a single `BEGIN ... COMMIT` wraps the whole chunk; each
+    ///   food is bracketed by `SAVEPOINT food_<n>` ... `RELEASE`/`ROLLBACK TO`.
+    ///   The food UPSERT + serving DELETE + serving (COPY) all run inside the
+    ///   savepoint, so a per-food failure rolls back just that food without
+    ///   touching its siblings or aborting the outer transaction. Phase 1.5
+    ///   skip-and-log semantics are preserved.
+    /// - 3.3: servings are streamed via `COPY ... FROM STDIN (FORMAT csv,
+    ///   NULL '\N')` instead of N round-trip `INSERT`s.
+    ///
+    /// Failure mode: if the outer `BEGIN` / `COMMIT` itself fails (connection
+    /// drop, etc.) we bubble the error so the ingest job can mark the batch
+    /// failed. Individual-food SQL errors are caught and counted as skipped.
     async fn upsert_external_food_batch(
         &self,
         batch_id: Uuid,
         batch: Vec<FoodDraftWithServings>,
     ) -> CoreResult<BatchWriteOutcome> {
         let mut outcome = BatchWriteOutcome::default();
-        for rec in &batch {
-            match self.upsert_one_external(batch_id, rec).await {
-                Ok(true) => outcome.upserted += 1,
-                Ok(false) => outcome.skipped += 1,
+        if batch.is_empty() {
+            return Ok(outcome);
+        }
+
+        let mut tx = self.pool.begin().await.map_err(map_sqlx)?;
+
+        for (idx, rec) in batch.iter().enumerate() {
+            // `food_<idx>` is a deterministic, ASCII-only identifier; safe
+            // to splice into SQL without escaping.
+            let savepoint = format!("food_{idx}");
+
+            if let Err(err) = sqlx::query(&format!("SAVEPOINT {savepoint}"))
+                .execute(&mut *tx)
+                .await
+            {
+                // Failing to issue a SAVEPOINT means the outer transaction
+                // is in a bad state — surface it instead of silently
+                // skipping every remaining food.
+                return Err(map_sqlx(err));
+            }
+
+            match write_one_external_food_in_tx(&mut tx, batch_id, rec).await {
+                Ok(true) => {
+                    if let Err(err) = sqlx::query(&format!("RELEASE SAVEPOINT {savepoint}"))
+                        .execute(&mut *tx)
+                        .await
+                    {
+                        return Err(map_sqlx(err));
+                    }
+                    outcome.upserted += 1;
+                }
+                Ok(false) => {
+                    // Non-error skip (e.g. USDA data_type unrecognised). The
+                    // savepoint hasn't written anything but we still RELEASE
+                    // it so the outer transaction stays clean.
+                    if let Err(err) = sqlx::query(&format!("RELEASE SAVEPOINT {savepoint}"))
+                        .execute(&mut *tx)
+                        .await
+                    {
+                        return Err(map_sqlx(err));
+                    }
+                    outcome.skipped += 1;
+                }
                 Err(err) => {
+                    // Roll back to the savepoint so the outer transaction
+                    // remains usable for the rest of the chunk.
+                    if let Err(rb) = sqlx::query(&format!("ROLLBACK TO SAVEPOINT {savepoint}"))
+                        .execute(&mut *tx)
+                        .await
+                    {
+                        // If even the rollback fails the connection is
+                        // hosed; bubble out so the ingest job marks the
+                        // batch failed.
+                        return Err(map_sqlx(rb));
+                    }
+                    // RELEASE after ROLLBACK is idempotent in Postgres but
+                    // also unnecessary — the savepoint is gone. Skip it.
                     outcome.skipped += 1;
                     tracing::warn!(
                         external_id = %external_id_of(&rec.draft),
@@ -593,6 +771,8 @@ impl FoodRepository for PgFoodRepository {
                 }
             }
         }
+
+        tx.commit().await.map_err(map_sqlx)?;
         Ok(outcome)
     }
 
@@ -769,5 +949,67 @@ impl FoodRepository for PgFoodRepository {
             }
         }
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod csv_tests {
+    //! Phase 3.3: cover the `push_csv_field` / `push_csv_field_opt` helpers
+    //! used by the COPY-driven serving writer. The COPY round-trip itself
+    //! requires a live Postgres and is exercised by ad-hoc smoke imports —
+    //! the encoder is the part where regressions would silently corrupt
+    //! `label` text, so we pin it here.
+    use super::{push_csv_field, push_csv_field_opt};
+
+    fn one(s: &str) -> String {
+        let mut buf = String::new();
+        push_csv_field(&mut buf, s);
+        buf
+    }
+
+    fn one_opt(s: Option<&str>) -> String {
+        let mut buf = String::new();
+        push_csv_field_opt(&mut buf, s);
+        buf
+    }
+
+    #[test]
+    fn plain_ascii_is_unquoted() {
+        assert_eq!(one("Oreo Original"), "Oreo Original");
+        assert_eq!(one("250"), "250");
+        assert_eq!(one("g"), "g");
+    }
+
+    #[test]
+    fn comma_triggers_quote_wrap() {
+        assert_eq!(one("a,b"), "\"a,b\"");
+    }
+
+    #[test]
+    fn double_quote_is_doubled_inside_quotes() {
+        assert_eq!(one("he said \"hi\""), "\"he said \"\"hi\"\"\"");
+    }
+
+    #[test]
+    fn newline_triggers_quote_wrap() {
+        assert_eq!(one("line1\nline2"), "\"line1\nline2\"");
+        assert_eq!(one("with\rreturn"), "\"with\rreturn\"");
+    }
+
+    #[test]
+    fn unicode_passes_through_unquoted() {
+        // No CSV special chars → no quoting, even with multibyte content.
+        assert_eq!(one("Café 🍪"), "Café 🍪");
+    }
+
+    #[test]
+    fn opt_none_serialises_as_pg_null_token() {
+        assert_eq!(one_opt(None), "\\N");
+    }
+
+    #[test]
+    fn opt_some_quotes_when_needed() {
+        assert_eq!(one_opt(Some("plain")), "plain");
+        assert_eq!(one_opt(Some("with,comma")), "\"with,comma\"");
     }
 }
