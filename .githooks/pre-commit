@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# Pre-commit lint gate.
+#
+# Runs the strict analyzer + clippy + rustfmt suite against the
+# *working tree* (not the staged subset — partial staging will not be
+# detected). On failure the commit is blocked.
+#
+# Strictness (intentional, per repo policy):
+#   - `flutter analyze --fatal-infos --fatal-warnings` — info-level
+#     lints (e.g. `require_trailing_commas`) count as errors.
+#   - `cargo clippy --all-targets -- -D warnings` — any clippy lint
+#     is fatal.
+#   - `cargo fmt --all -- --check` — formatting drift is fatal.
+#
+# Path-scoped skip: `flutter analyze` runs only when the staged diff
+# touches `client/`. Server-only commits don't get blocked on FE
+# backlog (and vice-versa would be a natural extension if needed).
+# Detection is `git diff --cached --name-only`.
+#
+# Escape hatch: `git commit --no-verify` skips this hook. Use sparingly
+# — the strict mode exists to keep tree green, not to harass.
+#
+# Toolchain discovery:
+#   - flutter: `$FLUTTER_BIN`, then `flutter` on PATH, then
+#     `~/flutter/bin/flutter`.
+#   - cargo: `cargo` on PATH (rustup's standard install location).
+
+set -euo pipefail
+
+# All sub-paths resolve against the repo root, regardless of where
+# `git commit` was invoked.
+cd "$(git rev-parse --show-toplevel)"
+
+red()    { printf '\033[31m%s\033[0m\n' "$*" >&2; }
+green()  { printf '\033[32m%s\033[0m\n' "$*"; }
+yellow() { printf '\033[33m%s\033[0m\n' "$*"; }
+
+# ─── Flutter ────────────────────────────────────────────────────────────
+# Only run flutter analyze when the staged diff touches client/. Server-
+# only commits would otherwise be blocked on FE backlog they don't own.
+if git diff --cached --name-only | grep -q '^client/'; then
+  FLUTTER_BIN="${FLUTTER_BIN:-}"
+  if [ -z "$FLUTTER_BIN" ]; then
+    if command -v flutter >/dev/null 2>&1; then
+      FLUTTER_BIN="flutter"
+    elif [ -x "$HOME/flutter/bin/flutter" ]; then
+      FLUTTER_BIN="$HOME/flutter/bin/flutter"
+    else
+      red "pre-commit: flutter not found (set FLUTTER_BIN or add to PATH)"
+      exit 1
+    fi
+  fi
+
+  yellow "pre-commit › flutter analyze (client/, --fatal-infos --fatal-warnings)"
+  (
+    cd client
+    "$FLUTTER_BIN" analyze --fatal-infos --fatal-warnings
+  )
+else
+  yellow "pre-commit › flutter analyze skipped (no client/ files staged)"
+fi
+
+# ─── Cargo (server) ─────────────────────────────────────────────────────
+# Mirror flutter's discovery: explicit override, then PATH, then the
+# rustup standard install location. The latter matters when the hook is
+# invoked by a shell without `~/.cargo/bin` on PATH (e.g. CI, the
+# Claude Code harness).
+CARGO_BIN="${CARGO_BIN:-}"
+if [ -z "$CARGO_BIN" ]; then
+  if command -v cargo >/dev/null 2>&1; then
+    CARGO_BIN="cargo"
+  elif [ -x "$HOME/.cargo/bin/cargo" ]; then
+    CARGO_BIN="$HOME/.cargo/bin/cargo"
+  else
+    red "pre-commit: cargo not found (set CARGO_BIN or add to PATH)"
+    exit 1
+  fi
+fi
+
+yellow "pre-commit › cargo fmt --check (server/)"
+(
+  cd server
+  "$CARGO_BIN" fmt --all -- --check
+)
+
+yellow "pre-commit › cargo clippy -D warnings (server/)"
+(
+  cd server
+  "$CARGO_BIN" clippy --all-targets --all-features -- -D warnings
+)
+
+green "pre-commit › ok"
