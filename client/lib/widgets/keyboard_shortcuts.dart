@@ -2,14 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../features/log_entry/log_entry_sheet.dart';
 import '../form_factor/form_factor.dart';
-import '../domain/food.dart';
-import '../providers/food_providers.dart';
-import '../providers/search_focus_provider.dart';
 import '../routing/routes.dart';
 
 /// Global desktop keyboard shortcuts. Architecture §7 "Keyboard shortcuts
@@ -23,8 +18,8 @@ import '../routing/routes.dart';
 /// |---|---|
 /// | `/` | Focus search input (or push `/foods/search`) |
 /// | `⌘K` / `Ctrl-K` | Push `/foods/search` |
-/// | `n` | Open the log-entry dialog for the most recent food, |
-/// |     | or push `/foods/search` if no recents are available. |
+/// | `n` | Invoke [onLogShortcut] — typically opens the log-entry sheet |
+/// |     | for the most recent food, or routes to search if no recents. |
 /// | `g t/f/w/o` | Navigate to Today / Foods / Weight / Goals (1 s timeout) |
 /// | `g m` | Intentionally unbound (no-op) |
 /// | `Esc` | `Navigator.maybePop()` |
@@ -33,16 +28,42 @@ import '../routing/routes.dart';
 /// while a `TextField` (anything backed by `EditableText`) has primary
 /// focus — so typing `/` into the search field types a slash. `⌘K` and
 /// `Esc` still fire because they have modifier / special semantics.
-class KeyboardShortcuts extends ConsumerStatefulWidget {
-  const KeyboardShortcuts({required this.child, super.key});
+///
+/// **Passive view (testing_guide.md §4.4).** This widget no longer
+/// imports `flutter_riverpod`. The container that mounts it (the
+/// `ShellRoute` builder in `app_router.dart`) reads
+/// `searchFieldFocusNodeProvider` and `recentFoodsProvider` and passes
+/// the resolved [FocusNode] + [onLogShortcut] callback down. Tests can
+/// `pumpWidget(MaterialApp(home: KeyboardShortcuts(...)))` directly,
+/// no `ProviderScope` required.
+class KeyboardShortcuts extends StatefulWidget {
+  const KeyboardShortcuts({
+    required this.child,
+    required this.searchFocusNode,
+    required this.onLogShortcut,
+    super.key,
+  });
 
   final Widget child;
 
+  /// Focus node attached upstream to the search field's `TextField`. When
+  /// `/` fires and the node is currently mountable
+  /// (`node.context != null && node.canRequestFocus`), focus lands on
+  /// it; otherwise the handler routes to `/foods/search` instead.
+  final FocusNode searchFocusNode;
+
+  /// Action invoked by the `n` shortcut. The container builds this with
+  /// `ref.read` of `recentFoodsProvider` in scope: if there's at least
+  /// one recent food, open the log-entry sheet for it; otherwise route
+  /// to `/foods/search`. Any async work is fire-and-forget — the
+  /// keyboard handler only needs a `VoidCallback`.
+  final VoidCallback onLogShortcut;
+
   @override
-  ConsumerState<KeyboardShortcuts> createState() => _KeyboardShortcutsState();
+  State<KeyboardShortcuts> createState() => _KeyboardShortcutsState();
 }
 
-class _KeyboardShortcutsState extends ConsumerState<KeyboardShortcuts> {
+class _KeyboardShortcutsState extends State<KeyboardShortcuts> {
   final _TwoKeyMatcher _goMatcher = _TwoKeyMatcher();
   final FocusNode _shortcutsFocus = FocusNode(
     debugLabel: 'keyboardShortcutsRoot',
@@ -90,30 +111,12 @@ class _KeyboardShortcutsState extends ConsumerState<KeyboardShortcuts> {
   }
 
   void _focusSearchOrPush(BuildContext context) {
-    final node = ref.read(searchFieldFocusNodeProvider);
+    final node = widget.searchFocusNode;
     if (node.context != null && node.canRequestFocus) {
       node.requestFocus();
     } else {
       context.goNamed(Routes.foodsSearchName);
     }
-  }
-
-  Future<void> _openLogEntryForMostRecent(BuildContext context) async {
-    // Read whatever the recents provider currently has. If it's loading
-    // or errored, treat as "no recents available" and fall back to
-    // search — the shortcut is a fast path, not a blocking await.
-    final recents = ref.read(recentFoodsProvider);
-    final list = recents.maybeWhen(
-      data: (foods) => foods,
-      orElse: () => const <Food>[],
-    );
-    if (list.isEmpty) {
-      if (!context.mounted) return;
-      context.goNamed(Routes.foodsSearchName);
-      return;
-    }
-    if (!context.mounted) return;
-    await showLogEntrySheet(context, food: list.first);
   }
 
   void _handleGoKey(BuildContext context, LogicalKeyboardKey second) {
@@ -197,7 +200,7 @@ class _KeyboardShortcutsState extends ConsumerState<KeyboardShortcuts> {
           return KeyEventResult.handled;
         }
         if (event.character?.toLowerCase() == 'n') {
-          unawaited(_openLogEntryForMostRecent(context));
+          widget.onLogShortcut();
           return KeyEventResult.handled;
         }
 

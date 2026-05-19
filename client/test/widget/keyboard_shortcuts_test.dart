@@ -26,6 +26,8 @@ Widget _harness({
         // the compact test, small enough to be "compact".
         data: MediaQueryData(size: physicalSize),
         child: KeyboardShortcuts(
+          searchFocusNode: FocusNode(),
+          onLogShortcut: () {},
           child: Scaffold(body: body),
         ),
       ),
@@ -46,6 +48,8 @@ void main() {
           home: MediaQuery(
             data: const MediaQueryData(size: Size(1280, 800)),
             child: KeyboardShortcuts(
+              searchFocusNode: FocusNode(),
+              onLogShortcut: () {},
               child: Builder(
                 builder: (context) => Scaffold(
                   body: Center(

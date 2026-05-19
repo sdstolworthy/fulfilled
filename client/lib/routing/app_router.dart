@@ -1,15 +1,19 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../data/auth_token.dart';
 import '../domain/enums.dart';
+import '../domain/food.dart';
 import '../domain/meal.dart';
 import '../domain/user.dart';
 import '../features/custom_food/custom_food_screen.dart';
 import '../features/food_detail/food_detail_screen.dart';
 import '../features/goals/goals_screen.dart';
 import '../features/goals/widgets/new_goal_dialog.dart';
+import '../features/log_entry/log_entry_sheet.dart';
 import '../features/login/login_screen.dart';
 import '../features/login/oidc_callback_screen.dart';
 import '../features/my_foods/my_foods_screen.dart';
@@ -23,6 +27,7 @@ import '../form_factor/breakpoints.dart';
 import '../providers/food_providers.dart';
 import '../providers/profile_providers.dart';
 import '../providers/repository_providers.dart';
+import '../providers/search_focus_provider.dart';
 import '../repositories/food_repository.dart';
 import '../theme/context_extensions.dart';
 import '../widgets/empty_state.dart';
@@ -120,8 +125,21 @@ final appRouterProvider = Provider<GoRouter>((ref) {
         // reads `FormFactor.of(context)` via `MediaQuery` and is a
         // passthrough on compact/medium, so the bindings only fire on
         // desktop-class widths where they're useful.
-        builder: (context, state, child) => KeyboardShortcuts(
-          child: AppScaffold(child: child),
+        //
+        // Per the passive-view rule (testing_guide.md §4.4) the wrapper
+        // is a pure presentation widget; this `Consumer` is the
+        // container that resolves the search FocusNode and builds the
+        // `n`-key callback by reading `recentFoodsProvider`. Doing the
+        // read here (not at `appRouterProvider` build time) is
+        // important — `ref.watch` inside the Provider builder would
+        // rebuild the entire router every time the recent-foods list
+        // changes, which would tear down navigation state.
+        builder: (context, state, child) => Consumer(
+          builder: (ctx, ref, _) => KeyboardShortcuts(
+            searchFocusNode: ref.watch(searchFieldFocusNodeProvider),
+            onLogShortcut: () => _logShortcutAction(ctx, ref),
+            child: AppScaffold(child: child),
+          ),
         ),
         routes: <RouteBase>[
           GoRoute(
@@ -691,6 +709,29 @@ void _popOrFallback(BuildContext context, {String fallback = '/foods'}) {
   } else {
     router.go(fallback);
   }
+}
+
+/// Handler for the `n` desktop keyboard shortcut (lifted out of
+/// `KeyboardShortcuts` under the passive-view rule — testing_guide.md
+/// §4.4). Reads `recentFoodsProvider` at click-time: when the user has
+/// at least one recent food, open the log-entry sheet pre-seeded with
+/// it; otherwise, fall back to routing to `/foods/search`. Loading and
+/// error states collapse to the fallback — the shortcut is a fast
+/// path, not a blocking await.
+void _logShortcutAction(BuildContext context, WidgetRef ref) {
+  final recents = ref.read(recentFoodsProvider);
+  final list = recents.maybeWhen(
+    data: (foods) => foods,
+    orElse: () => const <Food>[],
+  );
+  if (list.isEmpty) {
+    if (!context.mounted) return;
+    context.goNamed(Routes.foodsSearchName);
+    return;
+  }
+  if (!context.mounted) return;
+  // Fire-and-forget — the keyboard handler only needs a `VoidCallback`.
+  unawaited(showLogEntrySheet(context, food: list.first));
 }
 
 /// Parse a `?meal=<wire>` query parameter into a [Meal]. Unknown values

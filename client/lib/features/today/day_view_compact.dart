@@ -13,6 +13,7 @@ import '../../domain/day_summary.dart';
 import '../../domain/food.dart';
 import '../../domain/log_entry.dart';
 import '../../domain/meal.dart';
+import '../../providers/calorie_providers.dart';
 import '../../providers/food_providers.dart';
 import '../../providers/goal_providers.dart';
 import '../../providers/log_providers.dart';
@@ -50,6 +51,16 @@ class DayViewCompact extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final summaryAsync = ref.watch(daySummaryProvider(date));
     final entriesAsync = ref.watch(logEntriesProvider(date));
+    // Provider reads lifted out of the (former) `_BurnedKvRow` and
+    // `_WeekProgressPill` ConsumerWidgets so `RingSummaryCard` itself
+    // stays a pure presentation leaf (testing_guide.md §4.4).
+    //
+    // Burned kcal is only surfaced on the expanded right-rail card —
+    // compact omits the row — but resolving it here keeps the
+    // container symmetrical with `day_view_expanded.dart` and the
+    // provider is already in scope for the macro/ring math elsewhere.
+    final burnedKcal = ref.watch(caloriesBurnedTodayProvider).valueOrNull;
+    final weeklyLogDays = ref.watch(weeklyLogDaysProvider).valueOrNull ?? 0;
     // For *today*, the kcal target shown in the ring is derived from
     // the current profile + goal intent — not the stored snapshot on
     // the goal record (which can drift after a profile edit until
@@ -100,11 +111,10 @@ class DayViewCompact extends ConsumerWidget {
                   data: (s) => RingSummaryCard(
                     summary: overrideDaySummaryWithEffective(s, effective),
                     compact: true,
+                    burnedKcal: burnedKcal,
+                    weeklyLogDays: weeklyLogDays,
                   ),
-                  loading: () => const TodaySkeleton(
-                    height: 196,
-                    semanticsLabel: 'Loading today summary',
-                  ),
+                  loading: () => const RingSummaryCardSkeleton(compact: true),
                   error: (e, _) => TodayErrorCard(message: '$e'),
                 ),
               ),

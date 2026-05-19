@@ -1,15 +1,11 @@
 import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../domain/day_summary.dart';
 import '../domain/units/energy.dart';
-import '../providers/calorie_providers.dart';
-import '../providers/log_providers.dart';
 import '../theme/context_extensions.dart';
 import 'calorie_ring.dart';
 import 'macro_bar.dart';
-import 'skeleton.dart';
 
 /// The "today vs goal" card — ring on the left, eaten/goal kv on the right
 /// (compact stacks them into a single row, expanded gives them a 16-px gap
@@ -26,10 +22,21 @@ import 'skeleton.dart';
 /// — `DaySummary.kcalTarget == null` is the "set a goal" affordance trigger
 /// and the consuming screen may overlay its own CTA, but the card itself
 /// stays renderable.
+///
+/// **Passive view (testing_guide.md §4.4).** This widget is a pure
+/// presentation leaf — it imports nothing from `flutter_riverpod`. The two
+/// async-backed surfaces (`Burned` kv row + `This week · N/7` pill) take
+/// their resolved values via constructor parameters; the parent container
+/// reads `caloriesBurnedTodayProvider` and `weeklyLogDaysProvider` and
+/// passes the resolved values down. Pair with [RingSummaryCardSkeleton]
+/// for the loading branch where the upstream `DaySummary` itself is not
+/// yet available.
 class RingSummaryCard extends StatelessWidget {
   const RingSummaryCard({
     required this.summary,
     this.compact = true,
+    this.burnedKcal,
+    this.weeklyLogDays = 0,
     super.key,
   });
 
@@ -40,6 +47,29 @@ class RingSummaryCard extends StatelessWidget {
   /// (108-px ring, "Today vs goal" eyebrow header, "Burned" row, 6-px
   /// macro bars). The screen branches at the root (T-15) and threads this.
   final bool compact;
+
+  /// Resolved "Burned" kcal value for the expanded right-rail card (T-020
+  /// / B8). `null` renders the silent `—` fallback — used for both the
+  /// loading branch (a single brief `—` frame before the value lands)
+  /// and the error branch (incomplete profile / missing weight). Ignored
+  /// when `compact == true` (the compact variant omits the Burned row).
+  ///
+  /// The pre-refactor leaf rendered a [Skeleton] block during the
+  /// upstream `caloriesBurnedTodayProvider`'s loading state; under the
+  /// passive-view rule (testing_guide.md §4.4) the loading vs error
+  /// distinction would require either an `AsyncValue` parameter
+  /// (re-importing Riverpod into the leaf) or a parallel `bool` flag.
+  /// `meProvider` resolves on the first frame in practice, so the
+  /// degraded behavior is materially equivalent for the user and lets
+  /// the leaf stay Riverpod-free.
+  final Decimal? burnedKcal;
+
+  /// Resolved "N / 7 days logged this week" count for the F10 pill
+  /// (UX-110). `0` hides the pill entirely (PM doc §2 F10 AC), which
+  /// also serves as the loading / error / genuinely-empty fall-through
+  /// state — a transient blink before the count resolves is the right
+  /// behavior; the next mutation re-ticks the upstream provider.
+  final int weeklyLogDays;
 
   @override
   Widget build(BuildContext context) {
@@ -78,14 +108,20 @@ class RingSummaryCard extends StatelessWidget {
                 size: ringSize,
               ),
               SizedBox(width: context.space.x4),
-              Expanded(child: _KvBlock(summary: summary, compact: compact)),
+              Expanded(
+                child: _KvBlock(
+                  summary: summary,
+                  compact: compact,
+                  burnedKcal: burnedKcal,
+                ),
+              ),
             ],
           ),
           // UX-110 / F10 — "N / 7 days logged this week" pill. Renders
           // between the ring row and the macro bars on both compact and
           // expanded card paths. Hidden when the week count is 0; ink2
           // for 1..6, accent at 7. See architect_ux_pack.md §7.3.
-          const _WeekProgressPill(),
+          _WeekProgressPill(count: weeklyLogDays),
           SizedBox(height: compact ? context.space.x2 + 2 : context.space.x4),
           _MacroBars(summary: summary, compact: compact),
         ],
@@ -127,6 +163,38 @@ class RingSummaryCard extends StatelessWidget {
   }
 }
 
+/// Loading-state sibling for [RingSummaryCard]. Renders the card-sized
+/// surface chrome so the surrounding layout doesn't shift when the
+/// upstream `DaySummary` resolves. The container picks this widget for
+/// the `AsyncLoading` branch of `daySummaryProvider(date)`.
+class RingSummaryCardSkeleton extends StatelessWidget {
+  const RingSummaryCardSkeleton({this.compact = true, super.key});
+
+  /// Mirrors the geometry switch on [RingSummaryCard]. Compact uses the
+  /// 196-px mobile card height (no Burned row, no eyebrow header);
+  /// expanded uses the 296-px right-rail card height.
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = context.colors;
+    final radius = BorderRadius.circular(context.radius.r3);
+    final height = compact ? 196.0 : 296.0;
+    return Semantics(
+      label: 'Loading today summary',
+      liveRegion: false,
+      child: Container(
+        height: height,
+        decoration: BoxDecoration(
+          color: colors.surface,
+          border: Border.all(color: colors.line),
+          borderRadius: radius,
+        ),
+      ),
+    );
+  }
+}
+
 class _RingCenter {
   const _RingCenter({required this.label, required this.caption});
   final String label;
@@ -134,9 +202,14 @@ class _RingCenter {
 }
 
 class _KvBlock extends StatelessWidget {
-  const _KvBlock({required this.summary, required this.compact});
+  const _KvBlock({
+    required this.summary,
+    required this.compact,
+    required this.burnedKcal,
+  });
   final DaySummary summary;
   final bool compact;
+  final Decimal? burnedKcal;
 
   @override
   Widget build(BuildContext context) {
@@ -154,12 +227,17 @@ class _KvBlock extends StatelessWidget {
         _KvRow(label: 'Goal', value: goal),
         if (!compact) ...<Widget>[
           SizedBox(height: context.space.x1),
-          // The "Burned" row is provider-backed (T-020 / B8): the value
-          // is derived from `meProvider` via the canonical Mifflin-St
-          // Jeor TDEE math. On loading we render a skeleton (T-08); on
-          // error we silently fall back to `'—'` so an incomplete
-          // profile doesn't surface a stack trace in the right rail.
-          const _BurnedKvRow(),
+          // The "Burned" row is provider-backed upstream (T-020 / B8):
+          // the value is derived from `meProvider` via the canonical
+          // Mifflin-St Jeor TDEE math. The container resolves it and
+          // passes it down; this leaf renders the formatted value when
+          // it's non-null and silently falls back to `'—'` otherwise.
+          _KvRow(
+            label: 'Burned',
+            value: burnedKcal == null
+                ? '—'
+                : '${formatKcal(burnedKcal!)} kcal',
+          ),
         ],
         if (compact && summary.isOverKcal) ...<Widget>[
           SizedBox(height: context.space.x1),
@@ -168,56 +246,6 @@ class _KvBlock extends StatelessWidget {
             style: context.text.metaNumeric.copyWith(color: colors.dangerOver),
           ),
         ],
-      ],
-    );
-  }
-}
-
-/// Provider-backed "Burned" row. Lives next to `_KvBlock` so it can
-/// share the row chrome with the surrounding kv rows.
-///
-/// **Loading**: a [Skeleton] block sized to match a `_KvRow`'s text
-/// line so the right-rail layout doesn't shift when the value
-/// resolves (T-08).
-/// **Error**: silently falls back to `'—'` (don't surface).
-class _BurnedKvRow extends ConsumerWidget {
-  const _BurnedKvRow();
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final burned = ref.watch(caloriesBurnedTodayProvider);
-    return burned.when(
-      data: (kcal) =>
-          _KvRow(label: 'Burned', value: '${formatKcal(kcal)} kcal'),
-      loading: () => const _KvRowSkeleton(label: 'Burned'),
-      error: (_, __) => const _KvRow(label: 'Burned', value: '—'),
-    );
-  }
-}
-
-/// Loading-state row composition for the "Burned" row. Matches the
-/// vertical rhythm of `_KvRow` (a single baseline-aligned line of
-/// numeric metadata) so the surrounding kv block doesn't jump when
-/// the provider resolves.
-class _KvRowSkeleton extends StatelessWidget {
-  const _KvRowSkeleton({required this.label});
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: <Widget>[
-        Expanded(
-          child: Text(
-            label,
-            style: context.text.meta,
-          ),
-        ),
-        // Width and height match the rendered `formatKcal(kcal) kcal`
-        // glyph block (≈ 56 px / 12 px) so the skeleton occupies the
-        // same footprint as the eventual value text.
-        const Skeleton(height: 12, width: 56),
       ],
     );
   }
@@ -331,16 +359,17 @@ class _MacroBars extends StatelessWidget {
 /// **No celebration.** PM doc §2 F10 forbids animation, scale, fire
 /// emoji, or haptic at 7/7. The accent colour switch is the entire
 /// signal.
-class _WeekProgressPill extends ConsumerWidget {
-  const _WeekProgressPill();
+class _WeekProgressPill extends StatelessWidget {
+  const _WeekProgressPill({required this.count});
+
+  final int count;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final countAsync = ref.watch(weeklyLogDaysProvider);
-    final count = countAsync.valueOrNull ?? 0;
-    // Hidden at 0 (PM doc §2 F10 AC). Loading and error states also
-    // fall through here — a transient blink before the count resolves
-    // is the right behavior; the next mutation re-ticks the provider.
+  Widget build(BuildContext context) {
+    // Hidden at 0 (PM doc §2 F10 AC). Loading and error states from the
+    // upstream provider also resolve here as 0 in the container — a
+    // transient blink before the count resolves is the right behavior;
+    // the next mutation re-ticks the provider and the parent rebuilds.
     if (count == 0) return const SizedBox.shrink();
     final colors = context.colors;
     final isFullWeek = count == 7;

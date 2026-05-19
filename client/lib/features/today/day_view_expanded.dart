@@ -8,6 +8,8 @@ import 'package:fulfilled/widgets/meal_section.dart';
 import 'package:fulfilled/widgets/primary_button.dart';
 import 'package:fulfilled/widgets/ring_summary_card.dart';
 
+import 'package:decimal/decimal.dart';
+
 import '../../domain/calories/estimate.dart';
 import '../../domain/day_summary.dart';
 import '../../domain/enums.dart';
@@ -15,6 +17,7 @@ import '../../domain/food.dart';
 import '../../domain/log_entry.dart';
 import '../../domain/meal.dart';
 import '../../domain/weight.dart';
+import '../../providers/calorie_providers.dart';
 import '../../providers/food_providers.dart';
 import '../../providers/goal_providers.dart';
 import '../../providers/log_providers.dart';
@@ -60,6 +63,12 @@ class DayViewExpanded extends ConsumerWidget {
     final frequentsAsync = ref.watch(frequentFoodsProvider);
     final weightAsync = ref.watch(weightSeriesProvider(WeightRange.oneMonth));
     final weightUnit = ref.watch(weightUnitProvider);
+    // Provider reads lifted out of the (former) `_BurnedKvRow` and
+    // `_WeekProgressPill` ConsumerWidgets inside `RingSummaryCard`
+    // (testing_guide.md §4.4 passive-view rule). The card is now a
+    // pure presentation leaf taking resolved values.
+    final burnedKcal = ref.watch(caloriesBurnedTodayProvider).valueOrNull;
+    final weeklyLogDays = ref.watch(weeklyLogDaysProvider).valueOrNull ?? 0;
     // For today's date the ring's kcal/macro targets are *derived*
     // from the live profile + active-goal intent; the BE-returned
     // stored values are a snapshot and drift after profile edits.
@@ -177,6 +186,8 @@ class DayViewExpanded extends ConsumerWidget {
                       frequentsAsync: frequentsAsync,
                       weightAsync: weightAsync,
                       weightUnit: weightUnit,
+                      burnedKcal: burnedKcal,
+                      weeklyLogDays: weeklyLogDays,
                     ),
                   ),
                 ],
@@ -382,6 +393,8 @@ class _RightRail extends StatelessWidget {
     required this.frequentsAsync,
     required this.weightAsync,
     required this.weightUnit,
+    required this.burnedKcal,
+    required this.weeklyLogDays,
   });
 
   final AsyncValue<DaySummary> summaryAsync;
@@ -396,6 +409,13 @@ class _RightRail extends StatelessWidget {
   final AsyncValue<List<WeightSeriesPoint>> weightAsync;
   final WeightUnit weightUnit;
 
+  /// Resolved Burned-kcal and weekly-log-day count threaded through from
+  /// the container so `RingSummaryCard` stays a pure presentation leaf
+  /// (testing_guide.md §4.4). `burnedKcal == null` renders the silent
+  /// `'—'` fallback; `weeklyLogDays == 0` hides the F10 pill.
+  final Decimal? burnedKcal;
+  final int weeklyLogDays;
+
   @override
   Widget build(BuildContext context) {
     return Column(
@@ -405,11 +425,10 @@ class _RightRail extends StatelessWidget {
           data: (s) => RingSummaryCard(
             summary: overrideDaySummaryWithEffective(s, effective),
             compact: false,
+            burnedKcal: burnedKcal,
+            weeklyLogDays: weeklyLogDays,
           ),
-          loading: () => const TodaySkeleton(
-            height: 296,
-            semanticsLabel: 'Loading summary',
-          ),
+          loading: () => const RingSummaryCardSkeleton(compact: false),
           error: (e, _) => TodayErrorCard(message: '$e'),
         ),
         SizedBox(height: context.space.x4),
