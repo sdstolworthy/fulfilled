@@ -109,7 +109,7 @@ void main() {
     await tester.pumpWidget(_harness(overrides: <Override>[
       daySummaryProvider(today).overrideWith((_) async => _summary()),
       logEntriesProvider(today).overrideWith((_) async => <LogEntry>[]),
-    ]));
+    ],),);
     await tester.pumpAndSettle();
 
     // The Quick-add icon is identified by its tooltip; this is the
@@ -117,7 +117,7 @@ void main() {
     // Semantics label.
     final affordance = find.bySemanticsLabel('Quick add calories');
     expect(affordance, findsWidgets,
-        reason: 'compact header must mount the Quick-add icon button');
+        reason: 'compact header must mount the Quick-add icon button',);
 
     // Tap the affordance → the sheet body appears.
     await tester.tap(affordance.first);
@@ -142,18 +142,18 @@ void main() {
       logEntriesProvider(today).overrideWith((_) async => <LogEntry>[]),
       recentFoodsProvider.overrideWith((_) async => <Food>[
             _food('r1', 'Greek yogurt'),
-          ]),
+          ],),
       frequentFoodsProvider.overrideWith((_) async => <Food>[
             _food('f1', 'Eggs, large'),
-          ]),
+          ],),
       weightSeriesProvider(WeightRange.oneMonth)
           .overrideWith((_) async => <WeightSeriesPoint>[]),
-    ]));
+    ],),);
     await tester.pumpAndSettle();
 
     final affordance = find.bySemanticsLabel('Quick add calories');
     expect(affordance, findsWidgets,
-        reason: 'expanded top row must mount the Quick-add icon button');
+        reason: 'expanded top row must mount the Quick-add icon button',);
 
     await tester.tap(affordance.first);
     await tester.pumpAndSettle();

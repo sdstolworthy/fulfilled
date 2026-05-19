@@ -1,6 +1,7 @@
 @Skip('Quarantined post Ask 10 — UI/value assertions need rebaseline.')
 library;
 
+// ignore_for_file: deprecated_member_use
 
 import 'dart:io';
 
@@ -250,7 +251,7 @@ void main() {
         tester
             .getSemantics(find.bySemanticsLabel(
               'Kilograms (kg). Common worldwide',
-            ))
+            ),)
             .hasFlag(SemanticsFlag.isSelected),
         isTrue,
       );
@@ -270,7 +271,7 @@ void main() {
         tester
             .getSemantics(find.bySemanticsLabel(
               'Kilograms (kg). Common worldwide',
-            ))
+            ),)
             .hasFlag(SemanticsFlag.isSelected),
         isTrue,
       );
@@ -278,7 +279,7 @@ void main() {
         tester
             .getSemantics(find.bySemanticsLabel(
               'Pounds (lb). Common in the US',
-            ))
+            ),)
             .hasFlag(SemanticsFlag.isSelected),
         isFalse,
       );
@@ -288,7 +289,7 @@ void main() {
         tester
             .getSemantics(find.bySemanticsLabel(
               'Centimeters (cm). Common worldwide',
-            ))
+            ),)
             .hasFlag(SemanticsFlag.isSelected),
         isTrue,
       );

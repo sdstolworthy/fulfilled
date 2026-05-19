@@ -131,11 +131,11 @@ void main() {
             unit: Unit.cup,
             kcal: Decimal.fromInt(149),
           ),
-        ]),
+        ],),
       ];
       for (final p in patches) {
         expect(p.toJson().containsKey('food_id'), isFalse,
-            reason: 'food_id leaked in $p');
+            reason: 'food_id leaked in $p',);
       }
     });
   });
@@ -230,7 +230,7 @@ void main() {
       expect(updated.servings.length, 2);
       final labels = updated.servings.map((s) => s.name).toList();
       expect(labels, equals(<String>['1 tbsp', '½ cup']),
-          reason: 'user rows replaced, in given order');
+          reason: 'user rows replaced, in given order',);
     });
 
     test('throws FoodNotFoundError on unknown id', () async {

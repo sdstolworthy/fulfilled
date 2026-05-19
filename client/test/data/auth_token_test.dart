@@ -45,7 +45,7 @@ void main() {
     }
   });
 
-  ProviderContainer _container() {
+  ProviderContainer container0() {
     final container = ProviderContainer(
       overrides: <Override>[
         outboxBoxProvider.overrideWithValue(outboxBox),
@@ -57,7 +57,7 @@ void main() {
   }
 
   test('build() seeds the dev-bypass token in debug builds', () {
-    final container = _container();
+    final container = container0();
     // Test runner is always non-release — seed should fall through to the
     // dev-bypass constant. If the test ever runs under `--dart-define=
     // DEV_AUTH_TOKEN=...` the seed picks that up instead; we assert
@@ -70,7 +70,7 @@ void main() {
 
   test('signIn(token) sets state to that token and persists to the store',
       () async {
-    final container = _container();
+    final container = container0();
     await container
         .read(authTokenProvider.notifier)
         .signIn('user-token-abc');
@@ -79,7 +79,7 @@ void main() {
   });
 
   test('signOut() clears state to null and clears the store', () async {
-    final container = _container();
+    final container = container0();
     await container.read(authTokenProvider.notifier).signIn('user-token-abc');
     expect(container.read(authTokenProvider), equals('user-token-abc'));
     expect(await fakeSecureStore.read(), equals('user-token-abc'));
@@ -95,7 +95,7 @@ void main() {
     await outboxBox.put('entry-2', '{"foo":2}');
     expect(outboxBox.length, equals(2));
 
-    final container = _container();
+    final container = container0();
     await container.read(authTokenProvider.notifier).signOut();
 
     expect(outboxBox.length, equals(0));
@@ -109,7 +109,7 @@ void main() {
       // with the persisted bearer.
       await fakeSecureStore.write('persisted-token-xyz');
 
-      final container = _container();
+      final container = container0();
       // First read triggers `build()` which schedules the async hydrate.
       container.read(authTokenProvider);
       // Pump the microtask queue so the hydrate future resolves.

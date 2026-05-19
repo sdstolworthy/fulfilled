@@ -127,7 +127,7 @@ class CalorieRing extends StatelessWidget {
                       color: overBudget ? colors.dangerOver : colors.ink,
                     ),
                   );
-                }),
+                },),
                 Text(
                   centerCaption.toUpperCase(),
                   style: context.text.eyebrow.copyWith(

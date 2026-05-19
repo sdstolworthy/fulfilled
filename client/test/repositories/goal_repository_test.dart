@@ -173,7 +173,7 @@ void main() {
         proteinTargetG: Decimal.parse('150'),
         carbsTargetG: Decimal.parse('200'),
         fatTargetG: Decimal.parse('60'),
-      ));
+      ),);
 
       expect(adapter.requests.single.method, equalsIgnoringCase('POST'));
       expect(adapter.requests.single.path, equals('/goals'));

@@ -304,7 +304,7 @@ class _EmptyChart extends StatelessWidget {
                   mainAxisSize: MainAxisSize.min,
                   children: <Widget>[
                     Icon(Icons.add_chart_outlined,
-                        size: 16, color: context.colors.accent),
+                        size: 16, color: context.colors.accent,),
                     SizedBox(width: context.space.x1),
                     Text(
                       'Log your first weight',
@@ -586,7 +586,7 @@ class _SparklinePainter extends CustomPainter {
         ..style = PaintingStyle.stroke;
       for (var i = 0; i < maPoints.length - 1; i++) {
         _drawDashedLine(canvas, maPoints[i], maPoints[i + 1], dashPaint,
-            dashWidth: 2, gapWidth: 3);
+            dashWidth: 2, gapWidth: 3,);
       }
     }
 

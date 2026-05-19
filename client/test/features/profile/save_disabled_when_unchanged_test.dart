@@ -120,7 +120,7 @@ void main() {
       await tester.pumpWidget(_heightHarness(
         repo: repo,
         initial: Decimal.fromInt(175),
-      ));
+      ),);
       await tester.tap(find.text('open'));
       await tester.pumpAndSettle();
 
@@ -130,7 +130,7 @@ void main() {
         find.widgetWithText(FilledButton, 'Save'),
       );
       expect(saveBtn.onPressed, isNull,
-          reason: 'Save should be disabled when the value equals the seed');
+          reason: 'Save should be disabled when the value equals the seed',);
     });
 
     testWidgets('Save enables after bumping the value', (tester) async {
@@ -143,7 +143,7 @@ void main() {
       await tester.pumpWidget(_heightHarness(
         repo: repo,
         initial: Decimal.fromInt(175),
-      ));
+      ),);
       await tester.tap(find.text('open'));
       await tester.pumpAndSettle();
 
@@ -155,7 +155,7 @@ void main() {
         find.widgetWithText(FilledButton, 'Save'),
       );
       expect(saveBtn.onPressed, isNotNull,
-          reason: 'Save should enable once the value differs from seed');
+          reason: 'Save should enable once the value differs from seed',);
     });
   });
 
@@ -174,7 +174,7 @@ void main() {
         find.widgetWithText(FilledButton, 'Save'),
       );
       expect(saveBtn.onPressed, isNull,
-          reason: 'Save should be disabled when weight equals the seed');
+          reason: 'Save should be disabled when weight equals the seed',);
     });
 
     testWidgets('Save enables after bumping the value', (tester) async {
@@ -195,7 +195,7 @@ void main() {
         find.widgetWithText(FilledButton, 'Save'),
       );
       expect(saveBtn.onPressed, isNotNull,
-          reason: 'Save should enable once weight differs from seed');
+          reason: 'Save should enable once weight differs from seed',);
     });
   });
 }

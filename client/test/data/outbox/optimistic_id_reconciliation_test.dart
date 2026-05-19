@@ -55,13 +55,13 @@ void main() {
   /// delete the entry before we can assert on its state. Hanging (vs.
   /// throwing) also avoids re-entering the box after the test has
   /// torn down Hive.
-  Future<String> _hangsForever(Map<String, dynamic> payload) {
+  Future<String> hangsForever(Map<String, dynamic> payload) {
     return Completer<String>().future;
   }
 
   group('enqueue stores optimisticId', () {
     test('enqueue with optimisticId stores it verbatim on the record', () async {
-      final notifier = LogOutboxNotifier(box: box, postLog: _hangsForever);
+      final notifier = LogOutboxNotifier(box: box, postLog: hangsForever);
       final optimisticId = buildOptimisticId(DateTime.now());
 
       await notifier.enqueue(
@@ -83,7 +83,7 @@ void main() {
       // pops with a `LogEntry` whose `id` is the same string. We
       // exercise the seam: the same string we hand to enqueue is the
       // string the predicate would later look up.
-      final notifier = LogOutboxNotifier(box: box, postLog: _hangsForever);
+      final notifier = LogOutboxNotifier(box: box, postLog: hangsForever);
       final now = DateTime.now();
       final optimisticId = buildOptimisticId(now);
 
@@ -99,7 +99,7 @@ void main() {
 
     test('enqueue without optimisticId falls back to the outbox id '
         '(pre-LU-001 behaviour)', () async {
-      final notifier = LogOutboxNotifier(box: box, postLog: _hangsForever);
+      final notifier = LogOutboxNotifier(box: box, postLog: hangsForever);
 
       await notifier.enqueue(
         payload: <String, dynamic>{'food_id': 'f_x', 'quantity': '1'},
@@ -114,7 +114,7 @@ void main() {
   group('isPendingSync', () {
     test('returns true for an entry whose optimisticId matches a pending '
         'outbox record', () async {
-      final notifier = LogOutboxNotifier(box: box, postLog: _hangsForever);
+      final notifier = LogOutboxNotifier(box: box, postLog: hangsForever);
       final optimisticId = buildOptimisticId(DateTime.now());
       await notifier.enqueue(
         payload: <String, dynamic>{'food_id': 'f_x', 'quantity': '1'},
@@ -166,7 +166,7 @@ void main() {
         failed.replaceAll('<<ID>>', optimisticId),
       );
 
-      final notifier = LogOutboxNotifier(box: box, postLog: _hangsForever);
+      final notifier = LogOutboxNotifier(box: box, postLog: hangsForever);
       // Hydration runs in the constructor; the record should be
       // classified as `failed`.
       expect(notifier.state.failedCount, 1);
@@ -195,7 +195,7 @@ void main() {
           '}';
       await box.put('outbox-legacy-1', legacy);
 
-      final notifier = LogOutboxNotifier(box: box, postLog: _hangsForever);
+      final notifier = LogOutboxNotifier(box: box, postLog: hangsForever);
       final entry = notifier.state.entries.single.entry;
       expect(entry.id, 'outbox-legacy-1');
       expect(entry.optimisticId, 'outbox-legacy-1');

@@ -9,7 +9,7 @@ import '../../../theme/context_extensions.dart';
 import '../oidc_exchange.dart';
 import 'oidc_navigator.dart';
 
-/// A "Sign in with <provider>" button.
+/// A `Sign in with <provider>` button.
 ///
 /// Rendered once per entry in [authProvidersProvider]'s `oidc` list,
 /// stacked above the local credentials form on `LoginScreen` (Ask 8).

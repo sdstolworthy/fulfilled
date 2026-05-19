@@ -38,7 +38,7 @@ void main() {
         Builder(builder: (context) {
           captured = context.colors.line2;
           return const Center(child: Skeleton(height: 12, width: 80));
-        }),
+        },),
       ),
     );
 

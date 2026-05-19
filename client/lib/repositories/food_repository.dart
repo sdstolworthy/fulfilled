@@ -79,7 +79,7 @@ class FoodRepository {
               f.id != quickAddFoodId &&
               (q.isEmpty ||
                   f.name.toLowerCase().contains(q) ||
-                  (f.brand?.toLowerCase().contains(q) ?? false)))
+                  (f.brand?.toLowerCase().contains(q) ?? false)),)
           .toList()
         ..sort((a, b) => a.name.compareTo(b.name));
       return hits.skip(offset).take(limit).toList();
@@ -225,7 +225,7 @@ class FoodRepository {
               (i == 0 && data.servings.every((x) => !x.isDefault)),
           source: ServingSource.user,
           sortOrder: i + 1,
-        ));
+        ),);
       }
       final food = Food(
         id: 'f_${DateTime.now().microsecondsSinceEpoch}',
@@ -543,7 +543,7 @@ class FoodRepository {
         isDefault: true,
         source: ServingSource.system,
         sortOrder: 0,
-      ));
+      ),);
     }
 
     return Food(

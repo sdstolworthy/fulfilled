@@ -63,7 +63,7 @@ class _OidcCallbackScreenState extends ConsumerState<OidcCallbackScreen> {
     if (widget.code.isEmpty) {
       setState(() => _error =
           "Sign-in didn't complete (no handoff code in the URL). "
-          'Please try again.');
+          'Please try again.',);
       return;
     }
     setState(() {

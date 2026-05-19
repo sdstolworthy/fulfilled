@@ -24,7 +24,7 @@ void main() {
       await tester.pumpWidget(_harness(
         source: FoodSource.off,
         qualityScore: 86,
-      ));
+      ),);
 
       expect(find.text('OFF data'), findsOneWidget);
       expect(find.textContaining('quality'), findsNothing);
@@ -35,7 +35,7 @@ void main() {
       await tester.pumpWidget(_harness(
         source: FoodSource.usda,
         qualityScore: 92,
-      ));
+      ),);
 
       expect(find.text('USDA data'), findsOneWidget);
       expect(find.textContaining('quality'), findsNothing);
@@ -46,7 +46,7 @@ void main() {
       await tester.pumpWidget(_harness(
         source: FoodSource.user,
         qualityScore: null,
-      ));
+      ),);
 
       expect(find.text('Your food'), findsOneWidget);
       expect(find.textContaining('quality'), findsNothing);
@@ -59,7 +59,7 @@ void main() {
       await tester.pumpWidget(_harness(
         source: FoodSource.off,
         qualityScore: 99,
-      ));
+      ),);
 
       expect(find.text('OFF data'), findsOneWidget);
       expect(find.textContaining('0.99'), findsNothing);

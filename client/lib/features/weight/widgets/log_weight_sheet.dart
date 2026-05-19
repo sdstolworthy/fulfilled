@@ -337,7 +337,7 @@ class _Body extends StatelessWidget {
                   radius: 18,
                   child: Center(
                     child: Icon(Icons.close,
-                        size: 18, color: context.colors.ink2),
+                        size: 18, color: context.colors.ink2,),
                   ),
                 ),
               ),
@@ -521,7 +521,7 @@ class _DateRow extends StatelessWidget {
         child: Row(
           children: <Widget>[
             Icon(Icons.calendar_today_outlined,
-                size: 18, color: context.colors.ink2),
+                size: 18, color: context.colors.ink2,),
             SizedBox(width: context.space.x2),
             Expanded(
               child: Text(
@@ -530,7 +530,7 @@ class _DateRow extends StatelessWidget {
               ),
             ),
             Icon(Icons.chevron_right,
-                size: 18, color: context.colors.ink3),
+                size: 18, color: context.colors.ink3,),
           ],
         ),
       ),

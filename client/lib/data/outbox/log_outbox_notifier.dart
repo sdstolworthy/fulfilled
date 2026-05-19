@@ -108,7 +108,7 @@ class LogOutboxNotifier extends StateNotifier<OutboxState> {
     return state.entries.any((e) =>
         e.entry.optimisticId == optimisticId &&
         (e.status == OutboxEntryStatus.pending ||
-            e.status == OutboxEntryStatus.failed));
+            e.status == OutboxEntryStatus.failed),);
   }
 
   void _hydrate() {

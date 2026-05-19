@@ -43,7 +43,7 @@ void main() {
         username: '',
         password: '',
         allowInsecure: false,
-      ));
+      ),);
 
       await tester.pumpWidget(_harness(fake: fake));
       await tester.pumpAndSettle();

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -77,6 +79,7 @@ Future<LogEntry?> showLogEntrySheet(
     required bool showGrabber,
   }) {
     return ProviderScope(
+      // ignore: deprecated_member_use — riverpod#3261; migrate when API lands.
       parent: parent,
       overrides: <Override>[
         // Re-seed so each sheet gets a fresh quantity (otherwise the
@@ -542,7 +545,7 @@ class _LogEntrySheetBodyState extends ConsumerState<LogEntrySheetBody> {
           duration: Duration(seconds: 2),
         ),
       );
-      navigator.maybePop<LogEntry?>();
+      unawaited(navigator.maybePop<LogEntry?>());
       if (!context.mounted) return;
       context.go(pathForDay(ex.consumedOn));
     } catch (e) {

@@ -241,9 +241,9 @@ void main() {
       await tester.pump(const Duration(milliseconds: 50));
 
       expect(fakeProfile.updateCalls, 1,
-          reason: 'profile.update must be called exactly once on Finish');
+          reason: 'profile.update must be called exactly once on Finish',);
       expect(fakeGoal.createCalls, 1,
-          reason: 'goal.create must be called exactly once on Finish');
+          reason: 'goal.create must be called exactly once on Finish',);
 
       // Patch carries the step-2 fields.
       expect(fakeProfile.lastPatch?.sex, Sex.male);

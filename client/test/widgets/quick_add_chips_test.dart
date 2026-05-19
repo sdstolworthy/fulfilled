@@ -57,7 +57,7 @@ void main() {
           frequents: const <Food>[],
           onTapFood: (_) {},
         ),
-      ));
+      ),);
       await tester.pumpAndSettle();
 
       expect(find.byType(EmptyState), findsOneWidget);
@@ -85,7 +85,7 @@ void main() {
           frequents: const <Food>[],
           onTapFood: (_) {},
         ),
-      ));
+      ),);
       await tester.pumpAndSettle();
 
       // Recent section header is present, Frequent is not.
@@ -111,7 +111,7 @@ void main() {
           frequents: <Food>[_food('f1', 'Chicken breast')],
           onTapFood: (_) {},
         ),
-      ));
+      ),);
       await tester.pumpAndSettle();
 
       expect(find.text('Frequent'), findsOneWidget);

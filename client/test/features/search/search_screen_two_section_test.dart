@@ -216,7 +216,7 @@ void main() {
         )
         .toList();
     expect(rows.map((r) => r.food.id).toList(),
-        <String>['l_new', 'l_mid', 'l_old']);
+        <String>['l_new', 'l_mid', 'l_old'],);
   });
 
   testWidgets('sort tiebreaker — logCount desc, then id asc', (tester) async {

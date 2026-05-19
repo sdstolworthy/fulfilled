@@ -345,7 +345,7 @@ class _HeightStepperState extends ConsumerState<HeightStepper> {
     }
   }
 
-  /// cm shape — one `_TapStepper` box, "<value> cm" centered, flanked
+  /// cm shape — one `_TapStepper` box, `<value> cm` centered, flanked
   /// by `-` / `+`. Integer step (1 cm), half-to-even round on the way
   /// in, canonical cm out on every change.
   Widget _buildCm() {

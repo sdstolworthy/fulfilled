@@ -2,7 +2,6 @@ import 'dart:math' as math;
 
 import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
@@ -309,7 +308,7 @@ List<TextSpan> _highlightSpans({
     spans.add(TextSpan(
       text: text.substring(r.start, r.end),
       style: highlightStyle,
-    ));
+    ),);
     cursor = r.end;
   }
   if (cursor < text.length) {

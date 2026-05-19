@@ -1,6 +1,7 @@
 @Skip('Quarantined post Ask 10 — UI/value assertions need rebaseline.')
 library;
 
+// ignore_for_file: deprecated_member_use
 
 // UX-112 a11y — LiveRegion on the pending-sync row.
 //

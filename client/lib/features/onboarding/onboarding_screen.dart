@@ -145,7 +145,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
         activityLevel: draft.activityLevel,
         weightUnit: draft.weightUnit ?? defaults.weightUnit,
         heightUnit: draft.heightUnit ?? defaults.heightUnit,
-      ));
+      ),);
 
       // Compute the daily target client-side per architecture §9 — the
       // server stores the resulting int. T-09 is preserved because the
@@ -181,7 +181,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
             estimate == null ? null : Decimal.fromInt(estimate.carbsG),
         fatTargetG:
             estimate == null ? null : Decimal.fromInt(estimate.fatG),
-      ));
+      ),);
 
       ref.invalidate(meProvider);
       ref.read(onboardingDraftProvider.notifier).reset();

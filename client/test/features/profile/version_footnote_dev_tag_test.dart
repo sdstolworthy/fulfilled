@@ -80,7 +80,7 @@ void main() {
       expect(kDebugMode, isTrue,
           reason: 'flutter test runs in debug mode by default; this '
               'precondition pins the env so the assertion below '
-              'reflects the conditional, not a config drift.');
+              'reflects the conditional, not a config drift.',);
 
       final footnote = find.byKey(const ValueKey('profile.version_footnote'));
       expect(footnote, findsOneWidget);
@@ -106,7 +106,7 @@ void main() {
           'Fulfilled · v0.1.0${fakeReleaseKDebugMode ? ' (dev)' : ''}';
       expect(actual, 'Fulfilled · v0.1.0',
           reason: 'release builds (kDebugMode==false) must drop the '
-              '"(dev)" suffix');
+              '"(dev)" suffix',);
     },
   );
 }

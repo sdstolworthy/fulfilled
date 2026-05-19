@@ -90,7 +90,7 @@ class _FakeLogRepository extends LogRepository {
       sourceDate: sourceDate,
       targetDate: targetDate,
       meals: meals,
-    ));
+    ),);
     if (throwOnCopy) {
       throw Exception('network unavailable');
     }
@@ -259,7 +259,7 @@ void main() {
         repo: repo,
         targetDate: today,
         preselectMeals: <Meal>[Meal.breakfast],
-      ));
+      ),);
       await tester.pumpAndSettle();
       // Open the sheet via the production entry point.
       await tester.tap(find.byKey(const Key('open-copy-sheet')));
@@ -304,7 +304,7 @@ void main() {
       await tester.pumpWidget(_harness(
         repo: repo,
         targetDate: today,
-      ));
+      ),);
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('open-copy-sheet')));
       await tester.pumpAndSettle();
@@ -339,7 +339,7 @@ void main() {
       await tester.pumpWidget(_harness(
         repo: repo,
         targetDate: today,
-      ));
+      ),);
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('open-copy-sheet')));
       await tester.pumpAndSettle();
@@ -350,7 +350,7 @@ void main() {
 
       expect(repo.copyCalls, hasLength(1));
       expect(repo.copyCalls.single.meals, isNull,
-          reason: '"All meals" is the meals==null wire shape');
+          reason: '"All meals" is the meals==null wire shape',);
     },
   );
 
@@ -380,7 +380,7 @@ void main() {
       await tester.pumpWidget(_harness(
         repo: repo,
         targetDate: today,
-      ));
+      ),);
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('open-copy-sheet')));
       await tester.pumpAndSettle();
@@ -424,7 +424,7 @@ void main() {
       await tester.pumpWidget(_harness(
         repo: repo,
         targetDate: today,
-      ));
+      ),);
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const Key('open-copy-sheet')));
       await tester.pumpAndSettle();

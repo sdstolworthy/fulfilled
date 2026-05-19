@@ -125,9 +125,9 @@ void main() {
       expect(h.adapter.requests.single.method, equalsIgnoringCase('GET'));
       expect(h.adapter.requests.single.path, equals('/log'));
       expect(h.adapter.requests.single.queryParameters,
-          containsPair('from', '2026-05-17'));
+          containsPair('from', '2026-05-17'),);
       expect(h.adapter.requests.single.queryParameters,
-          containsPair('to', '2026-05-17'));
+          containsPair('to', '2026-05-17'),);
     });
 
     test('decodes Decimal fields from string wire values', () async {
@@ -138,12 +138,12 @@ void main() {
             'total': 1,
             'limit': 100,
             'offset': 0,
-          }));
+          }),);
       final entries = await h.repo.entriesForDate(DateTime(2026, 5, 17));
       expect(entries, hasLength(1));
       expect(entries.single.quantity, equals(Decimal.parse('2.5')));
       expect(entries.single.nutritionSnapshot.caloriesKcal,
-          equals(Decimal.parse('475.50')));
+          equals(Decimal.parse('475.50')),);
     });
 
     test('sorts results newest createdAt first', () async {
@@ -156,7 +156,7 @@ void main() {
             'total': 3,
             'limit': 100,
             'offset': 0,
-          }));
+          }),);
       final entries = await h.repo.entriesForDate(DateTime(2026, 5, 17));
       expect(entries.map((e) => e.id).toList(), equals(<String>['b', 'c', 'a']));
     });
@@ -179,7 +179,7 @@ void main() {
             'total': 1,
             'limit': 100,
             'offset': 0,
-          }));
+          }),);
       final entries = await h.repo.entriesForDate(DateTime(2026, 5, 17));
       expect(entries, hasLength(1));
       // Wire decode passes through whatever the cache returns — null
@@ -235,11 +235,11 @@ void main() {
               },
             ],
             'active_goal': null,
-          }));
+          }),);
       final summary = await h.repo.daySummary(DateTime(2026, 5, 17));
 
       expect(h.adapter.requests.single.path,
-          equals('/days/2026-05-17/summary'));
+          equals('/days/2026-05-17/summary'),);
       expect(h.adapter.requests.single.method, equalsIgnoringCase('GET'));
       expect(summary.kcal, equals(Decimal.zero));
       expect(summary.byMeal[Meal.breakfast]?.entryCount, equals(0));
@@ -261,7 +261,7 @@ void main() {
         quantity: Decimal.one,
         enteredAmount: Decimal.parse('40'),
         enteredUnit: Unit.g,
-      ));
+      ),);
 
       expect(h.adapter.requests.single.method, equalsIgnoringCase('POST'));
       expect(h.adapter.requests.single.path, equals('/log'));
@@ -285,7 +285,7 @@ void main() {
           id: 'le_qa',
           foodId: 'srv-quick-add-uuid',
           quantity: '250',
-        ));
+        ),);
       });
       await h.repo.create(LogCreate(
         foodId: quickAddFoodId,
@@ -295,11 +295,11 @@ void main() {
         quantity: Decimal.parse('250'),
         enteredAmount: Decimal.parse('250'),
         enteredUnit: Unit.serving,
-      ));
+      ),);
 
       expect(capturedPath, equals('/log/quick_add'));
       expect(capturedBody!.keys,
-          containsAll(<String>['calories_kcal', 'meal', 'consumed_on']));
+          containsAll(<String>['calories_kcal', 'meal', 'consumed_on']),);
       expect(capturedBody!['calories_kcal'], equals('250'));
       expect(capturedBody!['meal'], equals('snack'));
       expect(capturedBody!['consumed_on'], equals('2026-05-17'));
@@ -313,7 +313,7 @@ void main() {
       final h = _build((_) => jsonResponse(
             201,
             _entryBody(id: 'le_new', caloriesKcal: '190.00'),
-          ));
+          ),);
       final entry = await h.repo.create(LogCreate(
         foodId: 'f_oatmeal_rolled',
         servingId: 'sv_oats_half_cup',
@@ -322,10 +322,10 @@ void main() {
         quantity: Decimal.one,
         enteredAmount: Decimal.parse('40'),
         enteredUnit: Unit.g,
-      ));
+      ),);
       expect(entry.id, equals('le_new'));
       expect(entry.nutritionSnapshot.caloriesKcal,
-          equals(Decimal.parse('190.00')));
+          equals(Decimal.parse('190.00')),);
     });
 
     test('5xx from the server propagates as DioException — outbox keeps '
@@ -340,7 +340,7 @@ void main() {
           quantity: Decimal.one,
           enteredAmount: Decimal.parse('40'),
           enteredUnit: Unit.g,
-        )),
+        ),),
         throwsA(isA<DioException>()),
       );
     });
@@ -352,7 +352,7 @@ void main() {
       final h = _build((req) {
         capturedBody = _readBody(req);
         return jsonResponse(200,
-            _entryBody(id: 'le_42', quantity: '2', caloriesKcal: '380.0'));
+            _entryBody(id: 'le_42', quantity: '2', caloriesKcal: '380.0'),);
       });
       await h.repo.update(
         'le_42',
@@ -388,7 +388,7 @@ void main() {
         () async {
       final h = _build((_) => emptyResponse(200));
       expect(
-        () => h.repo.update('le_42', _PatchWithFoodId(foodId: 'f_other')),
+        () => h.repo.update('le_42', const _PatchWithFoodId(foodId: 'f_other')),
         throwsA(isA<StateError>()),
       );
       // No HTTP request should have left the client — the guard fires
@@ -434,7 +434,7 @@ void main() {
       expect(capturedBody, equals(<String, dynamic>{
         'from_date': '2026-05-17',
         'to_date': '2026-05-18',
-      }));
+      }),);
       expect(out, hasLength(1));
       expect(out.single.id, equals('le_c1'));
     });
@@ -479,9 +479,9 @@ void main() {
       );
       expect(h.adapter.requests, hasLength(2));
       expect(captured.map((b) => b['meal']),
-          equals(<String>['breakfast', 'lunch']));
+          equals(<String>['breakfast', 'lunch']),);
       expect(out.map((e) => e.id),
-          equals(<String>['le_breakfast', 'le_lunch']));
+          equals(<String>['le_breakfast', 'le_lunch']),);
     });
 
     test('partial-skip is implicit — server returns shorter `copied` list',
@@ -494,7 +494,7 @@ void main() {
             'copied': <Map<String, dynamic>>[
               _entryBody(id: 'le_a', consumedOn: '2026-05-18'),
             ],
-          }));
+          }),);
       final out = await h.repo.copyDay(
         sourceDate: DateTime(2026, 5, 17),
         targetDate: DateTime(2026, 5, 18),

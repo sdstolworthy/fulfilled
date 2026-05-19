@@ -49,5 +49,5 @@ class LoginEndpointMissingError extends LoginError {
 /// any other [DioException]. The [message] is a best-effort human
 /// description (see `_describeDioError` in `auth_token.dart`).
 class LoginNetworkError extends LoginError {
-  const LoginNetworkError(String reason) : super(reason);
+  const LoginNetworkError(super.reason);
 }

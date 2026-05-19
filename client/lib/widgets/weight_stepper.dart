@@ -401,7 +401,7 @@ class _WeightStepperState extends ConsumerState<WeightStepper> {
     }
   }
 
-  /// kg / lb shape — one `_TapStepper` box, "<value> <unit>" centered,
+  /// kg / lb shape — one `_TapStepper` box, `<value> <unit>` centered,
   /// flanked by `-` / `+`. `0.1` step in the displayed unit, half-to-even
   /// round on the way in, canonical kg out on every change.
   Widget _buildSingle({

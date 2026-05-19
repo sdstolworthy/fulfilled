@@ -136,7 +136,7 @@ void main() {
     test('kg appends " kg" suffix', () {
       expect(
         formatWeightWithUnit(Decimal.parse('79.4'), WeightUnit.kg,
-            locale: 'en_US'),
+            locale: 'en_US',),
         '79.4 kg',
       );
     });
@@ -144,7 +144,7 @@ void main() {
     test('lb appends " lb" suffix', () {
       expect(
         formatWeightWithUnit(Decimal.parse('82.0'), WeightUnit.lb,
-            locale: 'en_US'),
+            locale: 'en_US',),
         '180.8 lb',
       );
     });

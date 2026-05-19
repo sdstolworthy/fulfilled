@@ -1,6 +1,7 @@
 @Skip('Quarantined post Ask 10 — UI/value assertions need rebaseline.')
 library;
 
+// ignore_for_file: deprecated_member_use
 
 // UX-112 A11y — `MergeSemantics` on the macro bar row.
 //
@@ -114,7 +115,7 @@ void main() {
           reason:
               'expected MergeSemantics to collapse the three MacroBar '
               'Semantics nodes into one; got ${macroLabeled.length}: '
-              '${macroLabeled.map((d) => d.label).toList()}');
+              '${macroLabeled.map((d) => d.label).toList()}',);
       final merged = macroLabeled.single.label.toLowerCase();
       expect(merged, contains('protein'));
       expect(merged, contains('carbs'));
@@ -144,7 +145,7 @@ void main() {
 
       expect(macroLabeled.length, 1,
           reason:
-              'expanded MergeSemantics should also collapse the macro row.');
+              'expanded MergeSemantics should also collapse the macro row.',);
           handle.dispose();
     },
   );

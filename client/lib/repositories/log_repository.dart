@@ -64,7 +64,7 @@ class LogRepository {
           .where((e) =>
               e.consumedOn.year == date.year &&
               e.consumedOn.month == date.month &&
-              e.consumedOn.day == date.day)
+              e.consumedOn.day == date.day,)
           .toList()
         ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
       return out;

@@ -1,6 +1,7 @@
 @Skip('Quarantined post Ask 10 — UI/value assertions need rebaseline.')
 library;
 
+// ignore_for_file: deprecated_member_use
 
 import 'dart:io';
 
@@ -92,7 +93,7 @@ void main() {
     await tester.pumpWidget(_harness(
       food: _testFood(),
       onSubmit: (_) {},
-    ));
+    ),);
     await tester.pump();
 
     expect(find.byType(LogPreviewBlock), findsOneWidget);
@@ -110,7 +111,7 @@ void main() {
     await tester.pumpWidget(_harness(
       food: _testFood(),
       onSubmit: (_) {},
-    ));
+    ),);
     await tester.pump();
 
     final field = find.descendant(
@@ -139,7 +140,7 @@ void main() {
     await tester.pumpWidget(_harness(
       food: _testFood(),
       onSubmit: (_) {},
-    ));
+    ),);
     await tester.pump();
 
     // Tap the 2× chip.
@@ -170,7 +171,7 @@ void main() {
       food: _testFood(),
       defaultMeal: Meal.lunch,
       onSubmit: (lc) => captured = lc,
-    ));
+    ),);
     await tester.pump();
 
     // Bump quantity to 1.5 via the chip.
@@ -199,7 +200,7 @@ void main() {
     await tester.pumpWidget(_harness(
       food: _testFood(),
       onSubmit: (lc) => captured = lc,
-    ));
+    ),);
     await tester.pump();
 
     await tester.tap(find.byKey(const Key('log_entry_save_button')));
@@ -224,7 +225,7 @@ void main() {
     await tester.pumpWidget(_harness(
       food: _testFood(),
       onSubmit: (_) {},
-    ));
+    ),);
     await tester.pump();
 
     expect(find.byType(CircularProgressIndicator), findsNothing);
@@ -241,7 +242,7 @@ void main() {
     await tester.pumpWidget(_harness(
       food: _testFood(),
       onSubmit: (_) {},
-    ));
+    ),);
     await tester.pump();
 
     // Drive via the stepper plus button: 1 → 1.5 (step is 0.5).
@@ -318,14 +319,14 @@ void main() {
           router: router,
           outboxBox: outboxBox,
           repo: repo,
-        ));
+        ),);
         await tester.pumpAndSettle();
 
         // Source page.
         await tester.tap(find.text('open sheet'));
         await tester.pumpAndSettle();
         expect(router.routerDelegate.currentConfiguration.uri.path,
-            equals('/foods/f_test'));
+            equals('/foods/f_test'),);
 
         // Save. Compact-create awaits `LogRepository.create`, then
         // invalidates + `context.go(pathForDay(today))`.
@@ -339,7 +340,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 50));
 
         expect(router.routerDelegate.currentConfiguration.uri.path,
-            equals(Routes.todayPath));
+            equals(Routes.todayPath),);
       },
     );
 
@@ -377,7 +378,7 @@ void main() {
           router: router,
           outboxBox: outboxBox,
           repo: repo,
-        ));
+        ),);
         await tester.pumpAndSettle();
 
         await tester.tap(find.text('open sheet'));
@@ -391,7 +392,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 50));
 
         expect(router.routerDelegate.currentConfiguration.uri.path,
-            equals(expectedPath));
+            equals(expectedPath),);
       },
     );
 
@@ -426,7 +427,7 @@ void main() {
           router: router,
           outboxBox: outboxBox,
           repo: repo,
-        ));
+        ),);
         await tester.pumpAndSettle();
 
         await tester.tap(find.text('open sheet'));
@@ -436,7 +437,7 @@ void main() {
         // visible; the underlying route hasn't changed.
         expect(find.byType(LogEntrySheetBody), findsOneWidget);
         expect(router.routerDelegate.currentConfiguration.uri.path,
-            equals('/foods/f_test'));
+            equals('/foods/f_test'),);
 
         await tester.tap(find.byKey(const Key('log_entry_save_button')));
         // Pumps for the `await LogRepository.create`, then the
@@ -461,7 +462,7 @@ void main() {
         expect(find.byType(LogEntrySheetBody), findsNothing);
         expect(find.byType(Dialog), findsNothing);
         expect(router.routerDelegate.currentConfiguration.uri.path,
-            equals(Routes.todayPath));
+            equals(Routes.todayPath),);
       },
     );
   });

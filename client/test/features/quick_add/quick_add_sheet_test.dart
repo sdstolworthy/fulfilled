@@ -100,7 +100,7 @@ void main() {
     await tester.pumpWidget(_bodyHarness(
       onSubmit: (_) {},
       repo: _buildRepo(),
-    ));
+    ),);
     await tester.pump();
 
     expect(find.byKey(const Key('quick_add_title')), findsOneWidget);
@@ -127,7 +127,7 @@ void main() {
       onSubmit: (lc) => captured = lc,
       repo: repo,
       defaultMeal: Meal.snack,
-    ));
+    ),);
     await tester.pump();
 
     // Replace the default 100 with 105.
@@ -172,7 +172,7 @@ void main() {
     await tester.pumpWidget(_bodyHarness(
       onSubmit: (_) {},
       repo: repo,
-    ));
+    ),);
     await tester.pump();
 
     final kcalField = find.descendant(
@@ -211,7 +211,7 @@ void main() {
     await tester.pumpWidget(_bodyHarness(
       onSubmit: (lc) => captured = lc,
       repo: repo,
-    ));
+    ),);
     await tester.pump();
 
     // Set kcal = 300.
@@ -280,7 +280,7 @@ void main() {
     await tester.pumpWidget(_bodyHarness(
       onSubmit: (_) {},
       repo: _buildRepo(),
-    ));
+    ),);
     await tester.pump();
 
     final kcalField = find.descendant(
@@ -297,7 +297,7 @@ void main() {
       ),
     );
     expect(button.onPressed, isNull,
-        reason: 'cleared kcal should disable the Save CTA');
+        reason: 'cleared kcal should disable the Save CTA',);
   });
 
   // ── FX-001: edit-mode contracts ────────────────────────────────────
@@ -382,7 +382,7 @@ void main() {
         await tester.pumpWidget(editHarness(
           existing: entry,
           repo: _buildRepo(),
-        ));
+        ),);
         await tester.pump();
 
         // Title flipped.
@@ -422,7 +422,7 @@ void main() {
       await tester.pumpWidget(editHarness(
         existing: entry,
         repo: _buildRepo(),
-      ));
+      ),);
       await tester.pump();
 
       // Form matches seed exactly — button should be disabled.
@@ -433,7 +433,7 @@ void main() {
         ),
       );
       expect(btn.onPressed, isNull,
-          reason: 'no diff vs seed → no-op PATCH → disabled CTA');
+          reason: 'no diff vs seed → no-op PATCH → disabled CTA',);
 
       // Bump kcal → button enables.
       final kcalField = find.descendant(
@@ -472,14 +472,14 @@ void main() {
           quantity: Decimal.fromInt(105),
           enteredAmount: Decimal.fromInt(105),
           enteredUnit: Unit.serving,
-        ));
+        ),);
 
         LogPatch? captured;
         await tester.pumpWidget(editHarness(
           existing: seeded,
           repo: repo,
           onPatch: (p) => captured = p,
-        ));
+        ),);
         await tester.pump();
 
         // Bump kcal 105 → 200 (the only diff).
@@ -531,14 +531,14 @@ void main() {
         quantity: Decimal.fromInt(105),
         enteredAmount: Decimal.fromInt(105),
         enteredUnit: Unit.serving,
-      ));
+      ),);
 
       LogPatch? captured;
       await tester.pumpWidget(editHarness(
         existing: seeded,
         repo: repo,
         onPatch: (p) => captured = p,
-      ));
+      ),);
       await tester.pump();
 
       // Switch meal: snack → dinner via the meal chip. The picker

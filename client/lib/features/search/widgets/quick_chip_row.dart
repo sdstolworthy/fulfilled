@@ -110,7 +110,7 @@ class _Chip extends StatelessWidget {
           final hint = mealHint;
           context.push(hint == null
               ? '/foods/${food.id}'
-              : '/foods/${food.id}?meal=${hint.wire}');
+              : '/foods/${food.id}?meal=${hint.wire}',);
         },
         containedInkWell: true,
         radius: 24,

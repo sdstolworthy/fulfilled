@@ -173,7 +173,7 @@ void main() {
       goalsProvider
           .overrideWith((_) async => <Goal>[_priorGoal(), _activeGoal()]),
       meProvider.overrideWith((_) async => _seedUser()),
-    ]));
+    ],),);
     await tester.pumpAndSettle();
 
     // Page header.
@@ -200,13 +200,13 @@ void main() {
       ),
       goalsProvider.overrideWith((_) async => <Goal>[]),
       meProvider.overrideWith((_) async => _seedUser()),
-    ]));
+    ],),);
     await tester.pumpAndSettle();
 
     expect(find.byKey(const ValueKey('goals.no_active_goal_cta')),
-        findsOneWidget);
+        findsOneWidget,);
     expect(find.byKey(const ValueKey('goals.set_first_goal')),
-        findsOneWidget);
+        findsOneWidget,);
   });
 
   testWidgets('new-goal rate slider changes the previewed daily kcal',
@@ -224,7 +224,7 @@ void main() {
       activeGoalProvider.overrideWith((_) async => active),
       goalsProvider.overrideWith((_) async => <Goal>[active]),
       meProvider.overrideWith((_) async => _seedUser()),
-    ]));
+    ],),);
     await tester.pumpAndSettle();
 
     // Open the new-goal flow (full-screen route on compact).
@@ -245,7 +245,7 @@ void main() {
 
     final after = _kcalTextWithin(tester, previewFinder);
     expect(after, isNot(equals(before)),
-        reason: 'preview kcal should update when the rate slider moves');
+        reason: 'preview kcal should update when the rate slider moves',);
   });
 
   testWidgets('saving the new-goal form invokes goalRepository.create',
@@ -263,7 +263,7 @@ void main() {
       activeGoalProvider.overrideWith((_) async => active),
       goalsProvider.overrideWith((_) async => <Goal>[active]),
       meProvider.overrideWith((_) async => _seedUser()),
-    ]));
+    ],),);
     await tester.pumpAndSettle();
 
     await tester.tap(find.byKey(const ValueKey('goals.new_goal')));
@@ -294,7 +294,7 @@ void main() {
         activeGoalProvider.overrideWith((_) async => active),
         goalsProvider.overrideWith((_) async => <Goal>[active]),
         meProvider.overrideWith((_) async => _seedUser()),
-      ]));
+      ],),);
       await tester.pumpAndSettle();
 
       await tester.tap(find.byKey(const ValueKey('goals.edit_current')));

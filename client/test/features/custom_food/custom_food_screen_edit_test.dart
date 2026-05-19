@@ -202,7 +202,7 @@ void main() {
       await tester.tap(find.text('Save changes').last);
       await tester.pumpAndSettle();
       expect(repo.lastPatch, isNull,
-          reason: 'no patch should fire while the draft is unchanged');
+          reason: 'no patch should fire while the draft is unchanged',);
 
       // Mutate the name through the notifier so the screen re-evaluates
       // "changed" and the button becomes tappable.

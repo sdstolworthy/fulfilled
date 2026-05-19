@@ -89,7 +89,7 @@ Widget _harness({
     routes: <RouteBase>[
       GoRoute(
         path: Routes.myFoodsPath,
-        builder: (_, __) => Scaffold(body: const _MyFoodsHost()),
+        builder: (_, __) => const Scaffold(body: _MyFoodsHost()),
       ),
       GoRoute(
         path: Routes.foodNewPath,
@@ -140,7 +140,7 @@ void main() {
       overrides: <Override>[
         myFoodsProvider.overrideWith((_) async => _customs),
       ],
-    ));
+    ),);
     await tester.pumpAndSettle();
 
     expect(find.byType(SearchResultRow), findsNWidgets(_customs.length));
@@ -148,7 +148,7 @@ void main() {
     // inside a RichText's toPlainText() with a custom predicate.
     bool hasRichText(String name) => find
         .byWidgetPredicate(
-            (w) => w is RichText && w.text.toPlainText().contains(name))
+            (w) => w is RichText && w.text.toPlainText().contains(name),)
         .evaluate()
         .isNotEmpty;
     expect(hasRichText("Mom's lasagna"), isTrue);
@@ -166,7 +166,7 @@ void main() {
       overrides: <Override>[
         myFoodsProvider.overrideWith((_) async => _customs),
       ],
-    ));
+    ),);
     await tester.pumpAndSettle();
 
     // Type "lasagna" — should leave one row visible.
@@ -178,7 +178,7 @@ void main() {
     expect(find.byType(SearchResultRow), findsOneWidget);
     bool hasRichText(String name) => find
         .byWidgetPredicate(
-            (w) => w is RichText && w.text.toPlainText().contains(name))
+            (w) => w is RichText && w.text.toPlainText().contains(name),)
         .evaluate()
         .isNotEmpty;
     expect(hasRichText("Mom's lasagna"), isTrue);
@@ -202,7 +202,7 @@ void main() {
       overrides: <Override>[
         myFoodsProvider.overrideWith((_) async => const <Food>[]),
       ],
-    ));
+    ),);
     await tester.pumpAndSettle();
 
     expect(find.text('No custom foods yet'), findsOneWidget);
@@ -227,7 +227,7 @@ void main() {
       overrides: <Override>[
         myFoodsProvider.overrideWith((_) async => _customs),
       ],
-    ));
+    ),);
     await tester.pumpAndSettle();
 
     // Tap the first row — every row here is `source == user`, so the
@@ -272,7 +272,7 @@ void main() {
         overrides: <Override>[
           myFoodsProvider.overrideWith((_) async => <Food>[off]),
         ],
-      ));
+      ),);
       await tester.pumpAndSettle();
 
       await tester.tap(find.byType(SearchResultRow).first);
@@ -293,7 +293,7 @@ void main() {
       overrides: <Override>[
         myFoodsProvider.overrideWith((_) async => _customs),
       ],
-    ));
+    ),);
     await tester.pumpAndSettle();
 
     // The "+" affordance is the only `Icons.add` glyph on the screen.

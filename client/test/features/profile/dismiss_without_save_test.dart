@@ -288,7 +288,7 @@ void main() {
             ),
           ),
         );
-      });
+      },);
 
       await tester.pumpWidget(builder);
       await tester.pumpAndSettle();

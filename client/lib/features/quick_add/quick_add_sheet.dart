@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -75,6 +77,7 @@ Future<LogEntry?> showQuickAddSheet(
     required bool showGrabber,
   }) {
     return ProviderScope(
+      // ignore: deprecated_member_use — riverpod#3261; migrate when API lands.
       parent: parent,
       child: QuickAddSheetBody(
         defaultDate: defaultDate,
@@ -379,7 +382,7 @@ class _QuickAddSheetBodyState extends ConsumerState<QuickAddSheetBody> {
         ..invalidate(frequentFoodsProvider);
 
       if (widget.skipRouteOnSave) {
-        Navigator.of(context).maybePop<LogEntry?>(entry);
+        unawaited(Navigator.of(context).maybePop<LogEntry?>(entry));
         return;
       }
 
@@ -438,7 +441,7 @@ class _QuickAddSheetBodyState extends ConsumerState<QuickAddSheetBody> {
     if (patch.isEmpty) {
       if (!mounted) return;
       if (widget.skipRouteOnSave) {
-        Navigator.of(context).maybePop<LogEntry?>(widget.existing);
+        unawaited(Navigator.of(context).maybePop<LogEntry?>(widget.existing));
         return;
       }
       Navigator.of(context).pop<LogEntry?>(widget.existing);
@@ -466,7 +469,7 @@ class _QuickAddSheetBodyState extends ConsumerState<QuickAddSheetBody> {
       }
 
       if (widget.skipRouteOnSave) {
-        Navigator.of(context).maybePop<LogEntry?>(updated);
+        unawaited(Navigator.of(context).maybePop<LogEntry?>(updated));
         return;
       }
 

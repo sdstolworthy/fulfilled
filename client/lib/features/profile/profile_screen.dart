@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -376,7 +378,7 @@ class _GoalRow extends ConsumerWidget {
     }
     // Loading or unexpected error — fall through to the dedicated
     // screen so it can render its own loading skeleton / error body.
-    if (context.mounted) context.push(Routes.goalsPath);
+    if (context.mounted) unawaited(context.push(Routes.goalsPath));
   }
 }
 

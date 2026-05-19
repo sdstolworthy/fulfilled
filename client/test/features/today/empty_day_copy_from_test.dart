@@ -94,7 +94,7 @@ class _FakeLogRepository extends LogRepository {
       sourceDate: sourceDate,
       targetDate: targetDate,
       meals: meals,
-    ));
+    ),);
     final filtered = meals == null
         ? entriesForSource
         : entriesForSource.where((e) => meals.contains(e.meal)).toList();
@@ -288,7 +288,7 @@ void main() {
           summary: _emptySummary(_today),
           repo: _buildRepo(),
         ),
-      ));
+      ),);
       await tester.pumpAndSettle();
 
       // The empty-day pill is mounted.
@@ -327,7 +327,7 @@ void main() {
           summary: _emptySummary(_yesterday),
           repo: _buildRepo(),
         ),
-      ));
+      ),);
       await tester.pumpAndSettle();
 
       // Pill renders…
@@ -357,7 +357,7 @@ void main() {
           summary: _populatedSummary(_today),
           repo: _buildRepo(),
         ),
-      ));
+      ),);
       await tester.pumpAndSettle();
 
       // Pill is gone — and so is the secondary affordance.
@@ -379,7 +379,7 @@ void main() {
       // assert on the captured `copyDay` call's `meals` parameter.
       final repo = _buildRepo(entriesForSource: <LogEntry>[
         _entry(on: _yesterday, meal: Meal.breakfast, id: 'src1', kcal: 250),
-      ]);
+      ],);
       final router = _router(initialLocation: Routes.todayPath);
       await tester.pumpWidget(_harness(
         router: router,
@@ -389,7 +389,7 @@ void main() {
           summary: _emptySummary(_today),
           repo: repo,
         ),
-      ));
+      ),);
       await tester.pumpAndSettle();
 
       // Tap the secondary affordance — the sheet opens.

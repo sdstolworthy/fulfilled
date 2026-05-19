@@ -66,7 +66,7 @@ void main() {
         controller: controller,
         onChanged: (_) {},
         hintText: 'Custom hint',
-      )),
+      ),),
     );
 
     expect(find.text('Custom hint'), findsOneWidget);

@@ -37,7 +37,7 @@ class Step1Welcome extends StatelessWidget {
         ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 280),
           child: Text(
-            "A calm, fast logger backed by OpenFoodFacts. No ads, no streak guilt, no upsells.",
+            'A calm, fast logger backed by OpenFoodFacts. No ads, no streak guilt, no upsells.',
             style: context.text.meta.copyWith(color: context.colors.ink2),
             textAlign: TextAlign.center,
           ),

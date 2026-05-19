@@ -4,6 +4,7 @@
 /// `FoodSource`, `ServingSource`, `NutriscoreGrade`, goal direction).
 /// Every enum's wire string is the lowercase enum name; `fromWire` is
 /// strict so a typo round-trip surfaces at boundary, not in a widget.
+library;
 
 /// `User.sex` — `male | female | other`. v1 onboarding shows a three-up
 /// segmented control; `other` is the inclusive default.

@@ -71,7 +71,7 @@ void main() {
     final primary = find.byType(PrimaryButton);
     expect(primary, findsOneWidget,
         reason: 'active card should expose exactly one PrimaryButton — '
-            '"Edit current"');
+            '"Edit current"',);
     final primaryWidget = tester.widget<PrimaryButton>(primary);
     expect(primaryWidget.label, 'Edit current');
   });
@@ -91,6 +91,6 @@ void main() {
     // here loudly.
     final outlined = find.widgetWithText(OutlinedButton, '+ New goal');
     expect(outlined, findsOneWidget,
-        reason: 'active card should expose "+ New goal" as an OutlinedButton');
+        reason: 'active card should expose "+ New goal" as an OutlinedButton',);
   });
 }

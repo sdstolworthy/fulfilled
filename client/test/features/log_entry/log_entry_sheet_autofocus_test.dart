@@ -123,7 +123,7 @@ void main() {
       await tester.pumpWidget(_harness(
         food: _testFood(),
         existing: _existingEntry(),
-      ));
+      ),);
       await tester.pump();
       await tester.pump();
 

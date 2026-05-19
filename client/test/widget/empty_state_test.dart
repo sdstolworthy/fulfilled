@@ -65,7 +65,7 @@ void main() {
             title: 'Empty',
             body: 'Body',
           );
-        }),
+        },),
       ),
     );
 

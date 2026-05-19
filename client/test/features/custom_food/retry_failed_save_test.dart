@@ -220,7 +220,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(repo.createCalls, equals(2),
-          reason: 'Retry must re-invoke createCustom against the same draft');
+          reason: 'Retry must re-invoke createCustom against the same draft',);
       // Success path: screen pops back to the host, draft reset.
       expect(find.text('open form'), findsOneWidget);
       expect(container.read(customFoodDraftProvider).name, isEmpty);
@@ -257,7 +257,7 @@ void main() {
             isDefault: true,
           ),
         ],
-      ));
+      ),);
       // The first call above counted; reset so the assertions focus
       // on screen-driven calls below.
       repo.createCalls = 0;
@@ -312,7 +312,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(repo.updateCalls, equals(2),
-          reason: 'Retry must re-invoke updateCustom against the same draft');
+          reason: 'Retry must re-invoke updateCustom against the same draft',);
       // Popped back to host.
       expect(find.text('open edit'), findsOneWidget);
     },

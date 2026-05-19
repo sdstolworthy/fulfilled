@@ -75,7 +75,7 @@ void main() {
       await tester.pumpWidget(_harness(
         meal: Meal.breakfast,
         onCopyMeal: (_) {},
-      ));
+      ),);
       await tester.pump();
 
       expect(find.byIcon(Icons.more_horiz_outlined), findsOneWidget);
@@ -93,7 +93,7 @@ void main() {
       await tester.pumpWidget(_harness(
         meal: Meal.lunch,
         onCopyMeal: (_) {},
-      ));
+      ),);
       await tester.pumpAndSettle();
 
       await tester.tap(find.byIcon(Icons.more_horiz_outlined));
@@ -110,7 +110,7 @@ void main() {
       await tester.pumpWidget(_harness(
         meal: Meal.dinner,
         onCopyMeal: (m) => captured = m,
-      ));
+      ),);
       await tester.pumpAndSettle();
 
       await tester.tap(find.byIcon(Icons.more_horiz_outlined));
@@ -130,7 +130,7 @@ void main() {
         meal: Meal.snack,
         onCopyMeal: (m) => captured = m,
         canCopyMeal: (_) => false,
-      ));
+      ),);
       await tester.pumpAndSettle();
 
       // The icon is still rendered (architect §3.4 (A): icon stays

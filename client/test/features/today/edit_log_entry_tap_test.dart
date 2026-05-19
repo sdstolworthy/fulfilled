@@ -223,7 +223,7 @@ void main() {
         entry: entry,
         repo: repo,
         foodResult: _testFood(),
-      ));
+      ),);
       await tester.pump();
 
       // Sanity: the row rendered with the food name.
@@ -274,7 +274,7 @@ void main() {
         // Even if the food override is provided, the pending gate
         // should short-circuit before the fetch runs.
         foodResult: _testFood(),
-      ));
+      ),);
       await tester.pump();
 
       await tester.tap(find.text('Test food'));
@@ -311,7 +311,7 @@ void main() {
         repo: repo,
         // The provider throws on read — emulates a 404 / network error.
         foodResult: FoodNotFoundError(entry.foodId),
-      ));
+      ),);
       await tester.pump();
 
       await tester.tap(find.text('Test food'));
@@ -348,7 +348,7 @@ void main() {
       await tester.pumpWidget(_harness(
         entry: entry,
         repo: repo,
-      ));
+      ),);
       await tester.pump();
 
       // The Semantics label is the merged announcement — food name,
@@ -402,7 +402,7 @@ void main() {
       await tester.pumpWidget(_harness(
         entry: quickAddEntry,
         repo: repo,
-      ));
+      ),);
       await tester.pump();
 
       // Pre-state: no quick-add edit sheet open.

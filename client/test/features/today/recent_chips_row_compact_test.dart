@@ -275,9 +275,9 @@ void main() {
       // pill itself sits directly above the meal grid, so this also
       // pins "strip above the meals".
       expect(ringTopY < stripTopY, isTrue,
-          reason: 'ring summary card should be above the recent-chips strip');
+          reason: 'ring summary card should be above the recent-chips strip',);
       expect(stripTopY < pillTopY, isTrue,
-          reason: 'recent-chips strip should be above the empty-day pill');
+          reason: 'recent-chips strip should be above the empty-day pill',);
     },
   );
 
@@ -313,9 +313,9 @@ void main() {
       // The sheet opened in create mode (existing == null).
       final body = tester.widget<LogEntrySheetBody>(find.byType(LogEntrySheetBody));
       expect(body.existing, isNull,
-          reason: 'chip tap should open create mode, not edit mode');
+          reason: 'chip tap should open create mode, not edit mode',);
       expect(body.defaultMeal, expectedMeal,
-          reason: 'chip tap should seed defaultMeal == mealForLocalTime(now)');
+          reason: 'chip tap should seed defaultMeal == mealForLocalTime(now)',);
 
       // And the meal chip picker reflects the seeded meal.
       final picker = tester.widget<MealChipPicker>(find.byType(MealChipPicker));

@@ -31,7 +31,7 @@ void main() {
 
     test('note: "x" → emits "note": "x"', () {
       expect(const LogPatch(note: 'x').toJson(),
-          <String, dynamic>{'note': 'x'});
+          <String, dynamic>{'note': 'x'},);
     });
 
     test('clearNote: true with null note → emits "note": null', () {
@@ -59,7 +59,7 @@ void main() {
         const LogPatch(note: 'x'),
         const LogPatch(clearNote: true),
         LogPatch(quantity: Decimal.one),
-        LogPatch(meal: Meal.lunch, servingId: 'sv_x'),
+        const LogPatch(meal: Meal.lunch, servingId: 'sv_x'),
         LogPatch(consumedOn: DateTime(2026, 5, 16)),
       ];
       for (final p in patches) {

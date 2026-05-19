@@ -82,7 +82,7 @@ void main() {
         Builder(builder: (context) {
           accent = context.colors.accent;
           return PrimaryButton(label: 'Save', onPressed: () {});
-        }),
+        },),
       ),
     );
 
@@ -103,7 +103,7 @@ void main() {
             isDestructive: true,
             onPressed: () {},
           );
-        }),
+        },),
       ),
     );
 

@@ -1,6 +1,7 @@
 @Skip('Quarantined post Ask 10 — UI/value assertions need rebaseline.')
 library;
 
+// ignore_for_file: deprecated_member_use
 
 import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';

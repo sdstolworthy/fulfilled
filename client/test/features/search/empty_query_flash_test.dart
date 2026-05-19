@@ -138,13 +138,13 @@ void main() {
       await tester.pump();
 
       expect(find.text('RESULTS'), findsNothing,
-          reason: 'Results header must not linger after the field clears');
+          reason: 'Results header must not linger after the field clears',);
       expect(find.byType(SearchResultRow), findsNothing,
           reason: 'Stale result rows must not paint between query clear and '
-              'debounce settle');
+              'debounce settle',);
       expect(find.byType(QuickChipRow), findsNWidgets(2),
           reason: 'Chip rest-state must return on the same frame the query '
-              'becomes empty');
+              'becomes empty',);
       expect(find.text('RECENT'), findsOneWidget);
       expect(find.text('FREQUENT'), findsOneWidget);
     },

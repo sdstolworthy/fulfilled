@@ -112,7 +112,7 @@ void main() {
       final h = _build((req) => jsonResponse(
             200,
             _page(const <Map<String, dynamic>>[], limit: 1),
-          ));
+          ),);
       await expectLater(
         () => h.repo.latest(),
         throwsA(isA<WeightNotFoundError>()),
@@ -159,7 +159,7 @@ void main() {
       final h = _build((req) => jsonResponse(
             201,
             _entryJson(id: 'w_new', date: '2026-05-15', weightKg: '79.5'),
-          ));
+          ),);
       await h.repo.create(79.5, DateTime(2026, 5, 15));
       final body = h.adapter.requests.single.data as Map<String, dynamic>;
       expect(body['weight_kg'], equals('79.5'));
@@ -206,7 +206,7 @@ void main() {
           );
         }
         rows.sort((a, b) =>
-            (b['recorded_on'] as String).compareTo(a['recorded_on'] as String));
+            (b['recorded_on'] as String).compareTo(a['recorded_on'] as String),);
 
         final h = _build((_) => jsonResponse(200, _page(rows)));
         final series = await h.repo.series(WeightRange.oneMonth);

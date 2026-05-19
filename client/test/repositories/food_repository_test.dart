@@ -350,7 +350,7 @@ void main() {
             isDefault: true,
           ),
         ],
-      ));
+      ),);
 
       expect(adapter.requests.single.method, equalsIgnoringCase('POST'));
       expect(adapter.requests.single.path, equals('/foods'));

@@ -66,7 +66,7 @@ void main() {
     }
   });
 
-  Widget _harness() {
+  Widget harness() {
     container = ProviderContainer(
       overrides: <Override>[
         outboxBoxProvider.overrideWithValue(outboxBox),
@@ -98,7 +98,7 @@ void main() {
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
 
-      await tester.pumpWidget(_harness());
+      await tester.pumpWidget(harness());
       await tester.pumpAndSettle();
 
       // Drive the router to /me so the ProfileScreen renders.
@@ -154,7 +154,7 @@ void main() {
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
 
-      await tester.pumpWidget(_harness());
+      await tester.pumpWidget(harness());
       await tester.pumpAndSettle();
 
       final routerContext = tester.element(find.byType(Navigator).first);

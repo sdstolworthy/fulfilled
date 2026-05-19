@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -242,8 +244,6 @@ class _EditGoalFormState extends ConsumerState<_EditGoalForm> {
     final messenger = ScaffoldMessenger.maybeOf(context);
     try {
       final repo = ref.read(goalRepositoryProvider);
-      final today = DateTime.now();
-      final startsOn = DateTime(today.year, today.month, today.day);
       final signedRate = _signedRate(_direction, _rate);
 
       // In-place edit. Preserve every field except the user's edits
@@ -272,7 +272,7 @@ class _EditGoalFormState extends ConsumerState<_EditGoalForm> {
       // intentionally not invalidated here.
       ref.invalidate(activeGoalProvider);
       ref.invalidate(goalsProvider);
-      if (mounted) navigator.maybePop();
+      if (mounted) unawaited(navigator.maybePop());
     } catch (e) {
       if (mounted) {
         setState(() => _saving = false);

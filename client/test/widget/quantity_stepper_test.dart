@@ -126,7 +126,7 @@ void main() {
             showStepperButtons: false,
             onChanged: (_) {},
           );
-        }),
+        },),
       ),
     );
 

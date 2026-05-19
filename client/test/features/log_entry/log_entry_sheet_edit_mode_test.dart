@@ -171,7 +171,7 @@ void main() {
         food: _testFood(),
         existing: existing,
         repo: repo,
-      ));
+      ),);
       await tester.pump();
 
       // Header suffix.
@@ -215,7 +215,7 @@ void main() {
       food: _testFood(),
       existing: existing,
       repo: repo,
-    ));
+    ),);
     await tester.pump();
 
     // Initially the button is disabled (form matches the seed exactly).
@@ -249,7 +249,7 @@ void main() {
         food: _testFood(),
         existing: existing,
         repo: repo,
-      ));
+      ),);
       await tester.pump();
 
       // Per Ask 10 the stepper now nudges the AMOUNT (in the entered
@@ -290,7 +290,7 @@ void main() {
       food: _testFood(),
       existing: existing,
       repo: repo,
-    ));
+    ),);
     await tester.pump();
 
     // Clear the note field.
@@ -327,7 +327,7 @@ void main() {
         food: _testFood(),
         existing: existing,
         repo: repo,
-      ));
+      ),);
       await tester.pump();
 
       await tester.tap(find.bySemanticsLabel('Increment'));
@@ -360,7 +360,7 @@ void main() {
       food: _testFood(),
       existing: existing,
       repo: repo,
-    ));
+    ),);
     await tester.pump();
 
     await tester.tap(find.bySemanticsLabel('Increment'));
@@ -425,7 +425,7 @@ void main() {
           router: router,
           repo: routerRepo,
           existing: existing,
-        ));
+        ),);
         await tester.pumpAndSettle();
         await tester.tap(find.text('open sheet'));
         await tester.pumpAndSettle();
@@ -445,7 +445,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 50));
 
         expect(router.routerDelegate.currentConfiguration.uri.path,
-            equals(expectedPath));
+            equals(expectedPath),);
       },
     );
 
@@ -520,7 +520,7 @@ void main() {
           router: router,
           repo: routerRepo,
           existing: existing,
-        ));
+        ),);
         await tester.pumpAndSettle();
         await tester.tap(find.text('open sheet'));
         await tester.pumpAndSettle();
@@ -536,9 +536,9 @@ void main() {
         // Route uses **newDate** (May 15), not `existing.consumedOn`
         // (May 14). Architect §6.5 is explicit.
         expect(router.routerDelegate.currentConfiguration.uri.path,
-            equals('/today/2026-05-15'));
+            equals('/today/2026-05-15'),);
         expect(router.routerDelegate.currentConfiguration.uri.path,
-            isNot(equals('/today/2026-05-14')));
+            isNot(equals('/today/2026-05-14')),);
       },
     );
   });

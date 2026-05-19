@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -317,7 +319,7 @@ class _NewGoalFormState extends ConsumerState<_NewGoalForm> {
       //     here would force a re-fetch of the same number.
       ref.invalidate(activeGoalProvider);
       ref.invalidate(goalsProvider);
-      if (mounted) navigator.maybePop();
+      if (mounted) unawaited(navigator.maybePop());
     } catch (e) {
       if (mounted) {
         setState(() => _saving = false);

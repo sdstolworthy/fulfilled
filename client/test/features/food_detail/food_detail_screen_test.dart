@@ -122,7 +122,7 @@ void main() {
     await tester.pumpWidget(_harness(food: _yogurt()));
     await tester.pumpAndSettle();
     expect(find.text('Edit'), findsNothing,
-        reason: 'Edit button must not paint for OFF foods');
+        reason: 'Edit button must not paint for OFF foods',);
   });
 
   testWidgets(
@@ -154,7 +154,7 @@ void main() {
     await tester.pumpWidget(_harness(food: userFood));
     await tester.pumpAndSettle();
     expect(find.text('Edit'), findsOneWidget,
-        reason: 'Edit button must paint for user-source foods');
+        reason: 'Edit button must paint for user-source foods',);
   });
 
   testWidgets(

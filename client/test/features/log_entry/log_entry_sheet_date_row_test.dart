@@ -52,7 +52,7 @@ void main() {
       await tester.pumpWidget(_harness(
         food: _testFood(),
         onSubmit: (_) {},
-      ));
+      ),);
       await tester.pump();
 
       // Row presence — keyed widget exists.
@@ -103,7 +103,7 @@ void main() {
         food: _testFood(),
         onSubmit: (_) {},
         initialDate: backdate,
-      ));
+      ),);
       await tester.pump();
 
       expect(find.text(expected), findsOneWidget);
@@ -123,7 +123,7 @@ void main() {
       await tester.pumpWidget(_harness(
         food: _testFood(),
         onSubmit: (_) {},
-      ));
+      ),);
       await tester.pump();
 
       // No date picker present before tap.
@@ -159,7 +159,7 @@ void main() {
         food: _testFood(),
         onSubmit: (lc) => captured = lc,
         initialDate: backdate,
-      ));
+      ),);
       await tester.pump();
 
       await tester.tap(find.byKey(const Key('log_entry_save_button')));

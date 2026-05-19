@@ -150,7 +150,7 @@ bool _overlayMounted(WidgetTester tester) {
       .widgetList<CustomPaint>(find.descendant(
         of: find.byType(WeightSparklineCard),
         matching: find.byType(CustomPaint),
-      ))
+      ),)
       .any((p) => p.foregroundPainter != null);
 }
 
@@ -210,7 +210,7 @@ void main() {
     await tester.pumpWidget(_scrollHarness(
       series: _series(),
       controller: controller,
-    ));
+    ),);
     await tester.pumpAndSettle();
 
     expect(controller.offset, 0.0);

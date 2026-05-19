@@ -100,7 +100,7 @@ void main() {
 
       final finder = _pillText();
       expect(finder, findsOneWidget,
-          reason: 'pill must render when count == 3 (not zero, not loading)');
+          reason: 'pill must render when count == 3 (not zero, not loading)',);
       final text = tester.widget<Text>(finder);
       expect(text.data, 'This week · 3/7 days logged');
     });
@@ -114,9 +114,9 @@ void main() {
       final text = tester.widget<Text>(finder);
       expect(text.data, 'This week · 7/7 days logged');
       expect(text.style?.color, AppColors.light.accent,
-          reason: 'at 7/7 the text colour must flip to the accent token');
+          reason: 'at 7/7 the text colour must flip to the accent token',);
       expect(text.style?.fontWeight, FontWeight.w600,
-          reason: 'at 7/7 the text weight bumps to w600 for emphasis');
+          reason: 'at 7/7 the text weight bumps to w600 for emphasis',);
     });
 
     testWidgets('pill hidden at 0', (tester) async {
@@ -124,7 +124,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(_pillText(), findsNothing,
-          reason: 'PM doc §2 F10 AC: hidden when count is 0');
+          reason: 'PM doc §2 F10 AC: hidden when count is 0',);
     });
 
     testWidgets('pill renders ink2 below 7/7', (tester) async {
@@ -134,7 +134,7 @@ void main() {
       final text = tester.widget<Text>(_pillText());
       expect(text.style?.color, AppColors.light.ink2,
           reason:
-              'sub-full-week count must render in ink2 (only 7/7 is accent)');
+              'sub-full-week count must render in ink2 (only 7/7 is accent)',);
       expect(text.style?.fontWeight, FontWeight.w400);
     });
 

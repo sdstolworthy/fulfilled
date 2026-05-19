@@ -27,7 +27,7 @@ void main() {
   test('customFoods() does not include the synthetic Quick-add row', () async {
     final foods = await repo.customFoods();
     expect(foods, isNotEmpty,
-        reason: 'seed includes user-authored foods alongside Quick-add');
+        reason: 'seed includes user-authored foods alongside Quick-add',);
     expect(
       foods.any((f) => f.id == 'food_quick_add'),
       isFalse,
@@ -44,7 +44,7 @@ void main() {
     final foods = await repo.customFoods();
     final count = await repo.customCount();
     expect(count, equals(foods.length),
-        reason: 'count mirrors the filtered list exactly');
+        reason: 'count mirrors the filtered list exactly',);
   });
 
   test('lookup() still resolves food_quick_add by id', () async {

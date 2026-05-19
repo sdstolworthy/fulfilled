@@ -242,17 +242,17 @@ void main() {
             recentFoodsProvider.overrideWith((_) async => <Food>[
                   _food('r1', 'Greek yogurt', 130),
                   _food('r2', 'Oatmeal', 150),
-                ]),
+                ],),
             frequentFoodsProvider.overrideWith((_) async => <Food>[
                   _food('f1', 'Eggs, large', 72),
                   _food('f2', 'Chicken breast', 165),
-                ]),
+                ],),
             weightSeriesProvider(WeightRange.oneMonth)
                 .overrideWith((_) async => <WeightSeriesPoint>[
                       _wp(DateTime(2026, 4, 14), 80.2),
                       _wp(DateTime(2026, 4, 28), 79.4),
                       _wp(DateTime(2026, 5, 14), 78.4),
-                    ]),
+                    ],),
           ],
         ),
       );

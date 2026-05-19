@@ -69,7 +69,7 @@ class MealSection extends StatelessWidget {
   /// UX-106 F1 — per-meal copy-day entry surface. When non-null, the
   /// `_Header` renders a 36-px `IconButton36` (`Icons.more_horiz_outlined`)
   /// to the right of the kcal subtotal whose `showMenu` exposes a single
-  /// "Copy <Meal> from…" item. Selecting that item invokes
+  /// `Copy <Meal> from…` item. Selecting that item invokes
   /// `onCopyMeal(meal)` — the day view threads `(m) => showCopyDaySheet(
   /// context, targetDate: date, preselectMeals: [m])`. Null = the overflow
   /// icon is not rendered (back-compat for test fixtures that don't opt
@@ -146,7 +146,7 @@ class _Header extends StatelessWidget {
 
   /// UX-106 — when non-null the header renders the trailing overflow
   /// icon. The icon's `showMenu` is rooted on its render box; selecting
-  /// "Copy <Meal> from…" calls this back.
+  /// `Copy <Meal> from…` calls this back.
   final void Function(Meal meal)? onCopyMeal;
 
   /// Optional predicate gating the overflow icon's enabled state.
@@ -214,7 +214,7 @@ class _Header extends StatelessWidget {
 }
 
 /// UX-106 F1 — the trailing 36-px overflow icon on a `_Header` whose
-/// `showMenu` opens a single-item popup: "Copy <Meal> from…". Tapping
+/// `showMenu` opens a single-item popup: `Copy <Meal> from…`. Tapping
 /// the menu item invokes [onCopyMeal] with the section's [meal] — the
 /// day view threads that to `showCopyDaySheet(context, targetDate: date,
 /// preselectMeals: [meal])` (architect §3.4 (A)). The icon greys when
@@ -249,7 +249,7 @@ class _CopyMealOverflow extends StatelessWidget {
       Rect.fromPoints(
         button.localToGlobal(Offset.zero, ancestor: overlay),
         button.localToGlobal(button.size.bottomRight(Offset.zero),
-            ancestor: overlay),
+            ancestor: overlay,),
       ),
       Offset.zero & overlay.size,
     );

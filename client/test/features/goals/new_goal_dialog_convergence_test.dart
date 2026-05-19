@@ -151,7 +151,7 @@ void main() {
         rateKgPerWeek: Decimal.parse('0.5'),
       );
       expect(expected, isNotNull,
-          reason: 'seed user has all profile fields populated');
+          reason: 'seed user has all profile fields populated',);
 
       // The preview hero renders the formatted kcal (with thousands
       // separator) — match the same formatter the widget uses.

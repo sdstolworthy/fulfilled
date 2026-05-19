@@ -43,7 +43,7 @@ class FoodSummaryCard extends StatelessWidget {
                 amountLabel: defaultServing == null
                     ? null
                     : formatAmountUnit(
-                        defaultServing.amount, defaultServing.unit),
+                        defaultServing.amount, defaultServing.unit,),
               ),
             ),
             if (macros != null)

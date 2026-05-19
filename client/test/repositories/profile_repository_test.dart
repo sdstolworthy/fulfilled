@@ -85,7 +85,7 @@ void main() {
     final h = _build((req) {
       if (req.path == '/me') {
         return jsonResponse(
-            200, _meBody(weightUnit: 'lb', heightUnit: 'ft_in'));
+            200, _meBody(weightUnit: 'lb', heightUnit: 'ft_in'),);
       }
       if (req.path == '/weights') return jsonResponse(200, _emptyWeightsPage());
       return emptyResponse(404);
@@ -109,7 +109,7 @@ void main() {
         // the round-trip.
         final body = req.data as Map<String, dynamic>;
         return jsonResponse(
-            200, _meBody(weightUnit: body['weight_unit'] as String?));
+            200, _meBody(weightUnit: body['weight_unit'] as String?),);
       }
       if (req.path == '/weights') return jsonResponse(200, _emptyWeightsPage());
       return emptyResponse(404);

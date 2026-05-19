@@ -58,7 +58,7 @@ void main() {
       matching: find.byWidgetPredicate(
         (w) => w is SizedBox && w.width == 36 && w.height == 36,
       ),
-    ));
+    ),);
     expect(box.width, 36);
     expect(box.height, 36);
   });
@@ -74,7 +74,7 @@ void main() {
             tooltip: 'Close',
             onPressed: () {},
           );
-        }),
+        },),
       ),
     );
 

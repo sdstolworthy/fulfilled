@@ -72,7 +72,7 @@ void main() {
 
     await tester.pumpWidget(_harness(
       SearchResultRow(food: food, query: 'greek'),
-    ));
+    ),);
     await tester.pumpAndSettle();
 
     // Brand + serving — "Chobani · 1 cup".
@@ -100,7 +100,7 @@ void main() {
 
     await tester.pumpWidget(_harness(
       SearchResultRow(food: food, query: 'greek'),
-    ));
+    ),);
     await tester.pumpAndSettle();
 
     // The sub-line says "Logged Today · 4×".
@@ -122,7 +122,7 @@ void main() {
 
     await tester.pumpWidget(_harness(
       SearchResultRow(food: food, query: 'greek'),
-    ));
+    ),);
     await tester.pumpAndSettle();
 
     expect(find.text('Logged Today · 2×'), findsOneWidget);
@@ -144,7 +144,7 @@ void main() {
 
     await tester.pumpWidget(_harness(
       SearchResultRow(food: food, query: 'greek'),
-    ));
+    ),);
     await tester.pumpAndSettle();
 
     expect(find.text('Logged Today'), findsOneWidget);
@@ -166,7 +166,7 @@ void main() {
 
     await tester.pumpWidget(_harness(
       SearchResultRow(food: food, query: 'greek'),
-    ));
+    ),);
     await tester.pumpAndSettle();
 
     // The composed semantic label is on the wrapping Semantics node — find
@@ -192,7 +192,7 @@ void main() {
 
     await tester.pumpWidget(_harness(
       SearchResultRow(food: food, query: 'greek'),
-    ));
+    ),);
     await tester.pumpAndSettle();
 
     // Label starts with the food name, not the F5 prepend.

@@ -36,7 +36,7 @@ void main() {
           return const SizedBox.shrink();
         },
       ),
-    ));
+    ),);
 
     final ctx = captured!;
     final t0 = DateTime(2026, 5, 16, 12, 0, 0);
@@ -56,7 +56,7 @@ void main() {
 
     expect(firstShown, isTrue, reason: 'first call should show');
     expect(secondShown, isFalse,
-        reason: 'second call within 3 s should be swallowed');
+        reason: 'second call within 3 s should be swallowed',);
 
     await tester.pump();
     // Only the first SnackBar's content text renders. The second
@@ -76,7 +76,7 @@ void main() {
           return const SizedBox.shrink();
         },
       ),
-    ));
+    ),);
     final ctx = captured!;
     final t0 = DateTime(2026, 5, 16, 12, 0, 0);
 
@@ -96,7 +96,7 @@ void main() {
 
     expect(firstShown, isTrue);
     expect(secondShown, isTrue,
-        reason: 'second call after 3 s cooldown should render');
+        reason: 'second call after 3 s cooldown should render',);
   });
 
   testWidgets('different keys render independently within the cooldown',
@@ -109,7 +109,7 @@ void main() {
           return const SizedBox.shrink();
         },
       ),
-    ));
+    ),);
     final ctx = captured!;
     final t0 = DateTime(2026, 5, 16, 12, 0, 0);
 
@@ -129,6 +129,6 @@ void main() {
 
     expect(firstShown, isTrue);
     expect(secondShown, isTrue,
-        reason: 'a different key bypasses the cooldown');
+        reason: 'a different key bypasses the cooldown',);
   });
 }

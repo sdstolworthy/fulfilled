@@ -91,7 +91,7 @@ void main() {
           frequents: <Food>[_food('f1', 'Chicken breast')],
           onTapFood: (_) {},
         ),
-      ));
+      ),);
       await tester.pumpAndSettle();
 
       // Eyebrow + section headers identify the card branch.
@@ -119,7 +119,7 @@ void main() {
           frequents: const <Food>[],
           onTapFood: (_) {},
         ),
-      ));
+      ),);
       await tester.pumpAndSettle();
 
       // No eyebrow, no section headers — the card chrome is gone.
@@ -149,7 +149,7 @@ void main() {
           frequents: const <Food>[],
           onTapFood: (_) {},
         ),
-      ));
+      ),);
       await tester.pumpAndSettle();
 
       // Food 0..3 render; Food 4 and 5 do not.
@@ -177,7 +177,7 @@ void main() {
           frequents: const <Food>[],
           onTapFood: (_) {},
         ),
-      ));
+      ),);
       await tester.pumpAndSettle();
 
       // The widget renders nothing — no ListView, no card, no eyebrow.
@@ -209,7 +209,7 @@ void main() {
           frequents: const <Food>[],
           onTapFood: (food) => tapped.add(food.id),
         ),
-      ));
+      ),);
       await tester.pumpAndSettle();
 
       await tester.tap(find.text('Greek yogurt'));
