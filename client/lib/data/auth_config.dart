@@ -36,3 +36,41 @@ final authConfigBoxProvider = Provider<Box<String>>((ref) {
     'Hive box. See main.dart for the override.',
   );
 });
+
+/// Reactive seam over the auth-config Hive box's `base_url` cell.
+///
+/// Audit-fix F5: the login controller used to write to Hive and then
+/// imperatively `ref.invalidate(apiBaseUrlProvider)` from outside the
+/// network-config domain. That worked but hid the dependency arrow —
+/// reading `apiBaseUrlProvider` you couldn't tell what made it
+/// recompute. The notifier lifts the write back into Riverpod so the
+/// arrow is one-way: login calls `setBaseUrl`; downstream watchers
+/// (`apiBaseUrlProvider`, …) `ref.watch(baseUrlProvider)` and rebuild
+/// automatically.
+///
+/// Persistence still terminates in Hive — the notifier is a thin
+/// adapter, not a cache. Initial state is read from the box at
+/// construction. Test seam: override `authConfigBoxProvider` with a
+/// pre-seeded box and `baseUrlProvider`'s initial state picks that up;
+/// override `baseUrlProvider` directly when a test wants to force a
+/// specific value without touching Hive.
+final baseUrlProvider =
+    StateNotifierProvider<BaseUrlNotifier, String?>((ref) {
+  return BaseUrlNotifier(ref.watch(authConfigBoxProvider));
+});
+
+class BaseUrlNotifier extends StateNotifier<String?> {
+  BaseUrlNotifier(this._box) : super(_box.get(AuthConfigKey.baseUrl));
+
+  final Box<String> _box;
+
+  /// Persist [url] to the auth-config box and publish it through the
+  /// notifier so every watcher rebuilds. Order matters: write first,
+  /// publish second — a downstream that synchronously re-reads the
+  /// box on rebuild (e.g. the profile screen's server-URL row) finds
+  /// the persisted value rather than the previous one.
+  Future<void> setBaseUrl(String url) async {
+    await _box.put(AuthConfigKey.baseUrl, url);
+    state = url;
+  }
+}

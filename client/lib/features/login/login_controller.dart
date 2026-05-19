@@ -10,10 +10,12 @@
 ///   2. **URL normalize** — mobile only (skipped on `kIsWeb`).
 ///   3. **Health probe** — `GET <candidate>/health` with an 8s
 ///      budget; classifies failures into [HealthProbeErrorKind].
-///   4. **Persist + invalidate** — write `baseUrl` to the Hive box
-///      and `ref.invalidate(apiBaseUrlProvider)` so
-///      `apiClientProvider` rebuilds Dio against the new URL
-///      **before** phase 5 fires (Case F asserts this ordering).
+///   4. **Persist via baseUrlProvider** — push the normalized URL
+///      through the `baseUrlProvider` notifier. The notifier writes
+///      to Hive and publishes to every `ref.watch(baseUrlProvider)`
+///      observer — `apiBaseUrlProvider` is one, and `apiClientProvider`
+///      chains off it, so Dio rebuilds against the new URL **before**
+///      phase 5 fires (Case F asserts this ordering).
 ///   5. **Credential POST** — `signInWithCredentials(...)` through
 ///      the freshly-wired Dio.
 ///
@@ -238,16 +240,17 @@ class LoginController extends StateNotifier<LoginFormState> {
         return false;
       }
 
-      // ── Phase 4: Persist + invalidate. ──
+      // ── Phase 4: Persist via the base-URL notifier. ──
       //
-      // Order matters: write to Hive **then** invalidate so
-      // `apiClientProvider` rebuilds against the fresh URL. The
-      // invalidate must complete before phase 5 fires — Case F asserts
-      // this via call ordering.
-      await _ref
-          .read(authConfigBoxProvider)
-          .put(AuthConfigKey.baseUrl, normalized);
-      _ref.invalidate(apiBaseUrlProvider);
+      // The notifier writes to Hive AND publishes the new value to
+      // every watcher of `baseUrlProvider` — `apiBaseUrlProvider` is
+      // one of those, and `apiClientProvider` chains off it, so Dio
+      // rebuilds against the fresh URL before phase 5 fires.
+      // Audit-fix F5: this used to be a hand-rolled `box.put +
+      // invalidate(apiBaseUrlProvider)` from outside the network-config
+      // domain. Case F still asserts the call ordering, but it now
+      // observes the notifier emission rather than the invalidate.
+      await _ref.read(baseUrlProvider.notifier).setBaseUrl(normalized);
 
       // ── Phase 5: Credential POST. ──
       try {
@@ -291,9 +294,14 @@ class LoginController extends StateNotifier<LoginFormState> {
   /// (phase 1 or phase 5) so the next visit pre-fills the URL +
   /// username fields.
   Future<void> _persistConfig(String url, String username) async {
-    final box = _ref.read(authConfigBoxProvider);
-    await box.put(AuthConfigKey.baseUrl, url);
-    await box.put(AuthConfigKey.lastUsername, username);
+    // baseUrl flows through the notifier (audit-fix F5) so every
+    // watcher of `baseUrlProvider` rebuilds. lastUsername has no
+    // Riverpod watchers — only the form-prefill reads it — so a
+    // direct Hive write is fine.
+    await _ref.read(baseUrlProvider.notifier).setBaseUrl(url);
+    await _ref
+        .read(authConfigBoxProvider)
+        .put(AuthConfigKey.lastUsername, username);
   }
 
   /// Test seam — clears the `auth_config` Hive box. Used by

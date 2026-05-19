@@ -105,11 +105,15 @@ final apiBaseUrlProvider = Provider<String?>((ref) {
     return '${base.origin}/api/v1';
   }
 
-  // Rule 3: mobile — read from the auth_config Hive box. May be `null`
-  // on a fresh install (pre-login); the redirect rule (LOG-007) keeps
-  // that state pinned to the login route.
-  final box = ref.watch(authConfigBoxProvider);
-  final fromBox = box.get(AuthConfigKey.baseUrl);
+  // Rule 3: mobile — read the persisted base URL through
+  // `baseUrlProvider` (the reactive notifier over the auth-config
+  // Hive cell). May be `null` on a fresh install (pre-login); the
+  // redirect rule (LOG-007) keeps that state pinned to the login
+  // route. The login controller writes via the notifier, so this
+  // provider rebuilds automatically when the URL changes — no
+  // sideways `ref.invalidate(apiBaseUrlProvider)` from outside the
+  // network-config domain.
+  final fromBox = ref.watch(baseUrlProvider);
   if (fromBox != null && fromBox.isNotEmpty) return fromBox;
 
   // Rule 4: mobile, pre-submit fallback. The Hive `baseUrl` is only
