@@ -1,6 +1,5 @@
 import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import 'package:fulfilled/widgets/activity_option.dart';
@@ -8,59 +7,95 @@ import 'package:fulfilled/widgets/height_stepper.dart';
 import 'package:fulfilled/widgets/weight_stepper.dart';
 
 import '../../../domain/enums.dart';
-import '../../../providers/draft_providers.dart';
 import '../../../theme/context_extensions.dart';
 import 'segmented_select.dart';
 
 /// "About you" step (2 of 3). Sex segmented control, birth-date picker,
-/// height + weight 2-col, activity-level option list. Every field
-/// mutates the `onboardingDraftProvider` notifier directly so the screen
-/// root re-reads the draft for navigation decisions without prop-drilling.
+/// height + weight 2-col, activity-level option list.
+///
+/// Per §4.4 of `specs/testing_guide.md` this leaf is a pure presentation
+/// widget: it takes the draft fields it renders + callbacks for each
+/// mutation. The container ([OnboardingScreen]) owns the provider reads
+/// and threads the callbacks back through to
+/// `onboardingDraftProvider.notifier`.
 ///
 /// T-17: height and weight are `Decimal` end-to-end. The QL-104 sweep
 /// deleted the inline `_NumberStepper` + `_formatHeightCm` helper —
 /// height now delegates display + stepping to the lifted
 /// [HeightStepper] (QL-103) which renders cm OR ft+in based on
-/// [onboardingHeightUnitProvider]. Weight delegates display + stepping
+/// [heightUnit] (resolved by the container from
+/// `onboardingHeightUnitProvider`). Weight delegates display + stepping
 /// to the lifted [WeightStepper] (LU-007), which renders the active
 /// unit's number + suffix from canonical kg.
 ///
 /// QL-104: above the height + weight row sits a single `Units` label
 /// with two stacked `SegmentedSelect`s — one for weight (kg/lb/st), one
 /// for height (cm/ft·in). The picked units come from
-/// [onboardingWeightUnitProvider] / [onboardingHeightUnitProvider] —
-/// locale defaults on first build, user-chosen the moment a segment is
-/// tapped. Both land on `UserPatch.weightUnit` / `UserPatch.heightUnit`
-/// at final submit (onboarding_screen.dart). `OnboardingDraft.empty()`
-/// returns null for both unit fields; the QL-107 "Start over"
-/// affordance (covered later) resets to that state, which means the
-/// locale default takes over until the user explicitly picks.
+/// [weightUnit] / [heightUnit] — locale defaults on first build,
+/// user-chosen the moment a segment is tapped. Both land on
+/// `UserPatch.weightUnit` / `UserPatch.heightUnit` at final submit
+/// (onboarding_screen.dart).
 ///
 /// T-02: the steppers and the visible cm/kg numbers use tabular figures
 /// via `bodyNumeric` so a single-tap up/down doesn't jitter horizontally.
-class Step2AboutYou extends ConsumerWidget {
-  const Step2AboutYou({super.key});
+class Step2AboutYou extends StatelessWidget {
+  const Step2AboutYou({
+    required this.sex,
+    required this.birthDate,
+    required this.heightCm,
+    required this.currentWeightKg,
+    required this.activityLevel,
+    required this.weightUnit,
+    required this.heightUnit,
+    required this.onSexChanged,
+    required this.onBirthDateChanged,
+    required this.onHeightCmChanged,
+    required this.onCurrentWeightKgChanged,
+    required this.onActivityLevelChanged,
+    required this.onWeightUnitChanged,
+    required this.onHeightUnitChanged,
+    super.key,
+  });
+
+  // Draft slice fields.
+  final Sex? sex;
+  final DateTime? birthDate;
+  final Decimal? heightCm;
+  final Decimal? currentWeightKg;
+  final ActivityLevel? activityLevel;
+
+  /// Active weight unit — resolved by the container from
+  /// `onboardingWeightUnitProvider` (draft.weightUnit ?? locale default).
+  final WeightUnit weightUnit;
+
+  /// Active height unit — resolved by the container from
+  /// `onboardingHeightUnitProvider` (draft.heightUnit ?? locale default).
+  final HeightUnit heightUnit;
+
+  // Callbacks. Each one is wired by the container to the matching
+  // setter on `onboardingDraftProvider.notifier`.
+  final ValueChanged<Sex?> onSexChanged;
+  final ValueChanged<DateTime?> onBirthDateChanged;
+  final ValueChanged<Decimal?> onHeightCmChanged;
+  final ValueChanged<Decimal?> onCurrentWeightKgChanged;
+  final ValueChanged<ActivityLevel?> onActivityLevelChanged;
+  final ValueChanged<WeightUnit> onWeightUnitChanged;
+  final ValueChanged<HeightUnit> onHeightUnitChanged;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final draft = ref.watch(onboardingDraftProvider);
-    final notifier = ref.read(onboardingDraftProvider.notifier);
-    final activeWeightUnit = ref.watch(onboardingWeightUnitProvider);
-    final activeHeightUnit = ref.watch(onboardingHeightUnitProvider);
-
+  Widget build(BuildContext context) {
     // WeightStepper takes a non-nullable canonical kg. Seed an empty
     // draft with a sensible adult midpoint (70 kg). Tapping +/- in any
     // active unit then writes the canonical kg back through
-    // `setCurrentWeightKg`, matching the height column's "tap to seed"
-    // affordance.
-    final weightSeedKg =
-        draft.currentWeightKg ?? Decimal.parse('70');
+    // `onCurrentWeightKgChanged`, matching the height column's
+    // "tap to seed" affordance.
+    final weightSeedKg = currentWeightKg ?? Decimal.parse('70');
 
     // HeightStepper also takes a non-nullable canonical cm; mirror
     // the weight seed pattern with the adult midpoint (170 cm). The
-    // stepper writes the new canonical cm back through `setHeightCm`
-    // on every commit.
-    final heightSeedCm = draft.heightCm ?? Decimal.fromInt(170);
+    // stepper writes the new canonical cm back through
+    // `onHeightCmChanged` on every commit.
+    final heightSeedCm = heightCm ?? Decimal.fromInt(170);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -70,15 +105,15 @@ class Step2AboutYou extends ConsumerWidget {
         SegmentedSelect<Sex>(
           options: const <Sex>[Sex.male, Sex.female, Sex.other],
           labelBuilder: _sexLabel,
-          selected: draft.sex,
-          onChanged: notifier.setSex,
+          selected: sex,
+          onChanged: onSexChanged,
         ),
         SizedBox(height: context.space.x3),
         const _FieldLabel('Birth date'),
         SizedBox(height: context.space.x2),
         _BirthDateField(
-          value: draft.birthDate,
-          onChanged: notifier.setBirthDate,
+          value: birthDate,
+          onChanged: onBirthDateChanged,
         ),
         SizedBox(height: context.space.x3),
         const _FieldLabel('Units'),
@@ -96,8 +131,8 @@ class Step2AboutYou extends ConsumerWidget {
                 WeightUnit.st,
               ],
               labelBuilder: _weightUnitLabel,
-              selected: activeWeightUnit,
-              onChanged: notifier.setWeightUnit,
+              selected: weightUnit,
+              onChanged: onWeightUnitChanged,
             ),
             SizedBox(height: context.space.x2),
             const _SubLabel('Height'),
@@ -109,8 +144,8 @@ class Step2AboutYou extends ConsumerWidget {
                 HeightUnit.ftIn,
               ],
               labelBuilder: _heightUnitLabel,
-              selected: activeHeightUnit,
-              onChanged: notifier.setHeightUnit,
+              selected: heightUnit,
+              onChanged: onHeightUnitChanged,
             ),
           ],
         ),
@@ -127,8 +162,8 @@ class Step2AboutYou extends ConsumerWidget {
                   HeightStepper(
                     key: const Key('onboarding-height-stepper'),
                     value: heightSeedCm,
-                    unitOverride: activeHeightUnit,
-                    onChanged: notifier.setHeightCm,
+                    unitOverride: heightUnit,
+                    onChanged: onHeightCmChanged,
                     semanticsLabel: 'Height',
                   ),
                 ],
@@ -144,9 +179,9 @@ class Step2AboutYou extends ConsumerWidget {
                   WeightStepper(
                     key: const Key('onboarding-weight-stepper'),
                     value: weightSeedKg,
-                    unitOverride: activeWeightUnit,
+                    unitOverride: weightUnit,
                     minKg: _d('30'),
-                    onChanged: notifier.setCurrentWeightKg,
+                    onChanged: onCurrentWeightKgChanged,
                     semanticsLabel: 'Weight',
                   ),
                 ],
@@ -158,8 +193,8 @@ class Step2AboutYou extends ConsumerWidget {
         const _FieldLabel('Activity level'),
         SizedBox(height: context.space.x2),
         _ActivityList(
-          selected: draft.activityLevel,
-          onSelect: notifier.setActivityLevel,
+          selected: activityLevel,
+          onSelect: onActivityLevelChanged,
         ),
       ],
     );

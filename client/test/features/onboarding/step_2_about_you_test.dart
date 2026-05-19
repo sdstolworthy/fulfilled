@@ -101,6 +101,10 @@ class _FakeGoalRepository implements GoalRepository {
 }
 
 /// Minimal harness for pumping `Step2AboutYou` in isolation.
+///
+/// Post §4.4 split: the leaf is a pure `StatelessWidget`. The harness
+/// has to read the providers and thread values + callbacks in. This
+/// mirrors what the real container ([OnboardingScreen]) does.
 Widget _step2Harness({
   required ProviderContainer container,
 }) {
@@ -108,10 +112,31 @@ Widget _step2Harness({
     container: container,
     child: MaterialApp(
       theme: buildLightTheme(),
-      home: const Scaffold(
+      home: Scaffold(
         body: SingleChildScrollView(
-          padding: EdgeInsets.all(16),
-          child: Step2AboutYou(),
+          padding: const EdgeInsets.all(16),
+          child: Consumer(
+            builder: (ctx, ref, _) {
+              final draft = ref.watch(onboardingDraftProvider);
+              final notifier = ref.read(onboardingDraftProvider.notifier);
+              return Step2AboutYou(
+                sex: draft.sex,
+                birthDate: draft.birthDate,
+                heightCm: draft.heightCm,
+                currentWeightKg: draft.currentWeightKg,
+                activityLevel: draft.activityLevel,
+                weightUnit: ref.watch(onboardingWeightUnitProvider),
+                heightUnit: ref.watch(onboardingHeightUnitProvider),
+                onSexChanged: notifier.setSex,
+                onBirthDateChanged: notifier.setBirthDate,
+                onHeightCmChanged: notifier.setHeightCm,
+                onCurrentWeightKgChanged: notifier.setCurrentWeightKg,
+                onActivityLevelChanged: notifier.setActivityLevel,
+                onWeightUnitChanged: notifier.setWeightUnit,
+                onHeightUnitChanged: notifier.setHeightUnit,
+              );
+            },
+          ),
         ),
       ),
     ),

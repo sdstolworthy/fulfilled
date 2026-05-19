@@ -1,18 +1,22 @@
 import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../domain/enums.dart';
 import '../../../domain/units/energy.dart';
 import '../../../domain/units/macros.dart';
-import '../../../providers/draft_providers.dart';
 import '../../../theme/context_extensions.dart';
 import '../../../domain/calories/estimate.dart';
 import 'goal_option.dart';
 
 /// "Set a goal" step (3 of 3). Direction picker + rate slider + a
 /// `LogPreviewBlock`-shaped daily-target preview. Calorie target is
-/// derived **client-side** from the draft via [estimateCalories].
+/// derived **client-side** by the container via [estimateCalories] and
+/// passed in as [estimate].
+///
+/// Per §4.4 of `specs/testing_guide.md` this leaf is a pure presentation
+/// widget — the container ([OnboardingScreen]) owns the draft read and
+/// the estimate computation, and threads the callbacks back through to
+/// `onboardingDraftProvider.notifier`.
 ///
 /// The preview block visual mirrors the inventory's `LogPreviewBlock` —
 /// accent-soft tinted card with the kcal hero on the left and macro
@@ -20,48 +24,57 @@ import 'goal_option.dart';
 /// onboarding context wants a slightly different label ("Your daily
 /// target" vs. "Will log"); when the foundation lands a parameterised
 /// version we'll switch.
-class Step3Goal extends ConsumerWidget {
-  const Step3Goal({super.key});
+class Step3Goal extends StatelessWidget {
+  const Step3Goal({
+    required this.direction,
+    required this.rateKgPerWeek,
+    required this.estimate,
+    required this.onDirectionChanged,
+    required this.onRateKgPerWeekChanged,
+    super.key,
+  });
+
+  /// Selected goal direction. Null when the user hasn't picked yet.
+  final GoalDirection? direction;
+
+  /// Unsigned kg/week — null when the user hasn't set a rate (or picked
+  /// `maintain`, which has no rate). The rate card only renders when
+  /// `direction` is non-null and non-maintain.
+  final Decimal? rateKgPerWeek;
+
+  /// Pre-computed estimate from the container's `estimateCalories`
+  /// call. Null when the upstream draft is incomplete; the preview
+  /// renders a "fill in step 2" message in that case.
+  final CalorieEstimate? estimate;
+
+  /// Fires when the direction segment changes. The container is
+  /// responsible for any side-effects (e.g. seeding `rateKgPerWeek` to
+  /// 0.5 when transitioning to lose/gain with no rate).
+  final ValueChanged<GoalDirection> onDirectionChanged;
+
+  /// Fires when the rate slider commits a new value.
+  final ValueChanged<Decimal?> onRateKgPerWeekChanged;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final draft = ref.watch(onboardingDraftProvider);
-    final notifier = ref.read(onboardingDraftProvider.notifier);
-
+  Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
         _DirectionList(
-          selected: draft.direction,
-          onSelect: (d) {
-            notifier.setDirection(d);
-            // Default to 0.5 kg/week when picking lose/gain and no rate set.
-            if (d != GoalDirection.maintain && draft.rateKgPerWeek == null) {
-              notifier.setRateKgPerWeek(Decimal.parse('0.5'));
-            }
-          },
+          selected: direction,
+          onSelect: onDirectionChanged,
         ),
-        if (draft.direction != null &&
-            draft.direction != GoalDirection.maintain) ...<Widget>[
+        if (direction != null &&
+            direction != GoalDirection.maintain) ...<Widget>[
           SizedBox(height: context.space.x3),
           _RateCard(
-            direction: draft.direction!,
-            rate: draft.rateKgPerWeek ?? Decimal.parse('0.5'),
-            onChanged: notifier.setRateKgPerWeek,
+            direction: direction!,
+            rate: rateKgPerWeek ?? Decimal.parse('0.5'),
+            onChanged: onRateKgPerWeekChanged,
           ),
         ],
         SizedBox(height: context.space.x3),
-        _TargetPreview(
-          estimate: estimateCalories(
-            sex: draft.sex,
-            birthDate: draft.birthDate,
-            heightCm: draft.heightCm,
-            weightKg: draft.currentWeightKg,
-            activityLevel: draft.activityLevel,
-            direction: draft.direction,
-            rateKgPerWeek: draft.rateKgPerWeek,
-          ),
-        ),
+        _TargetPreview(estimate: estimate),
       ],
     );
   }

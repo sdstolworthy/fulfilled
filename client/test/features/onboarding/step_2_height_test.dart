@@ -101,10 +101,31 @@ Widget _step2Harness({required ProviderContainer container}) {
     container: container,
     child: MaterialApp(
       theme: buildLightTheme(),
-      home: const Scaffold(
+      home: Scaffold(
         body: SingleChildScrollView(
-          padding: EdgeInsets.all(16),
-          child: Step2AboutYou(),
+          padding: const EdgeInsets.all(16),
+          child: Consumer(
+            builder: (ctx, ref, _) {
+              final draft = ref.watch(onboardingDraftProvider);
+              final notifier = ref.read(onboardingDraftProvider.notifier);
+              return Step2AboutYou(
+                sex: draft.sex,
+                birthDate: draft.birthDate,
+                heightCm: draft.heightCm,
+                currentWeightKg: draft.currentWeightKg,
+                activityLevel: draft.activityLevel,
+                weightUnit: ref.watch(onboardingWeightUnitProvider),
+                heightUnit: ref.watch(onboardingHeightUnitProvider),
+                onSexChanged: notifier.setSex,
+                onBirthDateChanged: notifier.setBirthDate,
+                onHeightCmChanged: notifier.setHeightCm,
+                onCurrentWeightKgChanged: notifier.setCurrentWeightKg,
+                onActivityLevelChanged: notifier.setActivityLevel,
+                onWeightUnitChanged: notifier.setWeightUnit,
+                onHeightUnitChanged: notifier.setHeightUnit,
+              );
+            },
+          ),
         ),
       ),
     ),

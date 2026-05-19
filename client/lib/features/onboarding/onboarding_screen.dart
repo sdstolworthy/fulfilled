@@ -231,6 +231,14 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
   }
 
   Widget _buildStepShell() {
+    // Per §4.4 of `specs/testing_guide.md` the step leaves are pure
+    // presentation widgets — this container owns the draft + unit
+    // provider reads and threads callbacks back to the notifier.
+    final draft = ref.watch(onboardingDraftProvider);
+    final notifier = ref.read(onboardingDraftProvider.notifier);
+    final activeWeightUnit = ref.watch(onboardingWeightUnitProvider);
+    final activeHeightUnit = ref.watch(onboardingHeightUnitProvider);
+
     switch (_step) {
       case 1:
         return OnboardingStepShell(
@@ -253,7 +261,22 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
           subtitle:
               'We use this to estimate your daily calorie needs. You can change it anytime.',
           onBack: () => _go(1),
-          body: const Step2AboutYou(),
+          body: Step2AboutYou(
+            sex: draft.sex,
+            birthDate: draft.birthDate,
+            heightCm: draft.heightCm,
+            currentWeightKg: draft.currentWeightKg,
+            activityLevel: draft.activityLevel,
+            weightUnit: activeWeightUnit,
+            heightUnit: activeHeightUnit,
+            onSexChanged: notifier.setSex,
+            onBirthDateChanged: notifier.setBirthDate,
+            onHeightCmChanged: notifier.setHeightCm,
+            onCurrentWeightKgChanged: notifier.setCurrentWeightKg,
+            onActivityLevelChanged: notifier.setActivityLevel,
+            onWeightUnitChanged: notifier.setWeightUnit,
+            onHeightUnitChanged: notifier.setHeightUnit,
+          ),
           primaryLabel: 'Continue',
           onPrimary: () => _go(3),
           onStartOver: _onStartOver,
@@ -267,7 +290,30 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
           subtitle:
               "Pick a direction. You'll get a daily calorie target you can edit later.",
           onBack: () => _go(2),
-          body: const Step3Goal(),
+          body: Step3Goal(
+            direction: draft.direction,
+            rateKgPerWeek: draft.rateKgPerWeek,
+            estimate: estimateCalories(
+              sex: draft.sex,
+              birthDate: draft.birthDate,
+              heightCm: draft.heightCm,
+              weightKg: draft.currentWeightKg,
+              activityLevel: draft.activityLevel,
+              direction: draft.direction,
+              rateKgPerWeek: draft.rateKgPerWeek,
+            ),
+            onDirectionChanged: (d) {
+              notifier.setDirection(d);
+              // Default to 0.5 kg/week when picking lose/gain and no
+              // rate set — preserves the inline side-effect from before
+              // the §4.4 split.
+              if (d != GoalDirection.maintain &&
+                  draft.rateKgPerWeek == null) {
+                notifier.setRateKgPerWeek(Decimal.parse('0.5'));
+              }
+            },
+            onRateKgPerWeekChanged: notifier.setRateKgPerWeek,
+          ),
           primaryLabel: _submitting ? 'Saving…' : 'Start logging',
           onPrimary: _finish,
           onStartOver: _onStartOver,
