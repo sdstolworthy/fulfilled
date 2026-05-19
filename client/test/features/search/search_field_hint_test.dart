@@ -1,6 +1,5 @@
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fulfilled/features/search/widgets/search_field.dart';
 import 'package:fulfilled/theme/theme_data.dart';
@@ -18,12 +17,14 @@ import 'package:fulfilled/theme/theme_data.dart';
 /// `kIsWeb` is a compile-time constant, so we cannot flip it from a
 /// VM test. The runtime assertions below branch on `kIsWeb` so the
 /// suite is correct on whichever target the test runs.
+///
+/// Pure leaf — no `ProviderScope`. `SearchField` is a `StatelessWidget`
+/// per `specs/testing_guide.md` §4.4; the focus node is a plain
+/// constructor param.
 Widget _harness(Widget child) {
-  return ProviderScope(
-    child: MaterialApp(
-      theme: buildLightTheme(),
-      home: Scaffold(body: child),
-    ),
+  return MaterialApp(
+    theme: buildLightTheme(),
+    home: Scaffold(body: child),
   );
 }
 
@@ -32,10 +33,16 @@ void main() {
       (tester) async {
     if (kIsWeb) return; // web target — see other test below.
     final controller = TextEditingController();
+    final focusNode = FocusNode();
     addTearDown(controller.dispose);
+    addTearDown(focusNode.dispose);
 
     await tester.pumpWidget(
-      _harness(SearchField(controller: controller, onChanged: (_) {})),
+      _harness(SearchField(
+        controller: controller,
+        onChanged: (_) {},
+        focusNode: focusNode,
+      ),),
     );
 
     expect(find.text('Search foods or scan barcode…'), findsOneWidget);
@@ -46,10 +53,16 @@ void main() {
       (tester) async {
     if (!kIsWeb) return; // native target — see other test above.
     final controller = TextEditingController();
+    final focusNode = FocusNode();
     addTearDown(controller.dispose);
+    addTearDown(focusNode.dispose);
 
     await tester.pumpWidget(
-      _harness(SearchField(controller: controller, onChanged: (_) {})),
+      _harness(SearchField(
+        controller: controller,
+        onChanged: (_) {},
+        focusNode: focusNode,
+      ),),
     );
 
     expect(find.text('Search foods or paste a barcode…'), findsOneWidget);
@@ -59,12 +72,15 @@ void main() {
   testWidgets('explicit hintText override wins on both targets',
       (tester) async {
     final controller = TextEditingController();
+    final focusNode = FocusNode();
     addTearDown(controller.dispose);
+    addTearDown(focusNode.dispose);
 
     await tester.pumpWidget(
       _harness(SearchField(
         controller: controller,
         onChanged: (_) {},
+        focusNode: focusNode,
         hintText: 'Custom hint',
       ),),
     );

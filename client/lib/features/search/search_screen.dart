@@ -11,6 +11,7 @@ import '../../domain/food.dart';
 import '../../domain/meal.dart';
 import '../../form_factor/form_factor.dart';
 import '../../providers/food_providers.dart';
+import '../../providers/search_focus_provider.dart';
 import '../../theme/context_extensions.dart';
 import 'widgets/barcode_scan_button.dart';
 import 'widgets/quick_chip_row.dart';
@@ -162,6 +163,9 @@ class _SearchScreenBodyState extends ConsumerState<SearchScreenBody> {
   Widget build(BuildContext context) {
     final isQueryActive = _query.trim().isNotEmpty;
     final barcode = _barcodeCandidate(context);
+    // Container reads. SearchField below is a pure presentation widget
+    // taking the resolved FocusNode as a constructor param (§4.4).
+    final searchFocusNode = ref.watch(searchFieldFocusNodeProvider);
     return ColoredBox(
       color: context.colors.bg,
       child: SafeArea(
@@ -174,6 +178,7 @@ class _SearchScreenBodyState extends ConsumerState<SearchScreenBody> {
               onQueryChanged: _onQueryChanged,
               onClose: widget.onClose,
               autofocus: widget.autofocus,
+              searchFocusNode: searchFocusNode,
               // T-021 — Enter on the field while the input looks like a
               // barcode routes the same as tapping the affordance row.
               onSubmitted: (_) {
@@ -311,6 +316,7 @@ class _TopBar extends StatelessWidget {
     required this.onQueryChanged,
     required this.onClose,
     required this.autofocus,
+    required this.searchFocusNode,
     this.onSubmitted,
   });
 
@@ -318,6 +324,10 @@ class _TopBar extends StatelessWidget {
   final ValueChanged<String> onQueryChanged;
   final VoidCallback? onClose;
   final bool autofocus;
+
+  /// Resolved by the container from `searchFieldFocusNodeProvider`.
+  /// Passed straight to [SearchField] so it stays Riverpod-free (§4.4).
+  final FocusNode searchFocusNode;
   final ValueChanged<String>? onSubmitted;
 
   @override
@@ -339,6 +349,7 @@ class _TopBar extends StatelessWidget {
               onChanged: onQueryChanged,
               onSubmitted: onSubmitted,
               autofocus: autofocus,
+              focusNode: searchFocusNode,
               // No explicit `hintText` — `SearchField` picks the
               // compact / expanded variant by form factor (T-021).
             ),

@@ -1,8 +1,6 @@
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../../providers/search_focus_provider.dart';
 import '../../../theme/context_extensions.dart';
 
 /// The top-bar search input. Styled per `screen_02_search.html`:
@@ -11,6 +9,11 @@ import '../../../theme/context_extensions.dart';
 /// - leading magnifying-glass icon
 /// - trailing pill-shaped clear button when the text is non-empty
 ///
+/// **Pure presentation widget** — all inputs arrive via constructor
+/// parameters (see `specs/testing_guide.md` §4.4). The container
+/// (`SearchScreenBody`) reads `searchFieldFocusNodeProvider` and passes
+/// the resolved [FocusNode] in.
+///
 /// The widget is intentionally controller-driven: the screen owns the
 /// `TextEditingController` (so it can be cleared from elsewhere and
 /// observed for the query → provider mapping). T-21/T-17 don't apply
@@ -18,9 +21,9 @@ import '../../../theme/context_extensions.dart';
 ///
 /// T-06 — the visible height is 44 px, hit target ≥ 44 px on mobile.
 ///
-/// T-015 — the inner `TextField` attaches to the global
-/// [searchFieldFocusNodeProvider] so the `/` keyboard shortcut can
-/// focus it from anywhere.
+/// T-015 — the inner `TextField` attaches to the supplied [focusNode]
+/// (sourced by the container from `searchFieldFocusNodeProvider`) so
+/// the `/` keyboard shortcut can focus it from anywhere.
 ///
 /// T-021 — placeholder copy swaps by platform when the caller doesn't
 /// override [hintText]:
@@ -34,10 +37,11 @@ import '../../../theme/context_extensions.dart';
 ///
 /// See `specs/pm_barcode.md` §7 and `specs/architect_barcode.md` §4.3
 /// for the rule's resolution from the prior `isExpanded` predicate.
-class SearchField extends ConsumerWidget {
+class SearchField extends StatelessWidget {
   const SearchField({
     required this.controller,
     required this.onChanged,
+    required this.focusNode,
     this.onSubmitted,
     this.autofocus = false,
     this.hintText,
@@ -46,6 +50,11 @@ class SearchField extends ConsumerWidget {
 
   final TextEditingController controller;
   final ValueChanged<String> onChanged;
+
+  /// Global search focus node, sourced by the container from
+  /// `searchFieldFocusNodeProvider`. Attached to the inner `TextField`
+  /// so the `/` keyboard shortcut can focus it from anywhere.
+  final FocusNode focusNode;
 
   /// Fired when the user presses Enter while the field has focus. The
   /// screen uses this for the T-021 barcode shortcut: Enter on a
@@ -58,8 +67,7 @@ class SearchField extends ConsumerWidget {
   final String? hintText;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final focusNode = ref.watch(searchFieldFocusNodeProvider);
+  Widget build(BuildContext context) {
     final resolvedHint = hintText ??
         (kIsWeb
             ? 'Search foods or paste a barcode…'
