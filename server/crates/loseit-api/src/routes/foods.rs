@@ -14,6 +14,8 @@
 //! * `DELETE /servings/:id`                 — delete a serving.
 //! * `POST   /servings/:id/default`         — atomic default-serving flip.
 
+use std::sync::Arc;
+
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::routing::{get, patch, post};
@@ -25,6 +27,7 @@ use loseit_core::domain::{
     Food, FoodDraft, FoodKind, FoodPatch, FoodSearchHitWithSignals, FoodSource, NutriscoreGrade,
     Serving, ServingDraft, ServingPatch, ServingPreview, ServingSource,
 };
+use loseit_core::service::{FoodService, LogService, ServingService};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -388,42 +391,41 @@ struct PatchServingBody {
 // -- Handlers ----------------------------------------------------------------
 
 async fn get_by_id(
-    State(state): State<AppState>,
+    State(foods): State<Arc<FoodService>>,
     AuthenticatedUser(user): AuthenticatedUser,
     Path(id): Path<Uuid>,
 ) -> Result<Json<FoodDetailResponse>, ApiError> {
-    let (food, servings) = state.foods.detail(user.id, id).await?;
+    let (food, servings) = foods.detail(user.id, id).await?;
     Ok(Json(FoodDetailResponse::from_pair(food, servings)))
 }
 
 async fn get_by_barcode(
-    State(state): State<AppState>,
+    State(foods): State<Arc<FoodService>>,
     AuthenticatedUser(user): AuthenticatedUser,
     Path(barcode): Path<String>,
 ) -> Result<Json<FoodDetailResponse>, ApiError> {
-    let (food, servings) = state.foods.by_barcode(user.id, &barcode).await?;
+    let (food, servings) = foods.by_barcode(user.id, &barcode).await?;
     Ok(Json(FoodDetailResponse::from_pair(food, servings)))
 }
 
 async fn search(
-    State(state): State<AppState>,
+    State(foods): State<Arc<FoodService>>,
     AuthenticatedUser(user): AuthenticatedUser,
     Query(q): Query<SearchQuery>,
 ) -> Result<Json<PaginatedResponse<FoodSearchHitResponse>>, ApiError> {
     // Service is the source of truth for validation rules: blank query →
     // `Validation`, limit cap, default offset. The handler just translates
     // the result via the generic `From<Paginated<T>>` adapter.
-    let page = state.foods.search(user.id, &q.q, q.limit, q.offset).await?;
+    let page = foods.search(user.id, &q.q, q.limit, q.offset).await?;
     Ok(Json(page.into()))
 }
 
 async fn list_mine(
-    State(state): State<AppState>,
+    State(foods): State<Arc<FoodService>>,
     AuthenticatedUser(user): AuthenticatedUser,
     Query(q): Query<MineQuery>,
 ) -> Result<Json<PaginatedResponse<FoodSearchHitResponse>>, ApiError> {
-    let page = state
-        .foods
+    let page = foods
         .list_mine(user.id, q.q.as_deref(), q.limit, q.offset)
         .await?;
     Ok(Json(page.into()))
@@ -432,29 +434,29 @@ async fn list_mine(
 // -- /foods/recent + /foods/frequent -----------------------------------------
 
 async fn recent_foods(
-    State(state): State<AppState>,
+    State(logs): State<Arc<LogService>>,
     AuthenticatedUser(user): AuthenticatedUser,
     Query(q): Query<LimitOnlyQuery>,
 ) -> Result<Json<Vec<FoodSearchHitResponse>>, ApiError> {
     let limit = q.limit.unwrap_or(0);
-    let hits = state.logs.recent_foods(user.id, limit).await?;
+    let hits = logs.recent_foods(user.id, limit).await?;
     Ok(Json(hits.into_iter().map(Into::into).collect()))
 }
 
 async fn frequent_foods(
-    State(state): State<AppState>,
+    State(logs): State<Arc<LogService>>,
     AuthenticatedUser(user): AuthenticatedUser,
     Query(q): Query<LimitOnlyQuery>,
 ) -> Result<Json<Vec<FoodSearchHitResponse>>, ApiError> {
     let limit = q.limit.unwrap_or(0);
-    let hits = state.logs.frequent_foods(user.id, limit).await?;
+    let hits = logs.frequent_foods(user.id, limit).await?;
     Ok(Json(hits.into_iter().map(Into::into).collect()))
 }
 
 // -- Custom food write handlers -----------------------------------------------
 
 async fn create_food(
-    State(state): State<AppState>,
+    State(foods): State<Arc<FoodService>>,
     AuthenticatedUser(user): AuthenticatedUser,
     Json(body): Json<CreateFoodBody>,
 ) -> Result<(StatusCode, Json<FoodDetailResponse>), ApiError> {
@@ -475,9 +477,9 @@ async fn create_food(
         nutriscore_grade,
         servings: servings?,
     };
-    let food = state.foods.create_custom(user.id, draft).await?;
+    let food = foods.create_custom(user.id, draft).await?;
     // Re-hydrate so the response reflects the persisted servings.
-    let (food, servings) = state.foods.detail(user.id, food.id).await?;
+    let (food, servings) = foods.detail(user.id, food.id).await?;
     Ok((
         StatusCode::CREATED,
         Json(FoodDetailResponse::from_pair(food, servings)),
@@ -485,7 +487,7 @@ async fn create_food(
 }
 
 async fn patch_food(
-    State(state): State<AppState>,
+    State(foods): State<Arc<FoodService>>,
     AuthenticatedUser(user): AuthenticatedUser,
     Path(id): Path<Uuid>,
     Json(body): Json<PatchFoodBody>,
@@ -511,35 +513,35 @@ async fn patch_food(
         nutriscore_grade,
         servings,
     };
-    state.foods.update_custom(user.id, id, patch).await?;
-    let (food, servings) = state.foods.detail(user.id, id).await?;
+    foods.update_custom(user.id, id, patch).await?;
+    let (food, servings) = foods.detail(user.id, id).await?;
     Ok(Json(FoodDetailResponse::from_pair(food, servings)))
 }
 
 async fn delete_food(
-    State(state): State<AppState>,
+    State(foods): State<Arc<FoodService>>,
     AuthenticatedUser(user): AuthenticatedUser,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, ApiError> {
-    state.foods.delete_custom(user.id, id).await?;
+    foods.delete_custom(user.id, id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 // -- Serving write handlers ---------------------------------------------------
 
 async fn create_serving(
-    State(state): State<AppState>,
+    State(servings): State<Arc<ServingService>>,
     AuthenticatedUser(user): AuthenticatedUser,
     Path(food_id): Path<Uuid>,
     Json(body): Json<ServingBody>,
 ) -> Result<(StatusCode, Json<ServingResponse>), ApiError> {
     let draft = body.into_draft()?;
-    let serving = state.servings.create(user.id, food_id, draft).await?;
+    let serving = servings.create(user.id, food_id, draft).await?;
     Ok((StatusCode::CREATED, Json(serving.into())))
 }
 
 async fn patch_serving(
-    State(state): State<AppState>,
+    State(servings): State<Arc<ServingService>>,
     AuthenticatedUser(user): AuthenticatedUser,
     Path(id): Path<Uuid>,
     Json(body): Json<PatchServingBody>,
@@ -558,39 +560,34 @@ async fn patch_serving(
         saturated_fat_g: body.saturated_fat_g,
         sort_order: body.sort_order,
     };
-    let serving = state.servings.update(user.id, id, patch).await?;
+    let serving = servings.update(user.id, id, patch).await?;
     Ok(Json(serving.into()))
 }
 
 async fn delete_serving(
-    State(state): State<AppState>,
+    State(servings): State<Arc<ServingService>>,
     AuthenticatedUser(user): AuthenticatedUser,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, ApiError> {
-    state.servings.delete(user.id, id).await?;
+    servings.delete(user.id, id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 async fn set_default_serving(
-    State(state): State<AppState>,
+    State(servings): State<Arc<ServingService>>,
     AuthenticatedUser(user): AuthenticatedUser,
     Path(id): Path<Uuid>,
 ) -> Result<Json<ServingResponse>, ApiError> {
     // `set_default` needs the food id; resolve it from the serving so the
     // route stays single-id (clients don't have to pass food_id again).
-    let serving = state
-        .servings
+    let serving = servings
         .servings()
         .find_by_id(id)
         .await?
         .ok_or_else(ApiError::not_found)?;
-    state
-        .servings
-        .set_default(user.id, serving.food_id, id)
-        .await?;
+    servings.set_default(user.id, serving.food_id, id).await?;
     // Re-read so the response reflects the post-flip state.
-    let updated = state
-        .servings
+    let updated = servings
         .servings()
         .find_by_id(id)
         .await?

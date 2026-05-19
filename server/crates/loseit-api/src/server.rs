@@ -136,6 +136,59 @@ impl AppState {
     }
 }
 
+// ── Narrow state extractors ───────────────────────────────────────────────────
+//
+// Audit-fix R2: handlers that need only one service used to extract the full
+// `State<AppState>` (11+ fields, every clone walked the whole struct). Each
+// `FromRef<AppState>` impl below lets a handler write
+// `State(logs): State<Arc<LogService>>` instead of
+// `State(state): State<AppState>` — the extractor pulls the one service it
+// needs and ignores the rest. Handlers that genuinely need two or more
+// fields can list multiple `State<>` extractors side-by-side; only the few
+// that need the auth/OIDC plumbing still reach for the whole `AppState`.
+
+impl axum::extract::FromRef<AppState> for Arc<UserService> {
+    fn from_ref(s: &AppState) -> Self {
+        s.users.clone()
+    }
+}
+
+impl axum::extract::FromRef<AppState> for Arc<WeightService> {
+    fn from_ref(s: &AppState) -> Self {
+        s.weights.clone()
+    }
+}
+
+impl axum::extract::FromRef<AppState> for Arc<GoalService> {
+    fn from_ref(s: &AppState) -> Self {
+        s.goals.clone()
+    }
+}
+
+impl axum::extract::FromRef<AppState> for Arc<FoodService> {
+    fn from_ref(s: &AppState) -> Self {
+        s.foods.clone()
+    }
+}
+
+impl axum::extract::FromRef<AppState> for Arc<ServingService> {
+    fn from_ref(s: &AppState) -> Self {
+        s.servings.clone()
+    }
+}
+
+impl axum::extract::FromRef<AppState> for Arc<LogService> {
+    fn from_ref(s: &AppState) -> Self {
+        s.logs.clone()
+    }
+}
+
+impl axum::extract::FromRef<AppState> for Arc<DaySummaryService> {
+    fn from_ref(s: &AppState) -> Self {
+        s.day_summary.clone()
+    }
+}
+
 // ── build_state ───────────────────────────────────────────────────────────────
 
 /// Production wiring: Postgres repositories + the authenticator selected

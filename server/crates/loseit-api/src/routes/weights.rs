@@ -1,9 +1,12 @@
+use std::sync::Arc;
+
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::routing::{delete, post};
 use axum::{Json, Router};
 use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
 use loseit_core::domain::{Weight, WeightDraft};
+use loseit_core::service::WeightService;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -59,7 +62,7 @@ impl From<Weight> for WeightResponse {
 }
 
 async fn create(
-    State(state): State<AppState>,
+    State(weights): State<Arc<WeightService>>,
     AuthenticatedUser(user): AuthenticatedUser,
     Json(body): Json<CreateBody>,
 ) -> Result<(StatusCode, Json<WeightResponse>), ApiError> {
@@ -69,27 +72,26 @@ async fn create(
         weight_kg: body.weight_kg,
         note: body.note,
     };
-    let weight = state.weights.record(user.id, draft).await?;
+    let weight = weights.record(user.id, draft).await?;
     Ok((StatusCode::CREATED, Json(weight.into())))
 }
 
 async fn list(
-    State(state): State<AppState>,
+    State(weights): State<Arc<WeightService>>,
     AuthenticatedUser(user): AuthenticatedUser,
     Query(q): Query<ListQuery>,
 ) -> Result<Json<PaginatedResponse<WeightResponse>>, ApiError> {
-    let page = state
-        .weights
+    let page = weights
         .list(user.id, q.from, q.to, q.limit, q.offset)
         .await?;
     Ok(Json(page.into()))
 }
 
 async fn remove(
-    State(state): State<AppState>,
+    State(weights): State<Arc<WeightService>>,
     AuthenticatedUser(user): AuthenticatedUser,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, ApiError> {
-    state.weights.delete(user.id, id).await?;
+    weights.delete(user.id, id).await?;
     Ok(StatusCode::NO_CONTENT)
 }

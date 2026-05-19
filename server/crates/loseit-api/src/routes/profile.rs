@@ -1,9 +1,12 @@
+use std::sync::Arc;
+
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::routing::{get, patch};
 use axum::{Json, Router};
 use chrono::{DateTime, NaiveDate, Utc};
 use loseit_core::domain::{ActivityLevel, HeightUnit, ProfilePatch, Sex, User, WeightUnit};
+use loseit_core::service::UserService;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -110,19 +113,19 @@ async fn get_me(AuthenticatedUser(user): AuthenticatedUser) -> Json<UserResponse
 }
 
 async fn patch_me(
-    State(state): State<AppState>,
+    State(users): State<Arc<UserService>>,
     AuthenticatedUser(user): AuthenticatedUser,
     Json(body): Json<ProfilePatchBody>,
 ) -> Result<Json<UserResponse>, ApiError> {
     let patch = body.into_domain()?;
-    let updated = state.users.update_profile(user.id, patch).await?;
+    let updated = users.update_profile(user.id, patch).await?;
     Ok(Json(updated.into()))
 }
 
 async fn delete_me(
-    State(state): State<AppState>,
+    State(users): State<Arc<UserService>>,
     AuthenticatedUser(user): AuthenticatedUser,
 ) -> Result<StatusCode, ApiError> {
-    state.users.delete_self(user.id).await?;
+    users.delete_self(user.id).await?;
     Ok(StatusCode::NO_CONTENT)
 }

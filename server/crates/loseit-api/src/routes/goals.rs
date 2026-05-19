@@ -1,9 +1,12 @@
+use std::sync::Arc;
+
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::routing::{get, patch, post};
 use axum::{Json, Router};
 use chrono::{DateTime, NaiveDate, Utc};
 use loseit_core::domain::{Goal, GoalDraft, GoalPatch};
+use loseit_core::service::GoalService;
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -86,7 +89,7 @@ impl From<Goal> for GoalResponse {
 }
 
 async fn create(
-    State(state): State<AppState>,
+    State(goals): State<Arc<GoalService>>,
     AuthenticatedUser(user): AuthenticatedUser,
     Json(body): Json<CreateBody>,
 ) -> Result<(StatusCode, Json<GoalResponse>), ApiError> {
@@ -101,30 +104,30 @@ async fn create(
         carbs_g_target: body.carbs_g_target,
         fat_g_target: body.fat_g_target,
     };
-    let goal = state.goals.create(user.id, draft).await?;
+    let goal = goals.create(user.id, draft).await?;
     Ok((StatusCode::CREATED, Json(goal.into())))
 }
 
 async fn list(
-    State(state): State<AppState>,
+    State(goals): State<Arc<GoalService>>,
     AuthenticatedUser(user): AuthenticatedUser,
 ) -> Result<Json<Vec<GoalResponse>>, ApiError> {
-    let goals = state.goals.list(user.id).await?;
+    let goals = goals.list(user.id).await?;
     Ok(Json(goals.into_iter().map(Into::into).collect()))
 }
 
 async fn active(
-    State(state): State<AppState>,
+    State(goals): State<Arc<GoalService>>,
     AuthenticatedUser(user): AuthenticatedUser,
     Query(q): Query<ActiveQuery>,
 ) -> Result<Json<GoalResponse>, ApiError> {
     let on = q.on.unwrap_or_else(|| Utc::now().date_naive());
-    let goal = state.goals.active_on(user.id, on).await?;
+    let goal = goals.active_on(user.id, on).await?;
     Ok(Json(goal.into()))
 }
 
 async fn update(
-    State(state): State<AppState>,
+    State(goals): State<Arc<GoalService>>,
     AuthenticatedUser(user): AuthenticatedUser,
     Path(id): Path<Uuid>,
     Json(body): Json<PatchBody>,
@@ -140,15 +143,15 @@ async fn update(
         carbs_g_target: body.carbs_g_target,
         fat_g_target: body.fat_g_target,
     };
-    let goal = state.goals.update(user.id, id, patch).await?;
+    let goal = goals.update(user.id, id, patch).await?;
     Ok(Json(goal.into()))
 }
 
 async fn remove(
-    State(state): State<AppState>,
+    State(goals): State<Arc<GoalService>>,
     AuthenticatedUser(user): AuthenticatedUser,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, ApiError> {
-    state.goals.delete(user.id, id).await?;
+    goals.delete(user.id, id).await?;
     Ok(StatusCode::NO_CONTENT)
 }

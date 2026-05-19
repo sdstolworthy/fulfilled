@@ -21,6 +21,8 @@
 //! preserves the "snapshot of nutrition for this exact entry" semantics on
 //! the wire without forcing clients to nest into `snapshot.*`.
 
+use std::sync::Arc;
+
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::routing::{get, post};
@@ -29,6 +31,7 @@ use chrono::{DateTime, NaiveDate, Utc};
 use loseit_core::domain::{
     unit::Unit, DaySummary, FoodLogEntry, LogDraft, LogPatch, Meal, MealSubtotal, NutritionSnapshot,
 };
+use loseit_core::service::{DaySummaryService, LogService};
 use rust_decimal::Decimal;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -280,7 +283,7 @@ fn map_log_core_error(err: loseit_core::CoreError) -> ApiError {
 }
 
 async fn create(
-    State(state): State<AppState>,
+    State(logs): State<Arc<LogService>>,
     AuthenticatedUser(user): AuthenticatedUser,
     Json(body): Json<CreateLogBody>,
 ) -> Result<(StatusCode, Json<LogEntryResponse>), ApiError> {
@@ -293,8 +296,7 @@ async fn create(
         entered_unit: body.entered_unit,
         note: body.note,
     };
-    let entry = state
-        .logs
+    let entry = logs
         .create(user.id, draft)
         .await
         .map_err(map_log_core_error)?;
@@ -302,12 +304,11 @@ async fn create(
 }
 
 async fn quick_add(
-    State(state): State<AppState>,
+    State(logs): State<Arc<LogService>>,
     AuthenticatedUser(user): AuthenticatedUser,
     Json(body): Json<QuickAddBody>,
 ) -> Result<(StatusCode, Json<LogEntryResponse>), ApiError> {
-    let entry = state
-        .logs
+    let entry = logs
         .quick_add(
             user.id,
             body.calories_kcal,
@@ -320,19 +321,16 @@ async fn quick_add(
 }
 
 async fn list(
-    State(state): State<AppState>,
+    State(logs): State<Arc<LogService>>,
     AuthenticatedUser(user): AuthenticatedUser,
     Query(q): Query<ListLogQuery>,
 ) -> Result<Json<PaginatedResponse<LogEntryResponse>>, ApiError> {
-    let page = state
-        .logs
-        .list(user.id, q.from, q.to, q.limit, q.offset)
-        .await?;
+    let page = logs.list(user.id, q.from, q.to, q.limit, q.offset).await?;
     Ok(Json(page.into()))
 }
 
 async fn patch(
-    State(state): State<AppState>,
+    State(logs): State<Arc<LogService>>,
     AuthenticatedUser(user): AuthenticatedUser,
     Path(id): Path<Uuid>,
     Json(body): Json<PatchLogBody>,
@@ -350,8 +348,7 @@ async fn patch(
         entered_unit: body.entered_unit,
         note: body.note,
     };
-    let entry = state
-        .logs
+    let entry = logs
         .update(user.id, id, patch)
         .await
         .map_err(map_log_core_error)?;
@@ -359,33 +356,32 @@ async fn patch(
 }
 
 async fn remove(
-    State(state): State<AppState>,
+    State(logs): State<Arc<LogService>>,
     AuthenticatedUser(user): AuthenticatedUser,
     Path(id): Path<Uuid>,
 ) -> Result<StatusCode, ApiError> {
-    state.logs.delete(user.id, id).await?;
+    logs.delete(user.id, id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
 async fn day_summary(
-    State(state): State<AppState>,
+    State(day_summary): State<Arc<DaySummaryService>>,
     AuthenticatedUser(user): AuthenticatedUser,
     Path(date): Path<NaiveDate>,
 ) -> Result<Json<DaySummaryResponse>, ApiError> {
-    let summary = state.day_summary.for_day(user.id, date).await?;
+    let summary = day_summary.for_day(user.id, date).await?;
     Ok(Json(summary.into()))
 }
 
 async fn copy_day(
-    State(state): State<AppState>,
+    State(logs): State<Arc<LogService>>,
     AuthenticatedUser(user): AuthenticatedUser,
     Json(body): Json<CopyDayBody>,
 ) -> Result<(StatusCode, Json<CopyDayResponse>), ApiError> {
     // `Meal` deserializes via try_from in `CopyDayBody`, so an unknown
     // wire value is rejected at the JSON-parse layer with HTTP 400
     // before reaching the handler.
-    let copied = state
-        .logs
+    let copied = logs
         .copy_day(user.id, body.from_date, body.to_date, body.meal)
         .await?;
     Ok((
