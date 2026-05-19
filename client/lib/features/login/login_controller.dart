@@ -292,22 +292,13 @@ class LoginController extends StateNotifier<LoginFormState> {
 
   /// Write both `auth_config` keys. Called on every successful submit
   /// (phase 1 or phase 5) so the next visit pre-fills the URL +
-  /// username fields.
+  /// username fields. Both writes flow through their notifier so the
+  /// UI layer stays ignorant of the underlying Hive box.
   Future<void> _persistConfig(String url, String username) async {
-    // baseUrl flows through the notifier (audit-fix F5) so every
-    // watcher of `baseUrlProvider` rebuilds. lastUsername has no
-    // Riverpod watchers — only the form-prefill reads it — so a
-    // direct Hive write is fine.
     await _ref.read(baseUrlProvider.notifier).setBaseUrl(url);
     await _ref
-        .read(authConfigBoxProvider)
-        .put(AuthConfigKey.lastUsername, username);
-  }
-
-  /// Test seam — clears the `auth_config` Hive box. Used by
-  /// integration / widget tests that need to reset between cases.
-  static Future<void> resetForTesting(Ref ref) async {
-    await ref.read(authConfigBoxProvider).clear();
+        .read(lastUsernameProvider.notifier)
+        .setLastUsername(username);
   }
 }
 
@@ -324,24 +315,27 @@ bool _looksLikeJwt(String raw) {
 /// — popping the route should clear the password buffer (architect
 /// §5.3 "Why autoDispose").
 ///
-/// Initial state is pre-seeded from the Hive box:
-///   - `url` ← `auth_config.base_url` (mobile only — web reads from
+/// Initial state is pre-seeded via the auth-config notifiers:
+///   - `url` ← `baseUrlProvider` (mobile only — web reads from
 ///     `apiBaseUrlProvider` at submit time).
-///   - `username` ← `auth_config.last_username`.
+///   - `username` ← `lastUsernameProvider`.
 ///   - `allowInsecure` ← `true` if the persisted URL is `http://`
 ///     (architect §5.6 — the LOG-S6 sticky case).
+///
+/// The notifiers terminate in Hive, but the controller doesn't know
+/// or care — the UI layer depends on Riverpod seams only.
 final loginControllerProvider =
     StateNotifierProvider.autoDispose<LoginController, LoginFormState>(
   (ref) {
-    final box = ref.watch(authConfigBoxProvider);
-    final urlFromHive = box.get(AuthConfigKey.baseUrl);
+    final persistedUrl = ref.watch(baseUrlProvider);
+    final persistedUsername = ref.watch(lastUsernameProvider);
     return LoginController(
       ref,
       initial: LoginFormState(
-        url: kIsWeb ? '' : (urlFromHive ?? ''),
-        username: box.get(AuthConfigKey.lastUsername) ?? '',
+        url: kIsWeb ? '' : (persistedUrl ?? ''),
+        username: persistedUsername ?? '',
         password: '',
-        allowInsecure: urlFromHive?.startsWith('http://') ?? false,
+        allowInsecure: persistedUrl?.startsWith('http://') ?? false,
       ),
     );
   },

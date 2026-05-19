@@ -74,3 +74,35 @@ class BaseUrlNotifier extends StateNotifier<String?> {
     state = url;
   }
 }
+
+/// Reactive seam over the auth-config Hive box's `last_username` cell.
+///
+/// Same shape as [baseUrlProvider] — exists so UI code (the login
+/// controller) doesn't import `package:hive` or reach into the box
+/// directly. Login reads the current value via
+/// `ref.read(lastUsernameProvider)` and writes via
+/// `ref.read(lastUsernameProvider.notifier).setLastUsername(...)`.
+final lastUsernameProvider =
+    StateNotifierProvider<LastUsernameNotifier, String?>((ref) {
+  return LastUsernameNotifier(ref.watch(authConfigBoxProvider));
+});
+
+class LastUsernameNotifier extends StateNotifier<String?> {
+  LastUsernameNotifier(this._box)
+      : super(_box.get(AuthConfigKey.lastUsername));
+
+  final Box<String> _box;
+
+  Future<void> setLastUsername(String username) async {
+    await _box.put(AuthConfigKey.lastUsername, username);
+    state = username;
+  }
+}
+
+/// Test seam — clears every cell in the auth-config box. Pulled out of
+/// `LoginController.resetForTesting` so the UI layer doesn't have to
+/// import the box provider; tests that need a clean slate call this
+/// helper from the `data/` layer that already owns the box.
+Future<void> resetAuthConfigForTesting(Ref ref) async {
+  await ref.read(authConfigBoxProvider).clear();
+}
