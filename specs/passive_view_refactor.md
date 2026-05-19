@@ -82,42 +82,39 @@ Format: `widget file → container that will own its reads → notes`.
 
 ### Trivial (one read, one move)
 
-- [ ] **`features/profile/widgets/server_url_row.dart`** → `profile_screen.dart`
-  - Reads `baseUrlProvider` for the URL string. Container reads,
-    passes `url: String?` as a param. Smallest possible split.
-
-- [ ] **`features/search/widgets/search_field.dart`** → `search_screen.dart`
-  - Reads `searchFieldFocusNodeProvider`. Pass the `FocusNode` as a
-    constructor param; container reads the provider.
-
+- [x] ~~`features/profile/widgets/server_url_row.dart`~~ — landed as `e5bebff`
+- [x] ~~`features/search/widgets/search_field.dart`~~ — landed as `5920fc6`
 - [ ] **`features/log_entry/widgets/quick_multiplier_chips.dart`** → `log_entry_sheet.dart`
   - Reads `quantityProvider`, calls `quantityProvider.notifier.state =`
     in tap handlers. Container passes `currentQuantity: int` and
     `onSelected: ValueChanged<int>`.
 
-- [ ] **`features/goals/widgets/goal_active_card.dart`** → `goals_screen.dart`
-  - Reads `effectiveActiveGoalTargetsProvider`. Pass the resolved
-    targets as a param.
+- [x] ~~`features/goals/widgets/goal_active_card.dart`~~ — landed as `699c024`
 
 ### Small (a few reads, action callbacks)
 
-- [ ] **`features/profile/widgets/activity_level_picker.dart`** → `profile_screen.dart`
-- [ ] **`features/profile/widgets/sex_picker.dart`** → `profile_screen.dart`
-- [ ] **`features/profile/widgets/height_unit_chooser.dart`** → `profile_screen.dart`
-- [ ] **`features/profile/widgets/weight_unit_chooser.dart`** → `profile_screen.dart`
-- [ ] **`features/profile/widgets/units_chooser.dart`** → `profile_screen.dart`
-  - All five pickers share the same shape: no render-time reads;
-    only `ref.read(profileRepositoryProvider).updateMe(...) +
-    ref.invalidate(meProvider)` in tap handlers. Lift the repo write
-    + invalidation up; pass `onChanged: ValueChanged<T>` to the leaf.
-    The leaf renders the current selection from a `current: T`
-    constructor param.
+- [x] ~~5 profile pickers (activity_level / sex / height_unit / weight_unit / units chooser)~~ — landed as `e5bebff`
+  - Settled callback shape: `Future<void> Function(T) onSave` (not
+    `ValueChanged<T>`) so the leaf can await + branch on
+    success/failure UI. The five `show*` helpers stayed in the leaf
+    files; the caller (with `ref` in scope) builds the closure and
+    passes it in. Body widgets were promoted to public
+    (`WeightUnitChooserBody`, etc.) so a future leaf test can mount
+    them without the `show*` shell.
 
 - [ ] **`features/goals/widgets/goal_editor_body.dart`** → `new_goal_dialog.dart` / `edit_goal_sheet.dart`
   - Reads `weightUnitProvider` and `currentWeightKgProvider`. The
     two containers that mount this body should resolve both before
     constructing it; pass `unit: WeightUnit` and
     `currentKg: Decimal?`.
+  - **Note:** `GoalProfilePrereqs._prereqRow` in this same file was
+    partially touched by the profile-leaves PR (`e5bebff`) — it now
+    builds an `onSave` closure when invoking the sex / activity
+    pickers (since those pickers no longer take a `WidgetRef`). The
+    `GoalProfilePrereqs` widget itself is still a `ConsumerWidget`;
+    finishing the split means lifting its remaining reads
+    (`weightUnitProvider`, `currentWeightKgProvider`) into the
+    containing dialog/sheet alongside `GoalEditorBody`'s.
 
 - [ ] **`widgets/ring_summary_card.dart`** → wherever it's mounted (likely `today_screen.dart`)
   - Reads `caloriesBurnedTodayProvider` (async) and
