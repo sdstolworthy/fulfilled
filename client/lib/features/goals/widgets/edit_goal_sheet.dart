@@ -16,6 +16,11 @@ import '../../../providers/weight_providers.dart';
 import '../../../theme/context_extensions.dart';
 import '../../../widgets/empty_state.dart';
 import '../../../widgets/primary_button.dart';
+import '../../profile/widgets/activity_level_picker.dart';
+import '../../profile/widgets/birth_date_picker.dart';
+import '../../profile/widgets/current_weight_sheet.dart';
+import '../../profile/widgets/height_stepper_sheet.dart';
+import '../../profile/widgets/sex_picker.dart';
 import 'goal_editor_body.dart';
 
 /// Opens the "Edit current goal" flow. Same T-14 split as
@@ -150,6 +155,10 @@ class _EditGoalFormState extends ConsumerState<_EditGoalForm> {
     // Profile inputs are pulled from `meProvider`.
     final meAsync = ref.watch(meProvider);
     final currentKg = ref.watch(currentWeightKgProvider).valueOrNull;
+    // Active weight unit drives the rate-slider scale on
+    // [GoalEditorBody]. Resolved here per the §4.4 passive-view rule
+    // so the leaf stays Riverpod-free.
+    final unit = ref.watch(weightUnitProvider);
 
     return meAsync.when(
       loading: () => SingleChildScrollView(
@@ -165,6 +174,7 @@ class _EditGoalFormState extends ConsumerState<_EditGoalForm> {
           direction: _direction,
           rateKgPerWeek: _rate,
           previewKcal: null,
+          unit: unit,
           targetWeightKg: _targetWeightForSection(currentKg: null),
           onTargetWeightChange: (v) => setState(() => _targetWeightKg = v),
           onDirectionChange: (d) => setState(() => _direction = d),
@@ -188,7 +198,44 @@ class _EditGoalFormState extends ConsumerState<_EditGoalForm> {
               horizontal: tokens.space.x5,
               vertical: tokens.space.x4,
             ),
-            child: GoalProfilePrereqs(user: user),
+            child: GoalProfilePrereqs(
+              user: user,
+              currentKg: currentKg,
+              onPickSex: () => showSexPicker(
+                context,
+                initial: user.sex,
+                onSave: (picked) async {
+                  await ref
+                      .read(profileRepositoryProvider)
+                      .update(UserPatch(sex: picked));
+                  ref.invalidate(meProvider);
+                },
+              ),
+              onPickBirthDate: () => showBirthDatePicker(
+                context,
+                ref,
+                initial: user.birthDate,
+              ),
+              onPickHeight: () => showHeightStepperSheet(
+                context,
+                initial: user.heightCm,
+              ),
+              // See the new-goal sibling for why `initial` is null
+              // on the current-weight picker — the sheet derives its
+              // seed from the weight feed, not from the user record.
+              onPickWeight: () =>
+                  showCurrentWeightSheet(context, initial: null),
+              onPickActivity: () => showActivityLevelPicker(
+                context,
+                initial: user.activityLevel,
+                onSave: (picked) async {
+                  await ref
+                      .read(profileRepositoryProvider)
+                      .update(UserPatch(activityLevel: picked));
+                  ref.invalidate(meProvider);
+                },
+              ),
+            ),
           );
         }
         final estimate = _estimateFor(user, currentKg);
@@ -202,6 +249,7 @@ class _EditGoalFormState extends ConsumerState<_EditGoalForm> {
             direction: _direction,
             rateKgPerWeek: _rate,
             previewKcal: estimate?.dailyTargetKcal,
+            unit: unit,
             targetWeightKg: _targetWeightForSection(currentKg: currentKg),
             onTargetWeightChange: (v) => setState(() => _targetWeightKg = v),
             onDirectionChange: (d) => setState(() => _direction = d),

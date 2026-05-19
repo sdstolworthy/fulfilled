@@ -1,25 +1,16 @@
 import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../domain/decimal_format.dart';
 import '../../../domain/enums.dart';
 import '../../../domain/units/energy.dart';
 import '../../../domain/units/weight.dart';
 import '../../../domain/user.dart';
-import '../../../providers/profile_providers.dart';
-import '../../../providers/repository_providers.dart';
-import '../../../providers/weight_providers.dart';
 import '../../../theme/context_extensions.dart';
 import '../../../widgets/number_text.dart';
 import '../../../widgets/skeleton.dart';
 import '../../../widgets/weight_stepper.dart';
-import '../../profile/widgets/activity_level_picker.dart';
-import '../../profile/widgets/birth_date_picker.dart';
-import '../../profile/widgets/current_weight_sheet.dart';
-import '../../profile/widgets/height_stepper_sheet.dart';
 import '../../profile/widgets/settings_row.dart';
-import '../../profile/widgets/sex_picker.dart';
 
 /// Shared form body for the New / Edit goal flows.
 ///
@@ -30,12 +21,15 @@ import '../../profile/widgets/sex_picker.dart';
 /// - a single primary `Save` button
 ///
 /// All state lives on the parent (which owns the save side-effect); this
-/// widget is purely visual.
+/// widget is purely visual. Per the §4.4 passive-view rule it is a
+/// `StatelessWidget` — the container resolves `weightUnitProvider`
+/// (and the kcal preview / target weight) and passes the values in.
 class GoalEditorBody extends StatelessWidget {
   const GoalEditorBody({
     required this.direction,
     required this.rateKgPerWeek,
     required this.previewKcal,
+    required this.unit,
     required this.onDirectionChange,
     required this.onRateChange,
     required this.saveLabel,
@@ -66,6 +60,13 @@ class GoalEditorBody extends StatelessWidget {
   /// `meProvider` is in flight (T-010): the form chrome (direction +
   /// rate) remains interactive while the profile-dependent target loads.
   final int? previewKcal;
+
+  /// Active weight unit. The container reads `weightUnitProvider` and
+  /// passes the resolved value in — the rate slider re-skins itself
+  /// (`kg/wk` vs `lb/wk`) based on this. `st` collapses to `lb` for
+  /// display because weekly weight-change rates in stones are too
+  /// coarse to be useful.
+  final WeightUnit unit;
 
   final ValueChanged<GoalDirection> onDirectionChange;
   final ValueChanged<Decimal> onRateChange;
@@ -104,6 +105,7 @@ class GoalEditorBody extends StatelessWidget {
         SizedBox(height: tokens.space.x2),
         _RateSlider(
           value: rateKgPerWeek,
+          unit: unit,
           enabled: direction != GoalDirection.maintain,
           onChanged: onRateChange,
         ),
@@ -181,9 +183,10 @@ class _DirectionSegmented extends StatelessWidget {
   }
 }
 
-class _RateSlider extends ConsumerWidget {
+class _RateSlider extends StatelessWidget {
   const _RateSlider({
     required this.value,
+    required this.unit,
     required this.enabled,
     required this.onChanged,
   });
@@ -192,6 +195,10 @@ class _RateSlider extends ConsumerWidget {
   /// active display unit so the parent's math (and the wire) stay in
   /// kg regardless of what the user sees.
   final Decimal value;
+
+  /// Active weight unit. Resolved by the container from
+  /// `weightUnitProvider` and passed down — the slider stays pure.
+  final WeightUnit unit;
   final bool enabled;
   final ValueChanged<Decimal> onChanged;
 
@@ -205,9 +212,8 @@ class _RateSlider extends ConsumerWidget {
   static const int _divisions = 20;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final tokens = context.tokens;
-    final unit = ref.watch(weightUnitProvider);
     // st collapses to lb for display — see `_lbMax` doc.
     final displayUnit =
         unit == WeightUnit.kg ? WeightUnit.kg : WeightUnit.lb;
@@ -404,19 +410,47 @@ enum GoalPrereqField { sex, birthDate, height, weight, activity }
 /// profile. Instead of greying out the editor (which hides *why*
 /// nothing works), this surface tells the user exactly which fields
 /// are still needed and lets them set each one inline. Tapping a row
-/// opens the same sheet the Profile screen uses; the picker
-/// invalidates `meProvider` on commit so the prereq surface rebuilds
-/// and either renders one fewer row, or — once the last field is
-/// set — swaps back to the editor.
-class GoalProfilePrereqs extends ConsumerWidget {
-  const GoalProfilePrereqs({required this.user, super.key});
+/// fires the matching `onPick*` callback; the container opens the
+/// picker sheet (and invalidates `meProvider` on commit), then this
+/// surface rebuilds with one fewer row — or, once the last field is
+/// set, the parent swaps the editor in.
+///
+/// Per the §4.4 passive-view rule this is a `StatelessWidget` — all
+/// Riverpod reads live in the container.
+class GoalProfilePrereqs extends StatelessWidget {
+  const GoalProfilePrereqs({
+    required this.user,
+    required this.currentKg,
+    required this.onPickSex,
+    required this.onPickBirthDate,
+    required this.onPickHeight,
+    required this.onPickWeight,
+    required this.onPickActivity,
+    super.key,
+  });
 
+  /// The authenticated user — only the missing-field bits are read.
   final User user;
 
+  /// Latest logged weight in kg (derived from `currentWeightKgProvider`
+  /// in the container). `null` means the user hasn't logged a weight,
+  /// which lights up the `weight` prereq row.
+  final Decimal? currentKg;
+
+  /// Container-supplied callbacks. Each opens the matching profile
+  /// picker (sheet / dialog / system date-picker) and, on commit,
+  /// invalidates `meProvider` so this surface rebuilds. The
+  /// `_prereqRow` helper wires these into [SettingsRow.onTap] —
+  /// no Riverpod reads in the leaf.
+  final VoidCallback onPickSex;
+  final VoidCallback onPickBirthDate;
+  final VoidCallback onPickHeight;
+  final VoidCallback onPickWeight;
+  final VoidCallback onPickActivity;
+
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final tokens = context.tokens;
-    final currentKg = ref.watch(currentWeightKgProvider).valueOrNull;
     final missing =
         missingGoalPrereqFields(user, currentWeightKg: currentKg);
     return Column(
@@ -446,7 +480,7 @@ class GoalProfilePrereqs extends ConsumerWidget {
             mainAxisSize: MainAxisSize.min,
             children: <Widget>[
               for (var i = 0; i < missing.length; i++) ...<Widget>[
-                _prereqRow(context, ref, missing[i]),
+                _prereqRow(context, missing[i]),
                 if (i < missing.length - 1)
                   Divider(
                     height: 1,
@@ -463,68 +497,42 @@ class GoalProfilePrereqs extends ConsumerWidget {
     );
   }
 
-  Widget _prereqRow(
-    BuildContext context,
-    WidgetRef ref,
-    GoalPrereqField field,
-  ) {
+  Widget _prereqRow(BuildContext context, GoalPrereqField field) {
     switch (field) {
       case GoalPrereqField.sex:
         return SettingsRow(
           icon: Icons.person_outline,
           label: 'Sex',
           value: 'Set',
-          onTap: () => showSexPicker(
-            context,
-            initial: user.sex,
-            onSave: (picked) async {
-              final repo = ref.read(profileRepositoryProvider);
-              await repo.update(UserPatch(sex: picked));
-              ref.invalidate(meProvider);
-            },
-          ),
+          onTap: onPickSex,
         );
       case GoalPrereqField.birthDate:
         return SettingsRow(
           icon: Icons.calendar_today_outlined,
           label: 'Birth date',
           value: 'Set',
-          onTap: () =>
-              showBirthDatePicker(context, ref, initial: user.birthDate),
+          onTap: onPickBirthDate,
         );
       case GoalPrereqField.height:
         return SettingsRow(
           icon: Icons.height,
           label: 'Height',
           value: 'Set',
-          onTap: () =>
-              showHeightStepperSheet(context, initial: user.heightCm),
+          onTap: onPickHeight,
         );
       case GoalPrereqField.weight:
         return SettingsRow(
           icon: Icons.monitor_weight_outlined,
           label: 'Current weight',
           value: 'Set',
-          // The "Current weight" picker derives its seed from the
-          // weight feed, not from the user record — leave `initial`
-          // null so the sheet falls back to its own default. Once
-          // the user logs a weight the prereq row vanishes anyway.
-          onTap: () => showCurrentWeightSheet(context, initial: null),
+          onTap: onPickWeight,
         );
       case GoalPrereqField.activity:
         return SettingsRow(
           icon: Icons.directions_run,
           label: 'Activity',
           value: 'Set',
-          onTap: () => showActivityLevelPicker(
-            context,
-            initial: user.activityLevel,
-            onSave: (picked) async {
-              final repo = ref.read(profileRepositoryProvider);
-              await repo.update(UserPatch(activityLevel: picked));
-              ref.invalidate(meProvider);
-            },
-          ),
+          onTap: onPickActivity,
         );
     }
   }

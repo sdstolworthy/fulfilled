@@ -16,6 +16,11 @@ import '../../../providers/weight_providers.dart';
 import '../../../theme/context_extensions.dart';
 import '../../../widgets/empty_state.dart';
 import '../../../widgets/primary_button.dart';
+import '../../profile/widgets/activity_level_picker.dart';
+import '../../profile/widgets/birth_date_picker.dart';
+import '../../profile/widgets/current_weight_sheet.dart';
+import '../../profile/widgets/height_stepper_sheet.dart';
+import '../../profile/widgets/sex_picker.dart';
 import 'goal_editor_body.dart';
 
 /// Opens the "New goal" flow per T-14:
@@ -172,6 +177,10 @@ class _NewGoalFormState extends ConsumerState<_NewGoalForm> {
     // accepts `null` and reports "missing input" the same way it
     // would for any other unset profile field.
     final currentKg = ref.watch(currentWeightKgProvider).valueOrNull;
+    // Active weight unit drives the rate-slider scale on
+    // [GoalEditorBody]. Resolved here per the §4.4 passive-view rule
+    // so the leaf stays Riverpod-free.
+    final unit = ref.watch(weightUnitProvider);
 
     return meAsync.when(
       loading: () => SingleChildScrollView(
@@ -187,6 +196,7 @@ class _NewGoalFormState extends ConsumerState<_NewGoalForm> {
           direction: _direction,
           rateKgPerWeek: _rate,
           previewKcal: null,
+          unit: unit,
           targetWeightKg: _targetWeightForSection(currentKg: null),
           onTargetWeightChange: (v) => setState(() => _targetWeightKg = v),
           onDirectionChange: (d) => setState(() => _direction = d),
@@ -214,7 +224,45 @@ class _NewGoalFormState extends ConsumerState<_NewGoalForm> {
               horizontal: tokens.space.x5,
               vertical: tokens.space.x4,
             ),
-            child: GoalProfilePrereqs(user: user),
+            child: GoalProfilePrereqs(
+              user: user,
+              currentKg: currentKg,
+              onPickSex: () => showSexPicker(
+                context,
+                initial: user.sex,
+                onSave: (picked) async {
+                  await ref
+                      .read(profileRepositoryProvider)
+                      .update(UserPatch(sex: picked));
+                  ref.invalidate(meProvider);
+                },
+              ),
+              onPickBirthDate: () => showBirthDatePicker(
+                context,
+                ref,
+                initial: user.birthDate,
+              ),
+              onPickHeight: () => showHeightStepperSheet(
+                context,
+                initial: user.heightCm,
+              ),
+              // The "Current weight" picker derives its seed from the
+              // weight feed, not from the user record — leave `initial`
+              // null so the sheet falls back to its own default. Once
+              // the user logs a weight the prereq row vanishes anyway.
+              onPickWeight: () =>
+                  showCurrentWeightSheet(context, initial: null),
+              onPickActivity: () => showActivityLevelPicker(
+                context,
+                initial: user.activityLevel,
+                onSave: (picked) async {
+                  await ref
+                      .read(profileRepositoryProvider)
+                      .update(UserPatch(activityLevel: picked));
+                  ref.invalidate(meProvider);
+                },
+              ),
+            ),
           );
         }
         final estimate = _estimateFor(user, currentKg);
@@ -228,6 +276,7 @@ class _NewGoalFormState extends ConsumerState<_NewGoalForm> {
             direction: _direction,
             rateKgPerWeek: _rate,
             previewKcal: estimate?.dailyTargetKcal,
+            unit: unit,
             targetWeightKg: _targetWeightForSection(currentKg: currentKg),
             onTargetWeightChange: (v) => setState(() => _targetWeightKg = v),
             onDirectionChange: (d) => setState(() => _direction = d),
