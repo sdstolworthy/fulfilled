@@ -16,14 +16,6 @@ impl ServingService {
         Self { servings, foods }
     }
 
-    pub fn servings(&self) -> &Arc<dyn ServingRepository> {
-        &self.servings
-    }
-
-    pub fn foods(&self) -> &Arc<dyn FoodRepository> {
-        &self.foods
-    }
-
     #[tracing::instrument(skip(self))]
     pub async fn list_for_food(&self, food_id: Uuid) -> CoreResult<Vec<Serving>> {
         self.servings.list_for_food(food_id).await
@@ -85,6 +77,37 @@ impl ServingService {
             return Err(CoreError::NotFound);
         }
         self.servings.set_default(food_id, serving_id).await
+    }
+
+    /// Atomic default-serving flip given only a serving id. The wire
+    /// (`POST /servings/:id/default`) doesn't carry a food id, so the
+    /// service resolves it internally — the previous handler used to
+    /// reach into a public `servings()` getter to look up the food id,
+    /// which let writes skip [`load_writable_food`]. Routing the lookup
+    /// through this method puts the guard back in one place.
+    ///
+    /// Returns the post-flip serving so the handler can render the
+    /// updated row without a second round-trip.
+    #[tracing::instrument(skip(self))]
+    pub async fn set_default_by_serving_id(
+        &self,
+        viewer: Uuid,
+        serving_id: Uuid,
+    ) -> CoreResult<Serving> {
+        let serving = self
+            .servings
+            .find_by_id(serving_id)
+            .await?
+            .ok_or(CoreError::NotFound)?;
+        let _food = self.load_writable_food(viewer, serving.food_id).await?;
+        self.servings
+            .set_default(serving.food_id, serving_id)
+            .await?;
+        // Re-read so the response reflects the post-flip state.
+        self.servings
+            .find_by_id(serving_id)
+            .await?
+            .ok_or(CoreError::NotFound)
     }
 
     #[tracing::instrument(skip(self))]

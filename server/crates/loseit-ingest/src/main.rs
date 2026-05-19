@@ -24,10 +24,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use clap::Parser;
 use loseit_core::service::{FoodRecordSource, IngestService, UsdaSource};
-use loseit_db::{
-    build_pool, run_migrations, PgBatchRepository, PgFoodRepository, PgServingRepository,
-    PoolConfig,
-};
+use loseit_db::{build_pool, run_migrations, PgBatchRepository, PgFoodRepository, PoolConfig};
 use loseit_ingest::{open_source, open_usda_source, LimitedSource, LimitedUsdaSource};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
@@ -98,10 +95,9 @@ async fn main() -> Result<()> {
     }
 
     let foods = Arc::new(PgFoodRepository::new(pool.clone()));
-    let servings = Arc::new(PgServingRepository::new(pool.clone()));
     let batches = Arc::new(PgBatchRepository::new(pool));
 
-    let service = IngestService::new(foods, servings, batches);
+    let service = IngestService::new(foods, batches);
 
     let source_url = args.input.display().to_string();
 

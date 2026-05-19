@@ -49,18 +49,6 @@ impl LogService {
         }
     }
 
-    pub fn logs(&self) -> &Arc<dyn LogRepository> {
-        &self.logs
-    }
-
-    pub fn foods(&self) -> &Arc<dyn FoodRepository> {
-        &self.foods
-    }
-
-    pub fn servings(&self) -> &Arc<dyn ServingRepository> {
-        &self.servings
-    }
-
     /// Compute a nutrition snapshot from a serving and a quantity multiplier.
     /// Snapshot = quantity * serving.<nutrient>. Rounds to NUMERIC(8,2).
     /// T08 replaces the per-100g path with this per-serving path.

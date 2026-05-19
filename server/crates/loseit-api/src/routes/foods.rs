@@ -578,19 +578,12 @@ async fn set_default_serving(
     AuthenticatedUser(user): AuthenticatedUser,
     Path(id): Path<Uuid>,
 ) -> Result<Json<ServingResponse>, ApiError> {
-    // `set_default` needs the food id; resolve it from the serving so the
-    // route stays single-id (clients don't have to pass food_id again).
-    let serving = servings
-        .servings()
-        .find_by_id(id)
-        .await?
-        .ok_or_else(ApiError::not_found)?;
-    servings.set_default(user.id, serving.food_id, id).await?;
-    // Re-read so the response reflects the post-flip state.
-    let updated = servings
-        .servings()
-        .find_by_id(id)
-        .await?
-        .ok_or_else(ApiError::not_found)?;
+    // The wire doesn't carry a food id; the service resolves it
+    // internally and applies the writable-food guard before the flip.
+    // Audit-fix R1: the handler used to reach through a public
+    // `servings.servings()` getter to look up the food id — a LoD
+    // train-wreck that also dodged the guard. Both back-doors are
+    // gone now.
+    let updated = servings.set_default_by_serving_id(user.id, id).await?;
     Ok(Json(updated.into()))
 }

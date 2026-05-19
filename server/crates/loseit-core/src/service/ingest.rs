@@ -8,9 +8,7 @@ use rust_decimal_macros::dec;
 use uuid::Uuid;
 
 use crate::domain::{FoodDraft, NutriscoreGrade, ServingDraft, ServingSource, Unit};
-use crate::repo::{
-    BatchRepository, FoodDraftWithServings, FoodRepository, ServingRepository, UpsertStats,
-};
+use crate::repo::{BatchRepository, FoodDraftWithServings, FoodRepository, UpsertStats};
 use crate::CoreResult;
 
 // ---------------------------------------------------------------------------
@@ -677,33 +675,12 @@ pub fn score(record: &OffFoodRecord) -> i16 {
 /// Streaming batch upsert orchestrator.
 pub struct IngestService {
     foods: Arc<dyn FoodRepository>,
-    servings: Arc<dyn ServingRepository>,
     batches: Arc<dyn BatchRepository>,
 }
 
 impl IngestService {
-    pub fn new(
-        foods: Arc<dyn FoodRepository>,
-        servings: Arc<dyn ServingRepository>,
-        batches: Arc<dyn BatchRepository>,
-    ) -> Self {
-        Self {
-            foods,
-            servings,
-            batches,
-        }
-    }
-
-    pub fn foods(&self) -> &Arc<dyn FoodRepository> {
-        &self.foods
-    }
-
-    pub fn servings(&self) -> &Arc<dyn ServingRepository> {
-        &self.servings
-    }
-
-    pub fn batches(&self) -> &Arc<dyn BatchRepository> {
-        &self.batches
+    pub fn new(foods: Arc<dyn FoodRepository>, batches: Arc<dyn BatchRepository>) -> Self {
+        Self { foods, batches }
     }
 
     pub async fn run<S: FoodRecordSource>(

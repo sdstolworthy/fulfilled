@@ -76,7 +76,7 @@ fn build_service() -> (
     let servings = Arc::new(InMemoryServingRepository::new());
     let batches = Arc::new(InMemoryBatchRepository::new());
     foods.set_serving_repo(servings.clone());
-    let svc = IngestService::new(foods.clone(), servings.clone(), batches.clone());
+    let svc = IngestService::new(foods.clone(), batches.clone());
     (foods, servings, batches, svc)
 }
 
@@ -253,7 +253,7 @@ async fn ingest_records_stats_on_batch() {
     let servings = Arc::new(InMemoryServingRepository::new());
     let batches = Arc::new(InMemoryBatchRepository::new());
     foods.set_serving_repo(servings.clone());
-    let svc = IngestService::new(foods.clone(), servings.clone(), batches.clone());
+    let svc = IngestService::new(foods.clone(), batches.clone());
 
     // Capture the batch by spying on start: we use the fact that
     // `InMemoryBatchRepository` is keyed by Uuid. We pre-call start so we

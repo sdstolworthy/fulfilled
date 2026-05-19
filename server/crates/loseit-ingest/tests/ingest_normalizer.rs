@@ -442,7 +442,7 @@ fn build_ingest_service() -> (
     let servings = Arc::new(InMemoryServingRepository::new());
     let batches = Arc::new(InMemoryBatchRepository::new());
     foods.set_serving_repo(servings.clone());
-    let svc = IngestService::new(foods.clone(), servings.clone(), batches.clone());
+    let svc = IngestService::new(foods.clone(), batches.clone());
     (foods, servings, batches, svc)
 }
 
