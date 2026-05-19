@@ -1,53 +1,50 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:go_router/go_router.dart';
 
-import '../../../routing/routes.dart';
 import '../../../theme/context_extensions.dart';
-import '../login_controller.dart';
 
 /// LOG-006 — the "Sign in" submit button.
 ///
 /// Wraps a 54-px-tall, full-width accent pill (matching `PrimaryButton`'s
 /// shape — T-04 names this as the single accent-only primary on the
 /// screen) and swaps the label for a button-sized static skeleton when
-/// `state.submitting` is `true` (T-08 — zero `CircularProgressIndicator`
+/// `submitting` is `true` (T-08 — zero `CircularProgressIndicator`
 /// anywhere in this screen). The skeleton shape is byte-for-byte the
 /// same as `_SaveButtonSkeleton` in `log_entry_sheet.dart` (architect
 /// §5.7).
 ///
-/// Post-submit nav: on `controller.submit() == true` we call
-/// `context.go(Routes.todayPath)` (T-24 Case 2 — route-to-effect, not
-/// push, so the back button doesn't return to the login form).
-class LoginButton extends ConsumerWidget {
-  const LoginButton({super.key});
+/// Post-submit nav: the container's `onSubmit` callback is responsible
+/// for calling `controller.submit()` and (on `true`) routing via
+/// `context.go(Routes.todayPath)` — T-24 Case 2. Keeping the router
+/// dependency in the container lets this leaf stay router- and
+/// provider-free.
+///
+/// **Pure presentation widget** — see `specs/testing_guide.md` §4.4.
+/// This file imports nothing from `package:flutter_riverpod` or
+/// `go_router`.
+///
+/// **Inputs.**
+/// - `submitting` — drives the disabled state + the T-08 skeleton
+///   swap.
+/// - `url` — used to compute the T-20 semantics label
+///   (`Sign in to <hostname>` when the URL field has been filled).
+/// - `onSubmit` — fired on tap. Container handles the submit flow +
+///   the post-success navigation.
+class LoginButton extends StatelessWidget {
+  const LoginButton({
+    super.key,
+    required this.submitting,
+    required this.url,
+    required this.onSubmit,
+  });
+
+  final bool submitting;
+  final String url;
+  final VoidCallback onSubmit;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    // Perf (Flutter doc — "Control build() cost"): only `submitting`
-    // and `url` are read here. Watching the whole state would rebuild
-    // the button on every keystroke of username / password / urlError.
-    // We use two `.select` calls because the two slices change on
-    // independent edges; the button rebuilds when either flips.
-    final submitting = ref.watch(
-      loginControllerProvider.select((s) => s.submitting),
-    );
-    final url = ref.watch(
-      loginControllerProvider.select((s) => s.url),
-    );
-    final controller = ref.read(loginControllerProvider.notifier);
+  Widget build(BuildContext context) {
     final colors = context.colors;
     final radius = context.radius;
-
-    Future<void> onPressed() async {
-      final ok = await controller.submit();
-      if (ok && context.mounted) {
-        // T-24 Case 2 — route-to-effect on success. `go` (not `push`)
-        // so the back button doesn't bounce the user back to the login
-        // form after they're signed in.
-        context.go(Routes.todayPath);
-      }
-    }
 
     // T-20 — semantic label includes the hostname when the URL field
     // has been filled (architect §5.8 + ticket "submit reads 'Sign in
@@ -63,7 +60,7 @@ class LoginButton extends ConsumerWidget {
         height: 54,
         width: double.infinity,
         child: FilledButton(
-          onPressed: submitting ? null : onPressed,
+          onPressed: submitting ? null : onSubmit,
           style: FilledButton.styleFrom(
             backgroundColor: colors.accent,
             foregroundColor: colors.surface,

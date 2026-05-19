@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../theme/context_extensions.dart';
-import '../login_controller.dart';
 
 /// LOG-006 — the server-URL input.
 ///
@@ -19,25 +17,58 @@ import '../login_controller.dart';
 /// Wrapped in `Semantics(label: 'Server URL')` per T-20 so screen
 /// readers announce the field's purpose regardless of label/helper
 /// rendering.
-class ServerUrlField extends ConsumerStatefulWidget {
-  const ServerUrlField({super.key});
+///
+/// **Pure presentation widget** — all inputs arrive via constructor
+/// parameters (see `specs/testing_guide.md` §4.4). The container
+/// (`LoginScreen`) reads `loginControllerProvider`, extracts the
+/// slices, and wires the callbacks. This file imports nothing from
+/// `package:flutter_riverpod`.
+///
+/// **Inputs.**
+/// - `initialUrl` — used to seed the local `TextEditingController`
+///   once in `initState`. Not consulted on subsequent rebuilds; the
+///   controller owns the visible text from that point on so we don't
+///   fight the user's keystrokes.
+/// - `submitting` — when true, disables the field (T-08).
+/// - `urlError` — non-null drives the helper-text + border into the
+///   danger style and (when the message contains "HTTP") surfaces the
+///   "Allow HTTP" disclosure under the field.
+/// - `onUrlChanged` — fired on every keystroke; container forwards
+///   into `LoginController.setUrl`.
+/// - `onToggleAllowInsecure` — fired when the user taps the per-
+///   session "Allow HTTP" disclosure; container forwards into
+///   `LoginController.toggleAllowInsecure`.
+class ServerUrlField extends StatefulWidget {
+  const ServerUrlField({
+    super.key,
+    required this.initialUrl,
+    required this.submitting,
+    required this.urlError,
+    required this.onUrlChanged,
+    required this.onToggleAllowInsecure,
+  });
+
+  final String initialUrl;
+  final bool submitting;
+  final String? urlError;
+  final ValueChanged<String> onUrlChanged;
+  final VoidCallback onToggleAllowInsecure;
 
   @override
-  ConsumerState<ServerUrlField> createState() => _ServerUrlFieldState();
+  State<ServerUrlField> createState() => _ServerUrlFieldState();
 }
 
-class _ServerUrlFieldState extends ConsumerState<ServerUrlField> {
+class _ServerUrlFieldState extends State<ServerUrlField> {
   late final TextEditingController _controller;
 
   @override
   void initState() {
     super.initState();
-    // Seed from the current login form state — when the controller is
-    // first read, `state.url` already carries the Hive-pre-seeded URL
-    // (or empty). On subsequent rebuilds we don't reset the text from
-    // state — that would fight the user's keystrokes.
-    final initial = ref.read(loginControllerProvider).url;
-    _controller = TextEditingController(text: initial);
+    // Seed from the supplied initial URL — the container reads this
+    // off `state.url` (which already carries the Hive-pre-seeded URL,
+    // or empty). On subsequent rebuilds we don't reset the text from
+    // props — that would fight the user's keystrokes.
+    _controller = TextEditingController(text: widget.initialUrl);
   }
 
   @override
@@ -48,23 +79,9 @@ class _ServerUrlFieldState extends ConsumerState<ServerUrlField> {
 
   @override
   Widget build(BuildContext context) {
-    // Perf (Flutter doc — "Control build() cost"): the URL field's
-    // visible value is owned by `_controller`, so we only need to
-    // react to two state slices — `submitting` (disables the field)
-    // and `urlError` (drives the helper text + border color + HTTP
-    // disclosure). Watching the whole state would rebuild on every
-    // keystroke (the controller calls `setUrl(v)` → `state.url = v`),
-    // even though the `TextField` already mirrors the keystroke
-    // locally.
-    final submitting = ref.watch(
-      loginControllerProvider.select((s) => s.submitting),
-    );
-    final urlError = ref.watch(
-      loginControllerProvider.select((s) => s.urlError),
-    );
-    final controller = ref.read(loginControllerProvider.notifier);
     final colors = context.colors;
     final space = context.space;
+    final urlError = widget.urlError;
 
     final hasError = urlError != null;
     // PM §5.4 — helper text under the field by default; replaced with the
@@ -97,8 +114,8 @@ class _ServerUrlFieldState extends ConsumerState<ServerUrlField> {
             // Re-login pre-seed: when the form already has a URL the
             // focus moves to the password (CredentialsForm handles its
             // own autofocus); the URL field is not autofocused here.
-            enabled: !submitting,
-            onChanged: controller.setUrl,
+            enabled: !widget.submitting,
+            onChanged: widget.onUrlChanged,
             decoration: InputDecoration(
               labelText: 'Server URL',
               helperText: helperText,
@@ -124,7 +141,7 @@ class _ServerUrlFieldState extends ConsumerState<ServerUrlField> {
             Align(
               alignment: Alignment.centerLeft,
               child: TextButton.icon(
-                onPressed: controller.toggleAllowInsecure,
+                onPressed: widget.onToggleAllowInsecure,
                 icon: const Icon(Icons.lock_open_outlined, size: 18),
                 label: const Text('Allow HTTP for this session'),
                 style: TextButton.styleFrom(

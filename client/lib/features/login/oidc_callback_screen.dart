@@ -1,12 +1,10 @@
-import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../data/api_client.dart';
-import '../../data/auth_token.dart';
 import '../../routing/routes.dart';
 import '../../theme/context_extensions.dart';
+import 'oidc_exchange.dart';
 
 /// `/login/callback` — the FE landing page after the backend completes
 /// the OIDC code exchange against the IdP.
@@ -22,17 +20,17 @@ import '../../theme/context_extensions.dart';
 ///      single-use **handoff code** (60s TTL), and 302s the browser
 ///      to `<LOSEIT_FE_ORIGIN>/login/callback?code=<handoff>`.
 ///   7. This screen reads the `code` query param, calls
-///      `POST /auth/oidc/exchange` to swap the handoff for an opaque
-///      bearer token, stores it via `AuthTokenNotifier.signIn`, then
-///      navigates to `/today`.
+///      [runOidcExchange] to swap the handoff for an opaque bearer
+///      token (the shared seam in `oidc_exchange.dart` — same code
+///      path the inline `LoginScreen.initState` and the mobile
+///      `OidcButton` both consume) and navigates to `/today`.
 ///
 /// **Error states** (T-11):
 ///   - Missing `code` query param → "Sign-in didn't complete. Please
 ///     try again." inline; "Back to sign in" CTA returns to `/login`.
-///   - `POST /auth/oidc/exchange` returns 4xx/5xx → same shape, with
-///     the server's `Error.message` (if present) surfaced verbatim.
-///   - Network error → "Couldn't reach the server. Check your
-///     connection and try again." with a Retry CTA.
+///   - Exchange failure → render `OidcExchangeError.message` verbatim
+///     (the helper already classifies status, network, and timeout
+///     branches into render-ready strings).
 class OidcCallbackScreen extends ConsumerStatefulWidget {
   const OidcCallbackScreen({super.key, required this.code});
 
@@ -70,43 +68,24 @@ class _OidcCallbackScreenState extends ConsumerState<OidcCallbackScreen> {
       _running = true;
       _error = null;
     });
-    try {
-      final dio = ref.read(apiClientProvider).dio;
-      final res = await dio.post<dynamic>(
-        '/auth/oidc/exchange',
-        data: <String, String>{'code': widget.code},
-      );
-      final body = res.data;
-      if (body is! Map ||
-          body['token'] is! String ||
-          (body['token'] as String).isEmpty) {
+    // Audit-fix from `specs/io_deps_audit.md` §2.1: route through the
+    // shared `runOidcExchange` seam rather than poking the Dio client
+    // directly. That helper owns the `POST /auth/oidc/exchange` wire,
+    // the token persist via `authTokenProvider.signIn`, the
+    // `meProvider` invalidate, and the 20s outer-timeout — same code
+    // path `LoginScreen._runExchange` and the OIDC-button orchestration
+    // in `login_screen.dart`'s `_OidcButtonListState._onTap` both
+    // consume.
+    final result = await runOidcExchange(ref: ref, handoff: widget.code);
+    if (!mounted) return;
+    switch (result) {
+      case OidcExchangeSuccess():
+        context.go(Routes.todayPath);
+      case OidcExchangeError(:final message):
         setState(() {
           _running = false;
-          _error = 'Sign-in completed but the server returned no token. '
-              'Please try again.';
+          _error = message;
         });
-        return;
-      }
-      final token = body['token'] as String;
-      await ref.read(authTokenProvider.notifier).signIn(token);
-      if (!mounted) return;
-      context.go(Routes.todayPath);
-    } on DioException catch (e) {
-      final status = e.response?.statusCode;
-      final message = _extractServerMessage(e.response?.data) ??
-          (status == null
-              ? "Couldn't reach the server. Check your connection and "
-                  'try again.'
-              : 'Sign-in failed (server returned $status).');
-      setState(() {
-        _running = false;
-        _error = message;
-      });
-    } catch (_) {
-      setState(() {
-        _running = false;
-        _error = 'An unexpected error occurred. Please try again.';
-      });
     }
   }
 
@@ -173,14 +152,4 @@ class _OidcCallbackScreenState extends ConsumerState<OidcCallbackScreen> {
       ),
     );
   }
-}
-
-/// Pull a human-readable error message off a typical `Error` response
-/// body. The server emits `{code, message?}` on errors; we surface
-/// `message` verbatim when present.
-String? _extractServerMessage(Object? data) {
-  if (data is Map && data['message'] is String) {
-    return data['message'] as String;
-  }
-  return null;
 }
