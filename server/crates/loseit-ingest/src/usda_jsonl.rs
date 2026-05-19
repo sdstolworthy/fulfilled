@@ -107,9 +107,10 @@ struct UsdaRaw {
     brand_owner: Option<String>,
     food_portions: Vec<RawFoodPortion>,
     food_nutrients: Vec<RawNutrient>,
-    /// 1.2: Branded foods report `foodNutrients[]` per serving. We carry
-    /// `servingSize` + `servingSizeUnit` through to the normaliser so it
-    /// can rescale to per-100g. `None` on non-Branded rows.
+    /// Branded foods carry serving info. `foodNutrients[]` itself is
+    /// already per-100g (verified 2026-05-19 against live API + CSV
+    /// bundle) — these fields aren't used for rescaling, just for
+    /// future per-serving label emission.
     serving_size: Option<f64>,
     serving_size_unit: Option<String>,
 }

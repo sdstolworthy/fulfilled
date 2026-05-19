@@ -81,13 +81,12 @@ pub struct UsdaFoodRecord {
     pub description: String,
     pub brand_owner: Option<String>,
     pub food_portions: Vec<UsdaFoodPortion>,
-    // Per-100g nutrition (from foodNutrients[]).
-    //
-    // For `dataType == "branded_food"`, USDA actually reports
-    // `foodNutrients[]` per serving (not per-100g). The `loseit-ingest`
-    // adapter populates these fields with the raw amounts and sets
-    // `serving_size` + `serving_size_unit` so the normalizer can rescale.
-    // See 1.2 in `import_plan.md`.
+    // Per-100g nutrition (from foodNutrients[]). All FDC datasets
+    // (Foundation, SR Legacy, Survey, AND Branded) report these as
+    // per-100g — verified 2026-05-19 against live API + CSV bundle.
+    // Earlier Phase 1 work assumed Branded was per-serving and added
+    // a rescale step; that was based on incorrect research and is
+    // gone — see `accept_and_normalize_usda`.
     pub energy_kcal_100g: Option<Decimal>,
     pub protein_100g: Option<Decimal>,
     pub carbs_100g: Option<Decimal>,
@@ -97,13 +96,10 @@ pub struct UsdaFoodRecord {
     /// Sodium in mg/100g (USDA convention — already in mg).
     pub sodium_mg_100g: Option<Decimal>,
     pub saturated_fat_100g: Option<Decimal>,
-    /// Serving size for Branded foods. Only meaningful when
-    /// `data_type == "branded_food"`. The normaliser uses this together
-    /// with `serving_size_unit` to rescale per-serving nutrients to
-    /// per-100g. See 1.2 in `import_plan.md`.
+    /// Serving size for Branded foods (carried through for future
+    /// per-serving label emission). Not used for nutrient rescaling.
     pub serving_size: Option<Decimal>,
-    /// Unit for `serving_size`. Recognised: `g`, `GRM`, `ml`, `MLT`
-    /// (case-insensitive). See 1.2 in `import_plan.md`.
+    /// Unit for `serving_size`.
     pub serving_size_unit: Option<String>,
 }
 
@@ -606,52 +602,16 @@ pub fn accept_and_normalize_usda(mut record: UsdaFoodRecord) -> Option<FoodDraft
         return None;
     }
 
-    // 1.2: USDA Branded foods report `foodNutrients[]` per serving, not
-    // per-100g. Rescale: `amount_per_100g = amount / serving_size * 100`.
-    // Reject the row (skip-and-log) when we can't rescale safely:
-    // - serving_size <= 0
-    // - serving_size_unit is missing or not one of {g, GRM, ml, MLT}.
-    //
-    // The ml branch is technically only correct for water-density-equivalent
-    // foods, but Branded sodas/juices are the dominant ml case and the
-    // density-1 assumption is the industry default for nutrition labels.
-    if record.data_type.eq_ignore_ascii_case("branded_food") {
-        let ss = record.serving_size;
-        let unit = record.serving_size_unit.as_deref().map(|s| {
-            // Accept both UCUM and free-text spellings used by FDC.
-            let trimmed = s.trim().to_ascii_lowercase();
-            trimmed
-        });
-        let unit_ok = matches!(unit.as_deref(), Some("g" | "grm" | "ml" | "mlt"));
-        match (ss, unit_ok) {
-            (Some(sz), true) if sz > Decimal::ZERO => {
-                // Rescale every per-serving field to per-100g.
-                let factor = dec!(100) / sz;
-                fn rescale(v: &mut Option<Decimal>, factor: Decimal) {
-                    if let Some(x) = *v {
-                        *v = Some(x * factor);
-                    }
-                }
-                rescale(&mut record.energy_kcal_100g, factor);
-                rescale(&mut record.protein_100g, factor);
-                rescale(&mut record.carbs_100g, factor);
-                rescale(&mut record.fat_100g, factor);
-                rescale(&mut record.fiber_100g, factor);
-                rescale(&mut record.sugar_100g, factor);
-                rescale(&mut record.sodium_mg_100g, factor);
-                rescale(&mut record.saturated_fat_100g, factor);
-            }
-            _ => {
-                tracing::warn!(
-                    fdc_id = record.fdc_id,
-                    serving_size = ?record.serving_size,
-                    serving_size_unit = ?record.serving_size_unit,
-                    "dropping Branded USDA row: serving_size/serving_size_unit invalid or missing"
-                );
-                return None;
-            }
-        }
-    }
+    // NOTE on USDA Branded basis: Phase 1 originally rescaled Branded
+    // `foodNutrients[]` from per-serving to per-100g here, based on a
+    // research-agent claim that Branded reports per-serving. The smoke
+    // import against real FDC data (Wesson Oil at 867 kcal for 15ml,
+    // Coca-Cola at 39 kcal for 355ml) confirmed both numbers only make
+    // sense as per-100g — rescaling would have produced 3-5x kcal blowups.
+    // Both the CSV bundle and the live API agree on per-100g for Branded.
+    // The `servingSize` / `servingSizeUnit` fields are still useful for
+    // emitting a per-serving `ServingDraft` alongside the per-100g one,
+    // but we do NOT touch the nutrient amounts.
 
     // §7.2 rule 5: drop if foodPortions empty AND no energy-kcal.
     if record.food_portions.is_empty() && record.energy_kcal_100g.is_none() {
@@ -1667,117 +1627,66 @@ mod tests {
         assert_eq!(s100.kcal, dec!(200));
     }
 
-    /// 1.2: USDA Branded food reporting 140 kcal per 30 g serving rescales
-    /// to ~466.67 kcal/100g.
+    /// Per the 2026-05-19 smoke import: FDC Branded food_nutrient values
+    /// are per-100g, NOT per-serving (Wesson Oil ships 867 kcal for a 15ml
+    /// serving — only sensible as per-100g; rescale would give 5780).
+    /// We pass the values through unchanged regardless of dataType.
     #[test]
-    fn usda_branded_rescales_per_serving_to_per_100g() {
+    fn usda_branded_kcal_passes_through_per_100g() {
         let r = UsdaFoodRecord {
             fdc_id: 50001,
             data_type: "branded_food".into(),
-            description: "30g cookie".into(),
-            brand_owner: Some("CookieCo".into()),
+            description: "Wesson Oil".into(),
+            brand_owner: Some("Richardson Oilseed".into()),
             food_portions: vec![],
-            energy_kcal_100g: Some(dec!(140)), // per serving in Branded input
-            protein_100g: Some(dec!(2)),
-            carbs_100g: Some(dec!(20)),
-            fat_100g: Some(dec!(7)),
-            serving_size: Some(dec!(30)),
-            serving_size_unit: Some("g".into()),
-            ..Default::default()
-        };
-        let out = accept_and_normalize_usda(r).expect("should accept");
-        assert_eq!(out.servings.len(), 1);
-        let s = &out.servings[0];
-        assert_eq!(s.unit, Unit::Gram);
-        assert_eq!(s.amount, dec!(100));
-        // 140 / 30 * 100 = 466.666...
-        let expected = dec!(140) / dec!(30) * dec!(100);
-        let diff = (s.kcal - expected).abs();
-        assert!(
-            diff < dec!(0.01),
-            "rescaled kcal {} not within 0.01 of expected {}",
-            s.kcal,
-            expected
-        );
-        // Macros also rescale.
-        let p = s.protein_g.unwrap();
-        let p_expected = dec!(2) / dec!(30) * dec!(100);
-        assert!((p - p_expected).abs() < dec!(0.01));
-    }
-
-    /// 1.2: ml branch — same factor.
-    #[test]
-    fn usda_branded_rescales_ml_units() {
-        let r = UsdaFoodRecord {
-            fdc_id: 50002,
-            data_type: "branded_food".into(),
-            description: "240ml drink".into(),
-            brand_owner: Some("BeverageCo".into()),
-            food_portions: vec![],
-            energy_kcal_100g: Some(dec!(120)), // per serving
-            serving_size: Some(dec!(240)),
+            energy_kcal_100g: Some(dec!(867)),
+            fat_100g: Some(dec!(93.33)),
+            serving_size: Some(dec!(15)),
             serving_size_unit: Some("ml".into()),
             ..Default::default()
         };
         let out = accept_and_normalize_usda(r).expect("should accept");
-        let s = out
+        let s100 = out
             .servings
             .iter()
             .find(|s| s.unit == Unit::Gram && s.amount == dec!(100))
-            .unwrap();
-        // 120 / 240 * 100 = 50
-        let expected = dec!(120) / dec!(240) * dec!(100);
-        let diff = (s.kcal - expected).abs();
-        assert!(diff < dec!(0.01));
+            .expect("100g companion missing");
+        // Per-100g pass-through: 867 stays 867.
+        assert_eq!(s100.kcal, dec!(867));
+        assert_eq!(s100.fat_g, Some(dec!(93.33)));
     }
 
-    /// 1.2: Branded row with missing / invalid serving_size is dropped.
+    /// `dataType` casing variants both flow through unchanged. Pre-fix this
+    /// would have exercised the (incorrect) rescale on "branded_food" but
+    /// not on "Branded".
     #[test]
-    fn usda_branded_missing_serving_size_dropped() {
-        let r = UsdaFoodRecord {
-            fdc_id: 50003,
-            data_type: "branded_food".into(),
-            description: "Bad row".into(),
-            brand_owner: Some("X".into()),
-            food_portions: vec![],
-            energy_kcal_100g: Some(dec!(100)),
-            serving_size: None,
-            serving_size_unit: Some("g".into()),
-            ..Default::default()
-        };
-        assert!(accept_and_normalize_usda(r).is_none());
-
-        // Unrecognised unit → drop.
-        let r2 = UsdaFoodRecord {
-            fdc_id: 50004,
-            data_type: "branded_food".into(),
-            description: "Bad unit".into(),
-            food_portions: vec![],
-            energy_kcal_100g: Some(dec!(100)),
-            serving_size: Some(dec!(1)),
-            serving_size_unit: Some("piece".into()),
-            ..Default::default()
-        };
-        assert!(accept_and_normalize_usda(r2).is_none());
-
-        // Zero serving_size → drop.
-        let r3 = UsdaFoodRecord {
-            fdc_id: 50005,
-            data_type: "branded_food".into(),
-            description: "Zero size".into(),
-            food_portions: vec![],
-            energy_kcal_100g: Some(dec!(100)),
-            serving_size: Some(Decimal::ZERO),
-            serving_size_unit: Some("g".into()),
-            ..Default::default()
-        };
-        assert!(accept_and_normalize_usda(r3).is_none());
+    fn usda_branded_data_type_casing_irrelevant() {
+        for dt in ["branded_food", "Branded", "BRANDED"] {
+            let r = UsdaFoodRecord {
+                fdc_id: 50002,
+                data_type: dt.into(),
+                description: "Coke".into(),
+                food_portions: vec![],
+                energy_kcal_100g: Some(dec!(39)),
+                serving_size: Some(dec!(355)),
+                serving_size_unit: Some("ml".into()),
+                ..Default::default()
+            };
+            let out = accept_and_normalize_usda(r).expect("should accept");
+            let s100 = out
+                .servings
+                .iter()
+                .find(|s| s.unit == Unit::Gram && s.amount == dec!(100))
+                .unwrap();
+            // 39 kcal / 100ml is real Coke per-100ml; no rescale should occur.
+            assert_eq!(s100.kcal, dec!(39), "dataType={dt} did not pass through");
+        }
     }
 
-    /// 1.2: non-Branded (Foundation) rows are NOT rescaled — they're already
-    /// per-100g per USDA spec.
+    /// Foundation rows continue to flow through per-100g. (Same as before
+    /// the fix; kept as a regression marker against accidental rescale.)
     #[test]
-    fn usda_foundation_not_rescaled() {
+    fn usda_foundation_passes_through_per_100g() {
         let r = UsdaFoodRecord {
             fdc_id: 50006,
             data_type: "foundation_food".into(),
@@ -1790,7 +1699,6 @@ mod tests {
         };
         let out = accept_and_normalize_usda(r).expect("should accept");
         let s = &out.servings[0];
-        // Untouched — 100 kcal/100g.
         assert_eq!(s.kcal, dec!(100));
     }
 

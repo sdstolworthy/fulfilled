@@ -15,6 +15,12 @@
 - Phase 3 `COPY` round-trip with edge characters in `label` (comma, newline, quote, emoji). CSV encoder is unit-tested; wire-level round-trip is not.
 Building a Pg test fixture in `loseit-db` is the natural next step before the first prod import.
 
+**2026-05-19 smoke-import correction — fix 1.2 was based on wrong research:**
+The research agent originally claimed FDC Branded foods report `foodNutrients[]` per-serving, requiring a `amount / servingSize * 100` rescale. The smoke import against real FDC data falsified this:
+- WESSON Vegetable Oil (fdc 1105904): 867 kcal for `servingSize=15ml`. Per-serving would mean ~58 kcal/ml = 6.5× pure fat (impossible). Per-100ml matches reality (~9 kcal/ml).
+- Coca-Cola (Branded): 39 kcal for `servingSize=355ml`. A 12oz can is ~140 kcal. Per-100ml at 39 kcal × 3.55 cans = 138 kcal — matches.
+Both the CSV bundle and the live API (`GET /fdc/v1/food/<id>`) agree on per-100g for Branded. The rescale block in `accept_and_normalize_usda` is removed; the `serving_size`/`serving_size_unit` plumbing is kept for future per-serving label emission. The lucky-bug history: the rescale gate compared against `"branded_food"` while the JSON sends `"Branded"`, so it never fired in production — the bug papered over the wrong premise.
+
 This plan lays out the strategy to import the Open Food Facts (OFF) and USDA
 FoodData Central (FDC) databases into Postgres so that `/foods/search` returns
 real products instead of test fixtures. It synthesizes three research/audit
