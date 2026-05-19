@@ -4,7 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../domain/enums.dart';
+import '../../domain/weight.dart';
 import '../../form_factor/form_factor.dart';
+import '../../providers/goal_providers.dart';
+import '../../providers/profile_providers.dart';
+import '../../providers/weight_providers.dart';
 import '../../theme/context_extensions.dart';
 import 'widgets/log_weight_sheet.dart';
 import 'widgets/weight_history_list.dart';
@@ -89,6 +93,76 @@ class _WeightScreenState extends ConsumerState<WeightScreen> {
       unawaited(_openLogSheet());
     }
 
+    // Container reads. Each leaf below is a pure presentation widget
+    // taking resolved data; the AsyncValue branching lives here.
+    final historyAsync = ref.watch(weightHistoryProvider);
+    final goalAsync = ref.watch(activeGoalProvider);
+    final unit = ref.watch(weightUnitProvider);
+    final projection = ref.watch(goalProjectionProvider);
+    final seriesAsync = ref.watch(weightSeriesProvider(_range));
+
+    final goal = goalAsync.maybeWhen(data: (g) => g, orElse: () => null);
+    final goalKg = goal?.targetWeightKg;
+
+    // T-11 — SnackBar on transition into error state for the history
+    // load. Lives in the container so the leaf stays pure (no
+    // ref.listen leaks into a StatelessWidget).
+    ref.listen<AsyncValue<List<WeightEntry>>>(weightHistoryProvider,
+        (prev, next) {
+      if (next.hasError && (prev == null || !prev.hasError)) {
+        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+          SnackBar(
+            content: Text("Couldn't load weight history: ${next.error}"),
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+    });
+
+    final summaryCard = historyAsync.when(
+      data: (history) => WeightSummaryCard(
+        history: history,
+        goal: goal,
+        unit: unit,
+        projection: projection,
+      ),
+      loading: () => const WeightSummaryCardSkeleton(),
+      error: (_, __) => const WeightSummaryCardSkeleton(),
+    );
+
+    final sparklineCard = seriesAsync.when(
+      data: (points) => WeightSparklineCard(
+        range: _range,
+        onRangeChanged: (r) => setState(() => _range = r),
+        onLogWeight: openSheet,
+        points: points,
+        goalKg: goalKg,
+        unit: unit,
+      ),
+      loading: () => WeightSparklineCardSkeleton(
+        range: _range,
+        onRangeChanged: (r) => setState(() => _range = r),
+      ),
+      // Error state: degrade to an empty chart with goal line — same
+      // render as the no-data branch (T-11 inline degradation).
+      error: (_, __) => WeightSparklineCard(
+        range: _range,
+        onRangeChanged: (r) => setState(() => _range = r),
+        onLogWeight: openSheet,
+        points: const <WeightSeriesPoint>[],
+        goalKg: goalKg,
+        unit: unit,
+      ),
+    );
+
+    final historyList = historyAsync.when(
+      data: (entries) => WeightHistoryList(entries: entries, unit: unit),
+      loading: () => const WeightHistoryListSkeleton(),
+      error: (_, __) => WeightHistoryListError(
+        onRetry: () => ref.invalidate(weightHistoryProvider),
+      ),
+    );
+
     return Scaffold(
       backgroundColor: context.colors.bg,
       floatingActionButton:
@@ -100,16 +174,10 @@ class _WeightScreenState extends ConsumerState<WeightScreen> {
               onLogWeight: isCompact ? null : openSheet,
             ),
           ),
-          const SliverToBoxAdapter(child: WeightSummaryCard()),
-          SliverToBoxAdapter(
-            child: WeightSparklineCard(
-              range: _range,
-              onRangeChanged: (r) => setState(() => _range = r),
-              onLogWeight: openSheet,
-            ),
-          ),
+          SliverToBoxAdapter(child: summaryCard),
+          SliverToBoxAdapter(child: sparklineCard),
           const SliverToBoxAdapter(child: _RecentEntriesHeader()),
-          const SliverToBoxAdapter(child: WeightHistoryList()),
+          SliverToBoxAdapter(child: historyList),
           SliverToBoxAdapter(
             child: SizedBox(
               height: isCompact ? 96 : context.space.x6,

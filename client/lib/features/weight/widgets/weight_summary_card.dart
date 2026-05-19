@@ -1,6 +1,5 @@
 import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 
 import '../../../domain/enums.dart';
@@ -8,9 +7,6 @@ import '../../../domain/goal.dart';
 import '../../../domain/units/weight.dart';
 import '../../../domain/weight.dart';
 import '../../../domain/weight_projection.dart';
-import '../../../providers/goal_providers.dart';
-import '../../../providers/profile_providers.dart';
-import '../../../providers/weight_providers.dart';
 import '../../../theme/context_extensions.dart';
 
 /// The hero card at the top of screen 06.
@@ -26,27 +22,36 @@ import '../../../theme/context_extensions.dart';
 /// └──────────────────────────────────────────┘
 /// ```
 ///
-/// **Data sources.**
-/// - Now value: most-recent entry from [weightHistoryProvider].
-/// - Delta pill: now − weight from ~30 days ago (closest entry).
-/// - Start: `Goal.startWeightKg`.
-/// - Goal: `Goal.targetWeightKg`.
-/// - Avg / wk: average daily delta × 7, computed over the last 28 days
-///   of history (Decimal math, T-17).
+/// **Pure presentation widget** — all inputs arrive via constructor
+/// parameters (see `specs/testing_guide.md` §4.4). The container
+/// (`WeightScreen`) reads `weightHistoryProvider`, `activeGoalProvider`,
+/// `weightUnitProvider`, `goalProjectionProvider` and resolves them
+/// before constructing this widget; the loading / error branches
+/// render [WeightSummaryCardSkeleton] instead.
 ///
-/// **No-goal handling.** When `activeGoalProvider` throws
-/// `GoalNotFoundError` the start / goal stats render as em-dashes — the
-/// "now" + "this month" delta still resolve from history alone.
-class WeightSummaryCard extends ConsumerWidget {
-  const WeightSummaryCard({super.key});
+/// **Inputs.**
+/// - `history` — latest weight series, newest-first; empty list means
+///   "no entries yet".
+/// - `goal` — active goal (null when none exists or the provider has
+///   raised `GoalNotFoundError`); drives the start / target stats.
+/// - `unit` — display unit (kg / lb / st).
+/// - `projection` — already-computed projection from the goal model.
+class WeightSummaryCard extends StatelessWidget {
+  const WeightSummaryCard({
+    super.key,
+    required this.history,
+    required this.goal,
+    required this.unit,
+    required this.projection,
+  });
+
+  final List<WeightEntry> history;
+  final Goal? goal;
+  final WeightUnit unit;
+  final GoalProjection? projection;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final historyAsync = ref.watch(weightHistoryProvider);
-    final goalAsync = ref.watch(activeGoalProvider);
-    final unit = ref.watch(weightUnitProvider);
-    final projection = ref.watch(goalProjectionProvider);
-
+  Widget build(BuildContext context) {
     return Padding(
       padding: EdgeInsets.fromLTRB(
         context.space.x5,
@@ -55,20 +60,33 @@ class WeightSummaryCard extends ConsumerWidget {
         context.space.x3,
       ),
       child: _Card(
-        child: historyAsync.when(
-          data: (history) => _Body(
-            history: history,
-            goal: goalAsync.maybeWhen(
-              data: (g) => g,
-              orElse: () => null,
-            ),
-            unit: unit,
-            projection: projection,
-          ),
-          loading: () => const _SummarySkeleton(),
-          error: (_, __) => const _SummarySkeleton(),
+        child: _Body(
+          history: history,
+          goal: goal,
+          unit: unit,
+          projection: projection,
         ),
       ),
+    );
+  }
+}
+
+/// Loading / error placeholder for [WeightSummaryCard]. The container
+/// renders this from the `loading:` and `error:` arms of
+/// `historyAsync.when()`.
+class WeightSummaryCardSkeleton extends StatelessWidget {
+  const WeightSummaryCardSkeleton({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        context.space.x5,
+        context.space.x2,
+        context.space.x5,
+        context.space.x3,
+      ),
+      child: const _Card(child: _SummarySkeleton()),
     );
   }
 }

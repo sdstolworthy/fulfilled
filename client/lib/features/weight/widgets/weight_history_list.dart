@@ -1,14 +1,11 @@
 import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import '../../../domain/enums.dart';
 import '../../../domain/units/weight.dart';
 import '../../../domain/weight.dart';
 import '../../../form_factor/form_factor.dart';
-import '../../../providers/profile_providers.dart';
-import '../../../providers/weight_providers.dart';
 import '../../../theme/context_extensions.dart';
 import '../../../widgets/empty_state.dart';
 import '../../../widgets/primary_button.dart';
@@ -18,45 +15,66 @@ import 'log_weight_sheet.dart';
 /// "Recent entries" card on screen 06. Renders the last ~10 entries
 /// from `weightHistoryProvider` newest-first with date / weight / delta.
 ///
+/// **Pure presentation widget** — takes its data via constructor
+/// parameters (see `specs/testing_guide.md` §4.4). The container
+/// (`WeightScreen`) does the `ref.watch` against `weightHistoryProvider`
+/// and `weightUnitProvider`, branches on the AsyncValue, and renders
+/// [WeightHistoryListSkeleton] or [WeightHistoryListError] on the
+/// loading / error arms.
+///
 /// **Delta logic.** Delta is the difference between this entry and the
 /// next-older entry (signed, kg). Negative → accent (losing); positive →
 /// danger color (gaining). Zero shows as `±0.0`.
 ///
 /// Tenants: T-02 tabular figures, T-08 skeleton when loading (lifted
 /// `Skeleton` primitive — T-23 shared widgets), T-11 errors render an
-/// `EmptyState` + a SnackBar shim (not modal), T-17 Decimal math, T-21
-/// weight rendered via `formatWeight` / `formatWeightWithUnit`.
-class WeightHistoryList extends ConsumerWidget {
-  const WeightHistoryList({super.key});
+/// `EmptyState` + a SnackBar shim (not modal — fired by the container),
+/// T-17 Decimal math, T-21 weight rendered via `formatWeight` /
+/// `formatWeightWithUnit`.
+class WeightHistoryList extends StatelessWidget {
+  const WeightHistoryList({
+    super.key,
+    required this.entries,
+    required this.unit,
+  });
+
+  final List<WeightEntry> entries;
+  final WeightUnit unit;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final historyAsync = ref.watch(weightHistoryProvider);
-    final unit = ref.watch(weightUnitProvider);
-
-    // T-11 — SnackBar fires on transition into the error state so the
-    // user notices even if scrolled away from the inline EmptyState.
-    ref.listen<AsyncValue<List<WeightEntry>>>(weightHistoryProvider,
-        (prev, next) {
-      if (next.hasError && (prev == null || !prev.hasError)) {
-        ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-          SnackBar(
-            content: Text("Couldn't load weight history: ${next.error}"),
-            duration: const Duration(seconds: 3),
-          ),
-        );
-      }
-    });
-
+  Widget build(BuildContext context) {
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: context.space.x5),
-      child: historyAsync.when(
-        data: (entries) => _List(entries: entries, unit: unit),
-        loading: () => const _Skeleton(),
-        error: (_, __) => _Error(
-          onRetry: () => ref.invalidate(weightHistoryProvider),
-        ),
-      ),
+      child: _List(entries: entries, unit: unit),
+    );
+  }
+}
+
+/// Loading placeholder for [WeightHistoryList].
+class WeightHistoryListSkeleton extends StatelessWidget {
+  const WeightHistoryListSkeleton({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: context.space.x5),
+      child: const _Skeleton(),
+    );
+  }
+}
+
+/// Error placeholder for [WeightHistoryList]. `onRetry` is wired by the
+/// container — typically `() => ref.invalidate(weightHistoryProvider)`.
+class WeightHistoryListError extends StatelessWidget {
+  const WeightHistoryListError({super.key, required this.onRetry});
+
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: context.space.x5),
+      child: _Error(onRetry: onRetry),
     );
   }
 }

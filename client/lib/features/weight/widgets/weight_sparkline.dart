@@ -2,16 +2,12 @@ import 'dart:math' as math;
 
 import 'package:decimal/decimal.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 
 import '../../../domain/enums.dart';
 import '../../../domain/units/weight.dart';
 import '../../../domain/weight.dart';
 import '../../../form_factor/form_factor.dart';
-import '../../../providers/goal_providers.dart';
-import '../../../providers/profile_providers.dart';
-import '../../../providers/weight_providers.dart';
 import '../../../theme/context_extensions.dart';
 import '../../../theme/tokens.dart';
 
@@ -32,29 +28,34 @@ import '../../../theme/tokens.dart';
 ///   - A single dashed goal line is drawn (if `activeGoalProvider` has a
 ///     `targetWeightKg`), with no actual-weight curve.
 ///   - A centered "Log your first weight" CTA replaces the chart body.
-class WeightSparklineCard extends ConsumerWidget {
+/// **Pure presentation widget** (see `specs/testing_guide.md` §4.4).
+///
+/// The container (`WeightScreen`) reads `weightSeriesProvider(range)`,
+/// `activeGoalProvider`, and `weightUnitProvider`, resolves them, and
+/// constructs the card with already-loaded data. The loading branch
+/// renders [WeightSparklineCardSkeleton] in place of the card. The
+/// error branch resolves to an empty `points` list (same render as
+/// the no-data state).
+class WeightSparklineCard extends StatelessWidget {
   const WeightSparklineCard({
+    super.key,
     required this.range,
     required this.onRangeChanged,
     required this.onLogWeight,
-    super.key,
+    required this.points,
+    required this.goalKg,
+    required this.unit,
   });
 
   final WeightRange range;
   final ValueChanged<WeightRange> onRangeChanged;
   final VoidCallback onLogWeight;
+  final List<WeightSeriesPoint> points;
+  final Decimal? goalKg;
+  final WeightUnit unit;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final seriesAsync = ref.watch(weightSeriesProvider(range));
-    final goalAsync = ref.watch(activeGoalProvider);
-    final unit = ref.watch(weightUnitProvider);
-
-    final goalTarget = goalAsync.maybeWhen(
-      data: (g) => g.targetWeightKg,
-      orElse: () => null,
-    );
-
+  Widget build(BuildContext context) {
     return Padding(
       padding: EdgeInsets.fromLTRB(
         context.space.x5,
@@ -77,34 +78,67 @@ class WeightSparklineCard extends ConsumerWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
-            _Header(
-              range: range,
-              onRangeChanged: onRangeChanged,
-            ),
+            _Header(range: range, onRangeChanged: onRangeChanged),
             SizedBox(height: context.space.x2),
             SizedBox(
               height: 160,
-              child: seriesAsync.when(
-                data: (points) => _ChartBody(
-                  points: points,
-                  goalKg: goalTarget,
-                  unit: unit,
-                  onLogWeight: onLogWeight,
-                ),
-                loading: () => const _ChartSkeleton(),
-                error: (_, __) => _ChartBody(
-                  points: const <WeightSeriesPoint>[],
-                  goalKg: goalTarget,
-                  unit: unit,
-                  onLogWeight: onLogWeight,
-                ),
+              child: _ChartBody(
+                points: points,
+                goalKg: goalKg,
+                unit: unit,
+                onLogWeight: onLogWeight,
               ),
             ),
             SizedBox(height: context.space.x1),
-            seriesAsync.maybeWhen(
-              data: (points) => _AxisLabels(points: points, range: range),
-              orElse: () => const SizedBox.shrink(),
-            ),
+            _AxisLabels(points: points, range: range),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Loading placeholder for [WeightSparklineCard]. Container renders
+/// this from the `loading:` arm of `seriesAsync.when()`.
+class WeightSparklineCardSkeleton extends StatelessWidget {
+  const WeightSparklineCardSkeleton({
+    super.key,
+    required this.range,
+    required this.onRangeChanged,
+  });
+
+  final WeightRange range;
+  final ValueChanged<WeightRange> onRangeChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.fromLTRB(
+        context.space.x5,
+        0,
+        context.space.x5,
+        context.space.x3,
+      ),
+      child: Container(
+        decoration: BoxDecoration(
+          color: context.colors.surface,
+          borderRadius: BorderRadius.circular(context.radius.r4),
+          border: Border.all(color: context.colors.line),
+        ),
+        padding: EdgeInsets.fromLTRB(
+          context.space.x4,
+          context.space.x3,
+          context.space.x4,
+          context.space.x3,
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: <Widget>[
+            _Header(range: range, onRangeChanged: onRangeChanged),
+            SizedBox(height: context.space.x2),
+            const SizedBox(height: 160, child: _ChartSkeleton()),
+            SizedBox(height: context.space.x1),
+            const SizedBox.shrink(),
           ],
         ),
       ),

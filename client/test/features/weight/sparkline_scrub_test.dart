@@ -5,14 +5,10 @@ library;
 import 'package:decimal/decimal.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fulfilled/domain/enums.dart';
 import 'package:fulfilled/domain/weight.dart';
-import 'package:fulfilled/repositories/goal_repository.dart';
 import 'package:fulfilled/features/weight/widgets/weight_sparkline.dart';
-import 'package:fulfilled/providers/goal_providers.dart';
-import 'package:fulfilled/providers/weight_providers.dart';
 import 'package:fulfilled/theme/theme_data.dart';
 
 /// UX-108 — F4 scrub-to-read gesture tests. See `weight_sparkline.dart`.
@@ -63,28 +59,21 @@ Widget _harness({
   bool disableAnimations = false,
   Size size = const Size(390, 844),
 }) {
-  return ProviderScope(
-    overrides: <Override>[
-      activeGoalProvider.overrideWith(
-        (_) async => throw GoalNotFoundError(DateTime(2026, 5, 14)),
+  return MaterialApp(
+    theme: buildLightTheme(),
+    home: MediaQuery(
+      data: MediaQueryData(
+        size: size,
+        disableAnimations: disableAnimations,
       ),
-      weightHistoryProvider.overrideWith((_) async => const <WeightEntry>[]),
-      for (final r in WeightRange.values)
-        weightSeriesProvider(r).overrideWith((_) async => series),
-    ],
-    child: MaterialApp(
-      theme: buildLightTheme(),
-      home: MediaQuery(
-        data: MediaQueryData(
-          size: size,
-          disableAnimations: disableAnimations,
-        ),
-        child: Scaffold(
-          body: WeightSparklineCard(
-            range: WeightRange.oneWeek,
-            onRangeChanged: (_) {},
-            onLogWeight: () {},
-          ),
+      child: Scaffold(
+        body: WeightSparklineCard(
+          range: WeightRange.oneWeek,
+          onRangeChanged: (_) {},
+          onLogWeight: () {},
+          points: series,
+          goalKg: null,
+          unit: WeightUnit.kg,
         ),
       ),
     ),
@@ -98,31 +87,24 @@ Widget _scrollHarness({
   required List<WeightSeriesPoint> series,
   required ScrollController controller,
 }) {
-  return ProviderScope(
-    overrides: <Override>[
-      activeGoalProvider.overrideWith(
-        (_) async => throw GoalNotFoundError(DateTime(2026, 5, 14)),
-      ),
-      weightHistoryProvider.overrideWith((_) async => const <WeightEntry>[]),
-      for (final r in WeightRange.values)
-        weightSeriesProvider(r).overrideWith((_) async => series),
-    ],
-    child: MaterialApp(
-      theme: buildLightTheme(),
-      home: MediaQuery(
-        data: const MediaQueryData(size: Size(390, 844)),
-        child: Scaffold(
-          body: ListView(
-            controller: controller,
-            children: <Widget>[
-              WeightSparklineCard(
-                range: WeightRange.oneWeek,
-                onRangeChanged: (_) {},
-                onLogWeight: () {},
-              ),
-              const SizedBox(height: 1200), // generous below-chart content
-            ],
-          ),
+  return MaterialApp(
+    theme: buildLightTheme(),
+    home: MediaQuery(
+      data: const MediaQueryData(size: Size(390, 844)),
+      child: Scaffold(
+        body: ListView(
+          controller: controller,
+          children: <Widget>[
+            WeightSparklineCard(
+              range: WeightRange.oneWeek,
+              onRangeChanged: (_) {},
+              onLogWeight: () {},
+              points: series,
+              goalKg: null,
+              unit: WeightUnit.kg,
+            ),
+            const SizedBox(height: 1200), // generous below-chart content
+          ],
         ),
       ),
     ),
