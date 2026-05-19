@@ -18,6 +18,13 @@
 # server-only commit can still break client code via shared specs,
 # and the analyzer is fast (~3 s) compared to clippy.
 #
+# We DO isolate the index before running analyzers: unstaged tracked
+# changes and untracked files are stashed for the duration of the
+# hook, so the tools see exactly what's about to be committed.
+# Without this, a WIP test scratchpad sitting in the working tree
+# can block an otherwise clean commit with its own analyzer noise.
+# The stash is always popped on exit so user state is preserved.
+#
 # Escape hatch: `git commit --no-verify` skips this hook. Use sparingly
 # — the strict mode exists to keep tree green, not to harass.
 #
@@ -35,6 +42,31 @@ cd "$(git rev-parse --show-toplevel)"
 red()    { printf '\033[31m%s\033[0m\n' "$*" >&2; }
 green()  { printf '\033[32m%s\033[0m\n' "$*"; }
 yellow() { printf '\033[33m%s\033[0m\n' "$*"; }
+
+# ─── Isolate the index ─────────────────────────────────────────────────
+# Stash anything that isn't staged (modified-but-unstaged tracked
+# files + all untracked files). The trap ensures we always pop on
+# exit so the user's WIP is preserved even on hook failure.
+stash_sha=""
+if ! git diff --quiet || [ -n "$(git ls-files --others --exclude-standard)" ]; then
+  before=$(git rev-parse --quiet --verify refs/stash 2>/dev/null || true)
+  if git stash push --keep-index --include-untracked --message "pre-commit-isolate" >/dev/null 2>&1; then
+    after=$(git rev-parse --quiet --verify refs/stash 2>/dev/null || true)
+    if [ -n "$after" ] && [ "$before" != "$after" ]; then
+      stash_sha=$after
+    fi
+  fi
+fi
+
+restore_stash() {
+  if [ -n "$stash_sha" ]; then
+    if ! git stash pop "$stash_sha" >/dev/null 2>&1; then
+      yellow "pre-commit: warning — could not auto-pop stash $stash_sha"
+      yellow "  recover manually: git stash list / git stash pop"
+    fi
+  fi
+}
+trap restore_stash EXIT
 
 # ─── Flutter ────────────────────────────────────────────────────────────
 FLUTTER_BIN="${FLUTTER_BIN:-}"
