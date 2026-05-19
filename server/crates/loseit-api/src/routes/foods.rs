@@ -292,7 +292,7 @@ struct LimitOnlyQuery {
 struct ServingBody {
     label: Option<String>,
     amount: Decimal,
-    unit: String, // parsed to Unit at handler entry via Unit::parse
+    unit: Unit,
     kcal: Decimal,
     protein_g: Option<Decimal>,
     carbs_g: Option<Decimal>,
@@ -306,19 +306,8 @@ struct ServingBody {
     sort_order: Option<i32>,
 }
 
-fn parse_unit(raw: &str) -> Result<Unit, ApiError> {
-    Unit::parse(raw).ok_or_else(|| {
-        ApiError::new(
-            axum::http::StatusCode::BAD_REQUEST,
-            "invalid_unit",
-            format!("unknown unit '{raw}' (expected one of g, kg, oz, lb, ml, l, cup, fl_oz, tbsp, tsp, serving, piece)"),
-        )
-    })
-}
-
 impl ServingBody {
     fn into_draft(self) -> Result<ServingDraft, ApiError> {
-        let unit = parse_unit(&self.unit)?;
         let source = match self.source.as_deref() {
             Some(s) => parse_serving_source(s)?,
             None => ServingSource::User,
@@ -326,7 +315,7 @@ impl ServingBody {
         Ok(ServingDraft {
             label: self.label,
             amount: self.amount,
-            unit,
+            unit: self.unit,
             kcal: self.kcal,
             protein_g: self.protein_g,
             carbs_g: self.carbs_g,
@@ -384,7 +373,7 @@ fn parse_serving_source(raw: &str) -> Result<ServingSource, ApiError> {
 struct PatchServingBody {
     label: Option<Option<String>>,
     amount: Option<Decimal>,
-    unit: Option<String>,
+    unit: Option<Unit>,
     kcal: Option<Decimal>,
     protein_g: Option<Option<Decimal>>,
     carbs_g: Option<Option<Decimal>>,
@@ -555,14 +544,10 @@ async fn patch_serving(
     Path(id): Path<Uuid>,
     Json(body): Json<PatchServingBody>,
 ) -> Result<Json<ServingResponse>, ApiError> {
-    let unit = match &body.unit {
-        Some(u) => Some(parse_unit(u)?),
-        None => None,
-    };
     let patch = ServingPatch {
         label: body.label,
         amount: body.amount,
-        unit,
+        unit: body.unit,
         kcal: body.kcal,
         protein_g: body.protein_g,
         carbs_g: body.carbs_g,

@@ -58,9 +58,9 @@ struct CreateLogBody {
     food_id: Uuid,
     serving_id: Uuid,
     consumed_on: NaiveDate,
-    meal: String,
+    meal: Meal,
     entered_amount: Decimal,
-    entered_unit: String,
+    entered_unit: Unit,
     #[serde(default)]
     note: Option<String>,
 }
@@ -68,7 +68,7 @@ struct CreateLogBody {
 #[derive(Debug, Deserialize)]
 struct QuickAddBody {
     calories_kcal: Decimal,
-    meal: String,
+    meal: Meal,
     consumed_on: NaiveDate,
     #[serde(default)]
     note: Option<String>,
@@ -86,11 +86,11 @@ struct PatchLogBody {
     #[serde(default)]
     consumed_on: Option<NaiveDate>,
     #[serde(default)]
-    meal: Option<String>,
+    meal: Option<Meal>,
     #[serde(default)]
     entered_amount: Option<Decimal>,
     #[serde(default)]
-    entered_unit: Option<String>,
+    entered_unit: Option<Unit>,
     // Double-Option so the wire `"note": null` can clear, but a missing key
     // leaves the existing value untouched.
     #[serde(default, deserialize_with = "deserialize_optional_optional_string")]
@@ -118,7 +118,7 @@ struct CopyDayBody {
     from_date: NaiveDate,
     to_date: NaiveDate,
     #[serde(default)]
-    meal: Option<String>,
+    meal: Option<Meal>,
 }
 
 /// Wrapped response so future fields (e.g. `skipped`) can be added without
@@ -262,27 +262,7 @@ impl From<DaySummary> for DaySummaryResponse {
     }
 }
 
-// -- Helpers -----------------------------------------------------------------
-
-fn parse_meal(raw: &str) -> Result<Meal, ApiError> {
-    raw.parse::<Meal>().map_err(|_| {
-        ApiError::bad_request(format!(
-            "unknown meal '{raw}' (expected one of breakfast, lunch, dinner, snack)"
-        ))
-    })
-}
-
 // -- Handlers ----------------------------------------------------------------
-
-fn parse_unit(raw: &str) -> Result<Unit, ApiError> {
-    Unit::parse(raw).ok_or_else(|| {
-        ApiError::new(
-            axum::http::StatusCode::BAD_REQUEST,
-            "invalid_unit",
-            format!("unknown unit '{raw}' (expected one of g, kg, oz, lb, ml, l, cup, fl_oz, tbsp, tsp, serving, piece)"),
-        )
-    })
-}
 
 /// Map a `CoreError` from log operations, giving `unit_family_mismatch`
 /// its own structured code (§10 D5) instead of the generic `bad_request`.
@@ -304,15 +284,13 @@ async fn create(
     AuthenticatedUser(user): AuthenticatedUser,
     Json(body): Json<CreateLogBody>,
 ) -> Result<(StatusCode, Json<LogEntryResponse>), ApiError> {
-    let meal = parse_meal(&body.meal)?;
-    let entered_unit = parse_unit(&body.entered_unit)?;
     let draft = LogDraft {
         food_id: body.food_id,
         serving_id: body.serving_id,
         consumed_on: body.consumed_on,
-        meal,
+        meal: body.meal,
         entered_amount: body.entered_amount,
-        entered_unit,
+        entered_unit: body.entered_unit,
         note: body.note,
     };
     let entry = state
@@ -328,13 +306,12 @@ async fn quick_add(
     AuthenticatedUser(user): AuthenticatedUser,
     Json(body): Json<QuickAddBody>,
 ) -> Result<(StatusCode, Json<LogEntryResponse>), ApiError> {
-    let meal = parse_meal(&body.meal)?;
     let entry = state
         .logs
         .quick_add(
             user.id,
             body.calories_kcal,
-            meal,
+            body.meal,
             body.consumed_on,
             body.note,
         )
@@ -365,14 +342,12 @@ async fn patch(
             "food_id is immutable; create a new entry to log a different food",
         ));
     }
-    let meal = body.meal.as_deref().map(parse_meal).transpose()?;
-    let entered_unit = body.entered_unit.as_deref().map(parse_unit).transpose()?;
     let patch = LogPatch {
         serving_id: body.serving_id,
         consumed_on: body.consumed_on,
-        meal,
+        meal: body.meal,
         entered_amount: body.entered_amount,
-        entered_unit,
+        entered_unit: body.entered_unit,
         note: body.note,
     };
     let entry = state
@@ -406,13 +381,12 @@ async fn copy_day(
     AuthenticatedUser(user): AuthenticatedUser,
     Json(body): Json<CopyDayBody>,
 ) -> Result<(StatusCode, Json<CopyDayResponse>), ApiError> {
-    // Parse the optional meal *eagerly* — an unknown value becomes 400 rather
-    // than being silently dropped, which would otherwise look like a
-    // successful no-filter copy.
-    let meal = body.meal.as_deref().map(parse_meal).transpose()?;
+    // `Meal` deserializes via try_from in `CopyDayBody`, so an unknown
+    // wire value is rejected at the JSON-parse layer with HTTP 400
+    // before reaching the handler.
     let copied = state
         .logs
-        .copy_day(user.id, body.from_date, body.to_date, meal)
+        .copy_day(user.id, body.from_date, body.to_date, body.meal)
         .await?;
     Ok((
         StatusCode::CREATED,

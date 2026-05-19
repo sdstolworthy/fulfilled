@@ -1,7 +1,20 @@
+use std::fmt;
+use std::str::FromStr;
+
 use rust_decimal::Decimal;
 use rust_decimal_macros::dec;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// Wire form is the canonical short label (`g` / `kg` / `oz` / …).
+/// Same rationale as [`crate::Meal`]: `try_from` routes deserialization
+/// through [`Unit::from_str`], so handlers stop carrying a `parse_unit`
+/// helper that surfaces a bespoke `invalid_unit` error code. Bad
+/// strings now fail at the serde layer with a clear "unknown variant"
+/// message and HTTP 400, which is what every consumer was already
+/// branching on anyway (no client code looks at the structured
+/// `invalid_unit` code).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "&str", into = "&'static str")]
 pub enum Unit {
     // Mass
     Gram,
@@ -95,5 +108,44 @@ impl Unit {
             // Count — each is its own canonical (no auto-conversion)
             Self::Serving | Self::Piece => dec!(1),
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InvalidUnit;
+
+impl fmt::Display for InvalidUnit {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("invalid unit")
+    }
+}
+
+impl std::error::Error for InvalidUnit {}
+
+impl FromStr for Unit {
+    type Err = InvalidUnit;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::parse(s).ok_or(InvalidUnit)
+    }
+}
+
+impl TryFrom<&str> for Unit {
+    type Error = InvalidUnit;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        value.parse()
+    }
+}
+
+impl From<Unit> for &'static str {
+    fn from(u: Unit) -> Self {
+        u.as_str()
+    }
+}
+
+impl fmt::Display for Unit {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
     }
 }

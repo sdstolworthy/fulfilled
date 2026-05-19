@@ -1,7 +1,19 @@
 use std::fmt;
 use std::str::FromStr;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+use serde::{Deserialize, Serialize};
+
+/// Wire form is the kebab-case canonical name (`breakfast` / `lunch` /
+/// `dinner` / `snack`). `try_from = "&str"` routes the wire string
+/// through [`Meal::from_str`] so the same validation runs whether the
+/// value arrives via HTTP, file ingest, or a test fixture — handlers
+/// no longer need their own `parse_meal` helper.
+///
+/// Serialization mirrors deserialization: every Serialize call site
+/// (response bodies, structured logs) reads [`Meal::as_str`], so the
+/// wire shape stays canonical without callers having to remember.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "&str", into = "&'static str")]
 pub enum Meal {
     Breakfast,
     Lunch,
@@ -55,5 +67,19 @@ impl FromStr for Meal {
             "snack" => Ok(Self::Snack),
             _ => Err(InvalidMeal),
         }
+    }
+}
+
+impl TryFrom<&str> for Meal {
+    type Error = InvalidMeal;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        value.parse()
+    }
+}
+
+impl From<Meal> for &'static str {
+    fn from(m: Meal) -> Self {
+        m.as_str()
     }
 }

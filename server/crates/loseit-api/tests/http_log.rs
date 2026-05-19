@@ -1267,7 +1267,7 @@ async fn quick_add_400_on_max_calories_overflow() {
 }
 
 #[tokio::test]
-async fn quick_add_400_on_invalid_meal() {
+async fn quick_add_rejects_invalid_meal() {
     let (app, _alice) = build_test_app_with(|_f, _s, _l, _g, _u| Box::pin(async move {})).await;
 
     let body = serde_json::json!({
@@ -1279,7 +1279,11 @@ async fn quick_add_400_on_invalid_meal() {
         .oneshot(authed_json_request("POST", "/api/v1/log/quick_add", body))
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    // 422 (Unprocessable Entity) — `Meal` deserializes via `try_from`, so
+    // an unknown variant is rejected at the JSON-parse layer with axum's
+    // default `JsonRejection` status, not a hand-rolled 400 from the
+    // handler.
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
 }
 
 #[tokio::test]
@@ -2144,7 +2148,7 @@ async fn copy_day_three_entries_preserve_input_order() {
 }
 
 #[tokio::test]
-async fn copy_day_400_on_invalid_meal() {
+async fn copy_day_rejects_invalid_meal() {
     let (app, _alice) = build_test_app_with(|_f, _s, _l, _g, _u| Box::pin(async move {})).await;
 
     let copy = serde_json::json!({
@@ -2156,7 +2160,9 @@ async fn copy_day_400_on_invalid_meal() {
         .oneshot(authed_json_request("POST", "/api/v1/log/copy", copy))
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    // 422 — see `quick_add_rejects_invalid_meal` above for why this is
+    // no longer the 400 the pre-refactor `parse_meal` helper emitted.
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
 }
 
 #[tokio::test]
