@@ -82,8 +82,10 @@ jobs:
           echo "::endgroup::"
 
       - name: Upload screenshots + Playwright report
-        # `always()` so we still capture artifacts when tests fail —
-        # that's the primary debugging signal for reviewers.
+        # `always()` while we're getting a feel for the flow — every
+        # push uploads its screenshots so reviewers can eyeball the
+        # rendered surfaces, not just failures. Tighten to `failure()`
+        # later once the signal-to-noise stabilises.
         if: always()
         uses: actions/upload-artifact@v4
         with:
