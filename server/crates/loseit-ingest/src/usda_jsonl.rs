@@ -110,9 +110,14 @@ struct UsdaRaw {
     /// Branded foods carry serving info. `foodNutrients[]` itself is
     /// already per-100g (verified 2026-05-19 against live API + CSV
     /// bundle) — these fields aren't used for rescaling, just for
-    /// future per-serving label emission.
+    /// per-serving label emission when `foodPortions[]` is empty.
     serving_size: Option<f64>,
     serving_size_unit: Option<String>,
+    /// FDC `householdServingFullText` — human label for the Branded
+    /// serving (e.g. `"2 tbsp"`, `"1 can"`). Used downstream by
+    /// `accept_and_normalize_usda` to synthesize a `ServingDraft` when
+    /// `foodPortions[]` is empty.
+    household_serving_full_text: Option<String>,
     /// 4.1: USDA Branded ships a `gtinUpc` field — the product's GTIN
     /// (UPC-A is 12 digits, EAN-13 is 13). Stamped onto `FoodDraft.barcode`
     /// in the normaliser so OFF + USDA dedup naturally via the existing
@@ -359,6 +364,10 @@ impl UsdaRaw {
             serving_size: self.serving_size.and_then(f64_to_decimal),
             serving_size_unit: self
                 .serving_size_unit
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
+            household_serving_full_text: self
+                .household_serving_full_text
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty()),
             gtin_upc: self.gtin_upc,

@@ -586,6 +586,205 @@ fn usda_round_trip_fixture_3_records() {
 }
 
 // ---------------------------------------------------------------------------
+// USDA Branded synthesis: top-level servingSize / householdServingFullText
+// drive a per-serving ServingDraft when foodPortions[] is empty.
+// ---------------------------------------------------------------------------
+
+/// Branded row with an empty `food_portions[]` plus `serving_size = 32 g`
+/// and `household_serving_full_text = "2 tbsp"`: the normalizer must emit
+/// a `(2, Tbsp)` default with scaled per-serving kcal AND the labelless
+/// 100 g companion. Mirrors the OFF synthesis fix at 03bfd26 for USDA.
+#[test]
+fn usda_branded_with_household_text_emits_synthesized_serving() {
+    let r = UsdaFoodRecord {
+        fdc_id: 9100,
+        data_type: "branded_food".into(),
+        description: "Peanut Butter".into(),
+        brand_owner: Some("Skippy".into()),
+        food_portions: vec![],
+        energy_kcal_100g: Some(dec!(588)),
+        serving_size: Some(dec!(32)),
+        serving_size_unit: Some("g".into()),
+        household_serving_full_text: Some("2 tbsp".into()),
+        ..Default::default()
+    };
+
+    let out = accept_and_normalize_usda(r).expect("should accept");
+    assert_eq!(out.servings.len(), 2);
+
+    let default = &out.servings[0];
+    assert!(default.is_default);
+    assert_eq!(default.amount, dec!(2));
+    assert_eq!(default.unit, Unit::Tablespoon);
+    assert_eq!(default.label.as_deref(), Some("2 tbsp"));
+    // 588 * 32 / 100 = 188.16
+    assert_eq!(default.kcal, dec!(588) * dec!(32) / dec!(100));
+    assert_eq!(default.source, ServingSource::System);
+
+    let companion = &out.servings[1];
+    assert!(!companion.is_default);
+    assert_eq!(companion.amount, dec!(100));
+    assert_eq!(companion.unit, Unit::Gram);
+    assert_eq!(companion.kcal, dec!(588));
+    assert!(companion.label.is_none());
+    // Exactly one default per food.
+    assert_eq!(out.servings.iter().filter(|s| s.is_default).count(), 1);
+}
+
+/// FDC short code `"GRM"` for grams must map identically to `"g"`. Same
+/// outcome as the previous test.
+#[test]
+fn usda_branded_with_grm_unit_code() {
+    let r = UsdaFoodRecord {
+        fdc_id: 9101,
+        data_type: "branded_food".into(),
+        description: "Peanut Butter".into(),
+        brand_owner: Some("Skippy".into()),
+        food_portions: vec![],
+        energy_kcal_100g: Some(dec!(588)),
+        serving_size: Some(dec!(32)),
+        serving_size_unit: Some("GRM".into()),
+        household_serving_full_text: Some("2 tbsp".into()),
+        ..Default::default()
+    };
+
+    let out = accept_and_normalize_usda(r).expect("should accept");
+    assert_eq!(out.servings.len(), 2);
+    let default = &out.servings[0];
+    assert_eq!(default.amount, dec!(2));
+    assert_eq!(default.unit, Unit::Tablespoon);
+    assert_eq!(default.kcal, dec!(588) * dec!(32) / dec!(100));
+    assert_eq!(out.servings[1].unit, Unit::Gram);
+    assert_eq!(out.servings[1].amount, dec!(100));
+}
+
+/// When the household text is unparseable (`"about a handful"`), the
+/// synthesizer must fall back to the raw `(serving_size, serving_size_unit)`
+/// pair for the display amount/unit. Label is still the household string.
+#[test]
+fn usda_branded_household_text_unparseable_falls_back_to_serving_size() {
+    let r = UsdaFoodRecord {
+        fdc_id: 9102,
+        data_type: "branded_food".into(),
+        description: "Trail Mix".into(),
+        brand_owner: Some("Generic".into()),
+        food_portions: vec![],
+        energy_kcal_100g: Some(dec!(400)),
+        serving_size: Some(dec!(30)),
+        serving_size_unit: Some("g".into()),
+        household_serving_full_text: Some("about a handful".into()),
+        ..Default::default()
+    };
+
+    let out = accept_and_normalize_usda(r).expect("should accept");
+    assert_eq!(out.servings.len(), 2);
+    let default = &out.servings[0];
+    assert!(default.is_default);
+    assert_eq!(default.amount, dec!(30));
+    assert_eq!(default.unit, Unit::Gram);
+    assert_eq!(default.label.as_deref(), Some("about a handful"));
+    // 400 * 30 / 100 = 120
+    assert_eq!(default.kcal, dec!(120));
+
+    let companion = &out.servings[1];
+    assert!(!companion.is_default);
+    assert_eq!(companion.amount, dec!(100));
+    assert_eq!(companion.unit, Unit::Gram);
+}
+
+/// Volume-unit servings (no density available) must NOT be synthesized.
+/// Falls through to the existing 100 g fallback → exactly 1 serving.
+#[test]
+fn usda_branded_volume_unit_skips_synthesis() {
+    let r = UsdaFoodRecord {
+        fdc_id: 9103,
+        data_type: "branded_food".into(),
+        description: "Cola".into(),
+        brand_owner: Some("Coca-Cola".into()),
+        food_portions: vec![],
+        energy_kcal_100g: Some(dec!(42)),
+        serving_size: Some(dec!(355)),
+        serving_size_unit: Some("ml".into()),
+        household_serving_full_text: Some("1 can".into()),
+        ..Default::default()
+    };
+
+    let out = accept_and_normalize_usda(r).expect("should accept");
+    assert_eq!(out.servings.len(), 1);
+    let only = &out.servings[0];
+    assert!(only.is_default);
+    assert_eq!(only.amount, dec!(100));
+    assert_eq!(only.unit, Unit::Gram);
+    assert!(only.label.is_none());
+}
+
+/// Implausible serving size (> 1000 g) is rejected by the synthesizer.
+/// Same outcome as the volume-unit case: single 100 g fallback.
+#[test]
+fn usda_branded_implausible_serving_size_skips_synthesis() {
+    let r = UsdaFoodRecord {
+        fdc_id: 9104,
+        data_type: "branded_food".into(),
+        description: "Mystery Bulk".into(),
+        brand_owner: Some("Bulk Co".into()),
+        food_portions: vec![],
+        energy_kcal_100g: Some(dec!(300)),
+        serving_size: Some(dec!(5000)),
+        serving_size_unit: Some("g".into()),
+        household_serving_full_text: Some("1 bag".into()),
+        ..Default::default()
+    };
+
+    let out = accept_and_normalize_usda(r).expect("should accept");
+    assert_eq!(out.servings.len(), 1);
+    let only = &out.servings[0];
+    assert!(only.is_default);
+    assert_eq!(only.amount, dec!(100));
+    assert_eq!(only.unit, Unit::Gram);
+}
+
+/// Regression: a Branded row WITH non-empty `food_portions[]` must still
+/// produce servings from the portions. The new synthesis path only fires
+/// when the food_portions loop produced nothing.
+#[test]
+fn usda_branded_with_food_portions_unchanged() {
+    let r = UsdaFoodRecord {
+        fdc_id: 9105,
+        data_type: "branded_food".into(),
+        description: "Peanut Butter".into(),
+        brand_owner: Some("Skippy".into()),
+        food_portions: vec![UsdaFoodPortion {
+            gram_weight: dec!(32),
+            measure_unit_name: "tablespoon".into(),
+            sequence_number: 1,
+            label: Some("2 tbsp".into()),
+        }],
+        energy_kcal_100g: Some(dec!(588)),
+        // Top-level fields ALSO present — must NOT cause a duplicate
+        // synthesized serving.
+        serving_size: Some(dec!(32)),
+        serving_size_unit: Some("g".into()),
+        household_serving_full_text: Some("2 tbsp".into()),
+        ..Default::default()
+    };
+
+    let out = accept_and_normalize_usda(r).expect("should accept");
+    // FDC portion + 100 g companion = 2. No synthesized third entry.
+    assert_eq!(out.servings.len(), 2);
+    let default = &out.servings[0];
+    assert!(default.is_default);
+    assert_eq!(default.unit, Unit::Tablespoon);
+    // Portion-loop emits amount=1 for named volume/count units (see
+    // map_usda_unit) — distinct from the synthesizer which would emit (2, Tbsp).
+    assert_eq!(default.amount, Decimal::ONE);
+    assert_eq!(default.label.as_deref(), Some("2 tbsp"));
+    let companion = &out.servings[1];
+    assert_eq!(companion.amount, dec!(100));
+    assert_eq!(companion.unit, Unit::Gram);
+    assert!(!companion.is_default);
+}
+
+// ---------------------------------------------------------------------------
 // IngestService + loseit-ingest sources integration  (§8)
 // ---------------------------------------------------------------------------
 

@@ -112,8 +112,14 @@ pub struct UsdaFoodRecord {
     /// Serving size for Branded foods (carried through for future
     /// per-serving label emission). Not used for nutrient rescaling.
     pub serving_size: Option<Decimal>,
-    /// Unit for `serving_size`.
+    /// Unit for `serving_size`. May arrive as `"g"` / `"ml"` or as the FDC
+    /// short codes `"GRM"` / `"MLT"`.
     pub serving_size_unit: Option<String>,
+    /// FDC `householdServingFullText` — the human label for a Branded
+    /// serving (e.g. `"2 tbsp"`, `"1 cup"`, `"0.5 cup (104g)"`). Used by
+    /// the normalizer to synthesize a per-serving entry when
+    /// `food_portions[]` is empty.
+    pub household_serving_full_text: Option<String>,
     /// 4.1: USDA Branded GTIN (UPC-A or EAN-13). Stamped onto
     /// `FoodDraft.barcode` by `accept_and_normalize_usda` so that the
     /// same product imported from both OFF and USDA collapses to a
@@ -246,13 +252,13 @@ fn map_unit_str(s: &str) -> Option<Unit> {
         .join(" ");
 
     match normalised.as_str() {
-        // Mass
-        "g" | "gr" | "gram" | "grams" => Some(Unit::Gram),
+        // Mass — `grm` is the FDC short code (Branded `servingSizeUnit`).
+        "g" | "gr" | "gram" | "grams" | "grm" => Some(Unit::Gram),
         "kg" | "kilogram" | "kilograms" => Some(Unit::Kilogram),
         "oz" | "ounce" | "ounces" => Some(Unit::Ounce),
         "lb" | "lbs" | "pound" | "pounds" => Some(Unit::Pound),
-        // Volume
-        "ml" | "milliliter" | "millilitre" | "milliliters" | "millilitres" => {
+        // Volume — `mlt` is the FDC short code (Branded `servingSizeUnit`).
+        "ml" | "milliliter" | "millilitre" | "milliliters" | "millilitres" | "mlt" => {
             Some(Unit::Milliliter)
         }
         "l" | "liter" | "litre" | "liters" | "litres" => Some(Unit::Liter),
@@ -889,6 +895,18 @@ pub fn accept_and_normalize_usda(mut record: UsdaFoodRecord) -> Option<FoodDraft
         });
     }
 
+    // USDA Branded rows almost always ship with empty `foodPortions[]` but
+    // carry serving info on the top-level `servingSize` / `servingSizeUnit` /
+    // `householdServingFullText` fields. When the FDC-portion loop produced
+    // nothing, synthesize a per-serving ServingDraft from those top-level
+    // fields so labels like `"2 tbsp"` or `"1 can"` reach the FE instead of
+    // falling through to the 100 g default.
+    if servings.is_empty() {
+        if let Some(synthesized) = build_branded_serving_from_top_level(&record, kcal_100g) {
+            servings.push(synthesized);
+        }
+    }
+
     // F4-T1: if we produced at least one FDC-derived serving, append a labelless
     // 100 g companion so power users always get a per-100 g baseline (and the
     // FE renders both the human label and `100 g`). This is non-default — the
@@ -973,6 +991,93 @@ pub fn accept_and_normalize_usda(mut record: UsdaFoodRecord) -> Option<FoodDraft
         draft,
         quality_score: 50, // USDA data is considered medium quality by default
         servings,
+    })
+}
+
+/// Build a per-serving `ServingDraft` for a USDA Branded row whose
+/// `foodPortions[]` was empty.
+///
+/// Branded products carry serving info on top-level fields:
+/// - `servingSize` — number (gram or ml weight of one serving).
+/// - `servingSizeUnit` — `"g"` / `"ml"` / FDC code `"GRM"` / `"MLT"`.
+/// - `householdServingFullText` — human label, e.g. `"2 tbsp"`.
+///
+/// Strategy:
+/// 1. Convert `(serving_size, serving_size_unit)` to grams via the unit's
+///    mass ratio. Volume units are rejected (no density available); unknown
+///    units / non-finite / non-positive / > 1000 g sizes are rejected.
+/// 2. Pick the display `(amount, unit)` by first parsing
+///    `householdServingFullText`. If that fails to yield a known unit, fall
+///    back to `(servingSize, parsed servingSizeUnit)`.
+/// 3. Scale per-100g nutrition by `gram_weight / 100` (USDA sodium is
+///    already in mg/100g — no `*1000` conversion).
+fn build_branded_serving_from_top_level(
+    record: &UsdaFoodRecord,
+    kcal_100g: Decimal,
+) -> Option<ServingDraft> {
+    let serving_size = record.serving_size?;
+    if serving_size <= Decimal::ZERO || serving_size > dec!(1000) {
+        return None;
+    }
+    let raw_unit = record.serving_size_unit.as_deref()?.trim();
+    if raw_unit.is_empty() {
+        return None;
+    }
+    let parsed_unit = map_unit_str(&raw_unit.to_ascii_lowercase())?;
+
+    // Step 1: compute the gram weight of one serving. Mass family only —
+    // we have no density for volumes, so volume servings fall through to
+    // the existing 100 g fallback at the caller.
+    let gram_weight = match parsed_unit.family() {
+        crate::domain::unit::UnitFamily::Mass => serving_size * parsed_unit.ratio_to_canonical(),
+        crate::domain::unit::UnitFamily::Volume | crate::domain::unit::UnitFamily::Count => {
+            return None;
+        }
+    };
+    if gram_weight <= Decimal::ZERO || gram_weight > dec!(1000) {
+        return None;
+    }
+
+    // Step 2: prefer the human label's `(amount, unit)` for display
+    // (e.g. `"2 tbsp"` → `(2, Tablespoon)`). Fall back to the raw
+    // `(servingSize, servingSizeUnit)` pair if the household text is
+    // missing or unparseable.
+    let (amount, unit) = record
+        .household_serving_full_text
+        .as_deref()
+        .and_then(parse_serving_size)
+        .unwrap_or((serving_size, parsed_unit));
+
+    // Step 3: per-serving nutrition. Matches the food_portions loop above
+    // exactly — sodium is mg-based per USDA, NOT `*1000` like OFF.
+    let kcal = (kcal_100g * gram_weight / dec!(100)).max(Decimal::ZERO);
+    let protein_g = scale_per_100g(record.protein_100g, gram_weight);
+    let carbs_g = scale_per_100g(record.carbs_100g, gram_weight);
+    let fat_g = scale_per_100g(record.fat_100g, gram_weight);
+    let fiber_g = scale_per_100g(record.fiber_100g, gram_weight);
+    let sugar_g = scale_per_100g(record.sugar_100g, gram_weight);
+    let sodium_mg = record.sodium_mg_100g.map(|s| s * gram_weight / dec!(100));
+    let saturated_fat_g = scale_per_100g(record.saturated_fat_100g, gram_weight);
+
+    Some(ServingDraft {
+        label: record
+            .household_serving_full_text
+            .as_ref()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty()),
+        amount,
+        unit,
+        kcal,
+        protein_g,
+        carbs_g,
+        fat_g,
+        fiber_g,
+        sugar_g,
+        sodium_mg,
+        saturated_fat_g,
+        is_default: true,
+        source: ServingSource::System,
+        sort_order: 0,
     })
 }
 
@@ -1918,6 +2023,11 @@ mod tests {
 
     /// Foundation rows continue to flow through per-100g. (Same as before
     /// the fix; kept as a regression marker against accidental rescale.)
+    ///
+    /// Note: this row's empty `food_portions[]` + top-level
+    /// `(servingSize=30, servingSizeUnit="g")` now triggers the Branded
+    /// synthesis path → a (30, Gram) default in front of the 100 g companion.
+    /// The pass-through guarantee is asserted against the companion.
     #[test]
     fn usda_foundation_passes_through_per_100g() {
         let r = UsdaFoodRecord {
@@ -1931,8 +2041,12 @@ mod tests {
             ..Default::default()
         };
         let out = accept_and_normalize_usda(r).expect("should accept");
-        let s = &out.servings[0];
-        assert_eq!(s.kcal, dec!(100));
+        let s100 = out
+            .servings
+            .iter()
+            .find(|s| s.unit == Unit::Gram && s.amount == dec!(100))
+            .expect("100g companion missing");
+        assert_eq!(s100.kcal, dec!(100));
     }
 
     /// 1.4: OFF row with 5000 kcal/100g is dropped (out of (0, 900]).
