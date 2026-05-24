@@ -260,6 +260,208 @@ fn off_round_trip_fixture_4_rows() {
 }
 
 // ---------------------------------------------------------------------------
+// OFF volumetric/count serving_quantity tests (§7.1 rule 3, amended)
+//
+// When OFF reports a volumetric or count serving label (e.g. "2 tbsp",
+// "1 cup", "1 piece") together with a plausible `serving_quantity` gram
+// weight, the normaliser uses that gram weight to scale per-100g nutrition
+// and emits the real per-serving entry. Otherwise it falls back to
+// emitting only the 100 g companion.
+// ---------------------------------------------------------------------------
+
+/// "2 tbsp" with serving_quantity = 32 g → emit (2, Tablespoon) default
+/// with nutrition scaled by 32 g, plus the 100 g non-default companion.
+#[test]
+fn off_volumetric_serving_uses_serving_quantity() {
+    let r = OffFoodRecord {
+        code: "VOL001".into(),
+        product_name: "Peanut Butter".into(),
+        serving_size: Some("2 tbsp".into()),
+        serving_quantity: Some(dec!(32)),
+        energy_kcal_100g: Some(dec!(588)),
+        protein_100g: Some(dec!(25)),
+        carbs_100g: Some(dec!(20)),
+        fat_100g: Some(dec!(50)),
+        sodium_100g: Some(dec!(0.4)),
+        ..Default::default()
+    };
+    let accepted = accept_and_normalize_off(r).expect("must be accepted");
+    assert_eq!(accepted.servings.len(), 2, "must have 2 servings");
+
+    let default = accepted
+        .servings
+        .iter()
+        .find(|s| s.is_default)
+        .expect("must have a default serving");
+    assert_eq!(default.unit, Unit::Tablespoon);
+    assert_eq!(default.amount, dec!(2));
+    assert_eq!(default.source, ServingSource::Off);
+    // kcal = 588 * 32 / 100
+    assert_eq!(default.kcal, dec!(588) * dec!(32) / dec!(100));
+    assert_eq!(default.protein_g, Some(dec!(25) * dec!(32) / dec!(100)));
+    assert_eq!(default.carbs_g, Some(dec!(20) * dec!(32) / dec!(100)));
+    assert_eq!(default.fat_g, Some(dec!(50) * dec!(32) / dec!(100)));
+    // sodium_mg = sodium_100g * grams / 100 * 1000
+    assert_eq!(
+        default.sodium_mg,
+        Some(dec!(0.4) * dec!(32) / dec!(100) * dec!(1000))
+    );
+
+    let companion = accepted
+        .servings
+        .iter()
+        .find(|s| s.unit == Unit::Gram && s.amount == dec!(100))
+        .expect("must have 100 g companion");
+    assert!(!companion.is_default);
+    assert_eq!(companion.source, ServingSource::System);
+    assert_eq!(companion.kcal, dec!(588));
+}
+
+/// "1 cup" with serving_quantity = 244 g → emit (1, Cup) default with
+/// nutrition scaled by 244 g, plus 100 g non-default companion.
+#[test]
+fn off_cup_serving_uses_serving_quantity() {
+    let r = OffFoodRecord {
+        code: "VOL002".into(),
+        product_name: "Skim Milk".into(),
+        serving_size: Some("1 cup".into()),
+        serving_quantity: Some(dec!(244)),
+        energy_kcal_100g: Some(dec!(50)),
+        protein_100g: Some(dec!(3.4)),
+        ..Default::default()
+    };
+    let accepted = accept_and_normalize_off(r).expect("must be accepted");
+    assert_eq!(accepted.servings.len(), 2);
+
+    let default = accepted
+        .servings
+        .iter()
+        .find(|s| s.is_default)
+        .expect("must have a default serving");
+    assert_eq!(default.unit, Unit::Cup);
+    assert_eq!(default.amount, dec!(1));
+    assert_eq!(default.source, ServingSource::Off);
+    // kcal = 50 * 244 / 100 = 122
+    assert_eq!(default.kcal, dec!(50) * dec!(244) / dec!(100));
+
+    let companion = accepted
+        .servings
+        .iter()
+        .find(|s| s.unit == Unit::Gram && s.amount == dec!(100))
+        .expect("must have 100 g companion");
+    assert!(!companion.is_default);
+    assert_eq!(companion.kcal, dec!(50));
+}
+
+/// "1 piece" with serving_quantity = 28 g → emit (1, Piece) default; this
+/// covers the Count family branch of the unit match.
+#[test]
+fn off_piece_serving_uses_serving_quantity() {
+    let r = OffFoodRecord {
+        code: "VOL003".into(),
+        product_name: "Cheese Stick".into(),
+        serving_size: Some("1 piece".into()),
+        serving_quantity: Some(dec!(28)),
+        energy_kcal_100g: Some(dec!(400)),
+        protein_100g: Some(dec!(25)),
+        fat_100g: Some(dec!(33)),
+        ..Default::default()
+    };
+    let accepted = accept_and_normalize_off(r).expect("must be accepted");
+    assert_eq!(accepted.servings.len(), 2);
+
+    let default = accepted
+        .servings
+        .iter()
+        .find(|s| s.is_default)
+        .expect("must have a default serving");
+    assert_eq!(default.unit, Unit::Piece);
+    assert_eq!(default.amount, dec!(1));
+    assert_eq!(default.source, ServingSource::Off);
+    // kcal = 400 * 28 / 100 = 112
+    assert_eq!(default.kcal, dec!(400) * dec!(28) / dec!(100));
+
+    let companion = accepted
+        .servings
+        .iter()
+        .find(|s| s.unit == Unit::Gram && s.amount == dec!(100))
+        .expect("must have 100 g companion");
+    assert!(!companion.is_default);
+}
+
+/// "2 tbsp" with serving_quantity = None → fallback. Only the 100 g
+/// companion lands, marked is_default.
+#[test]
+fn off_volumetric_serving_without_serving_quantity_falls_back() {
+    let r = OffFoodRecord {
+        code: "VOL004".into(),
+        product_name: "Mystery Spread".into(),
+        serving_size: Some("2 tbsp".into()),
+        serving_quantity: None,
+        energy_kcal_100g: Some(dec!(588)),
+        protein_100g: Some(dec!(25)),
+        ..Default::default()
+    };
+    let accepted = accept_and_normalize_off(r).expect("must be accepted");
+    assert_eq!(accepted.servings.len(), 1);
+    let only = &accepted.servings[0];
+    assert_eq!(only.unit, Unit::Gram);
+    assert_eq!(only.amount, dec!(100));
+    assert!(only.is_default);
+    assert_eq!(only.source, ServingSource::System);
+    assert_eq!(only.kcal, dec!(588));
+}
+
+/// "2 tbsp" with implausible serving_quantity (> 1000 g) → fallback. Same
+/// outcome as the missing case.
+#[test]
+fn off_volumetric_serving_with_implausible_serving_quantity_falls_back() {
+    let r = OffFoodRecord {
+        code: "VOL005".into(),
+        product_name: "Bogus Spread".into(),
+        serving_size: Some("2 tbsp".into()),
+        serving_quantity: Some(dec!(2000)),
+        energy_kcal_100g: Some(dec!(588)),
+        ..Default::default()
+    };
+    let accepted = accept_and_normalize_off(r).expect("must be accepted");
+    assert_eq!(accepted.servings.len(), 1);
+    let only = &accepted.servings[0];
+    assert_eq!(only.unit, Unit::Gram);
+    assert_eq!(only.amount, dec!(100));
+    assert!(only.is_default);
+}
+
+/// Mass-unit serving is unchanged by the volumetric/count fix: parsed
+/// gram weight from the string is authoritative, not `serving_quantity`.
+#[test]
+fn off_mass_serving_unchanged() {
+    let r = OffFoodRecord {
+        code: "VOL006".into(),
+        product_name: "Peanut Butter Single".into(),
+        serving_size: Some("30 g".into()),
+        // Even though serving_quantity is set, the parsed mass value wins.
+        serving_quantity: Some(dec!(30)),
+        energy_kcal_100g: Some(dec!(588)),
+        protein_100g: Some(dec!(25)),
+        ..Default::default()
+    };
+    let accepted = accept_and_normalize_off(r).expect("must be accepted");
+    assert_eq!(accepted.servings.len(), 2);
+
+    let default = accepted
+        .servings
+        .iter()
+        .find(|s| s.is_default)
+        .expect("must have a default serving");
+    assert_eq!(default.unit, Unit::Gram);
+    assert_eq!(default.amount, dec!(30));
+    assert_eq!(default.source, ServingSource::Off);
+    // kcal = 588 * 30 / 100 = 176.4
+    assert_eq!(default.kcal, dec!(588) * dec!(30) / dec!(100));
+}
+
+// ---------------------------------------------------------------------------
 // USDA round-trip integration tests  (§8)
 // ---------------------------------------------------------------------------
 

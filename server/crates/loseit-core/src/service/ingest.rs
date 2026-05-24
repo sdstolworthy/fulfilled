@@ -589,32 +589,28 @@ pub fn accept_and_normalize_off_with_opts(
     match parsed_serving {
         Some((amount, unit)) => {
             // §7.1 rule 3: compute per-serving nutrition.
-            // For mass units: scale per-100g × gram-equivalent of the serving.
-            // For volume units: OFF has no per-serving nutrients in the record,
-            //   only per-100g. No density assumption → we use gramWeight = 0
-            //   which would give wrong numbers. Per §7.1 rule 3 for volume:
-            //   "if OFF gives only per-100g and the serving is volumetric, drop the row".
-            //   But §7.1 rule 4 says "always emit 100g companion when per-100g present",
-            //   which takes precedence for the companion; we still drop the volumetric
-            //   serving itself when we can't compute it, but emit only the companion.
+            // For mass units: scale per-100g × gram-equivalent of the serving
+            //   (the parsed string is authoritative — `serving_quantity` is
+            //   ignored here on purpose).
+            // For volume/count units: we have no density and the unit alone
+            //   doesn't tell us a gram weight. But OFF's `serving_quantity`
+            //   column IS the gram weight of one labelled serving (e.g.
+            //   "2 tbsp" with serving_quantity = 32 → 32 g). When that value
+            //   is present and plausible (> 0 and ≤ 1000 g — one serving over
+            //   a kilogram is junk data) we use it to scale per-100g
+            //   nutrition and emit the real per-serving entry. When it's
+            //   missing or implausible we fall back to the original behaviour:
+            //   drop the volumetric/count serving and let the 100 g companion
+            //   (rule 4) stand alone.
             let serving_grams: Option<Decimal> = match unit.family() {
                 crate::domain::unit::UnitFamily::Mass => {
                     // Convert to grams via ratio table.
                     Some(amount * unit.ratio_to_canonical())
                 }
-                crate::domain::unit::UnitFamily::Volume => {
-                    // No density; can't scale. The volumetric serving is emitted
-                    // but we can't derive its nutrition from per-100g alone.
-                    // Per §7.1 rule 3: "if OFF gives only per-100g and the serving
-                    // is volumetric, drop the row" — meaning: drop the volumetric
-                    // serving entry; the 100g companion (rule 4) still lands.
-                    None
-                }
-                crate::domain::unit::UnitFamily::Count => {
-                    // COUNT units (serving, piece): OFF doesn't give us the gram
-                    // weight either, so we can't scale. Treat like volume.
-                    None
-                }
+                crate::domain::unit::UnitFamily::Volume
+                | crate::domain::unit::UnitFamily::Count => record
+                    .serving_quantity
+                    .filter(|q| *q > Decimal::ZERO && *q <= dec!(1000)),
             };
 
             if let Some(grams) = serving_grams {
